@@ -1,0 +1,39 @@
+name: generate-docs-index
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate-index:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Regenerate docs index
+        run: node scripts/generate-docs-index.js
+
+      - name: Commit updated docs index if changed
+        run: |
+          if git diff --quiet -- docs-index.md; then
+            echo "No docs index changes detected."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs-index.md
+          git commit -m "docs: update docs index"
+          git push
