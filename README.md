@@ -107,6 +107,7 @@ avin-ai-digital-footprint-lab/
 - [Docs Index](./docs-index.md)
 - [System Overview](./01-system-overview/avin-ai-digital-footprint-os-2.0-overview.md)
 - [Prompt and Skill Library](./02-prompts-and-skills/README.md)
+- [AI Workflow Explorer Positioning](./03-positioning/avin-ai-workflow-explorer-positioning.md)
 - [Featured Case Study](./04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
 ## Automation Included

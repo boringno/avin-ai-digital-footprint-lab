@@ -24,6 +24,10 @@ It lists Markdown documents in this repository by folder and first H1 title.
 - [數位足跡資產官 | Digital Asset Review Skill](02-prompts-and-skills/digital-asset-review-skill.md)
 - [多平台內容轉譯師 | Multi-Platform Content Skill](02-prompts-and-skills/multi-platform-content-skill.md)
 
+## 03-positioning
+
+- [AVIN AI 工作流探索者｜核心定位](03-positioning/avin-ai-workflow-explorer-positioning.md)
+
 ## 03-workflows
 
 - [Learning To Content](03-workflows/learning-to-content.md)
