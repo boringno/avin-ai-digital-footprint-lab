@@ -47,6 +47,10 @@ It lists Markdown documents in this repository by folder and first H1 title.
 - [Portfolio Case Template](05-templates/portfolio-case-template.md)
 - [Resume Bullet Template](05-templates/resume-bullet-template.md)
 
+## 06-platform-outputs
+
+- [GitHub Profile README 草稿](06-platform-outputs/github-profile-readme-draft.md)
+
 ## Root Documents
 
 - [Changelog](CHANGELOG.md)
