@@ -5,34 +5,34 @@
     {
       "id": "openai-news",
       "name": "OpenAI News",
-      "platform": "OpenAI",
+      "platform": "OpenAI Blog",
       "url": "https://openai.com/news/rss.xml",
-      "type": "official-news",
+      "type": "產業觀察",
       "enabled": true
     },
     {
       "id": "google-ai-keyword",
       "name": "Google Blog RSS",
-      "platform": "Google AI",
+      "platform": "Google AI Blog",
       "url": "https://blog.google/rss/",
-      "type": "official-blog",
+      "type": "產業觀察",
       "enabled": true,
       "notes": "Official Google Blog feed. Broader than AI-only posts."
     },
     {
       "id": "github-ai-ml",
       "name": "GitHub Blog AI & ML",
-      "platform": "GitHub",
+      "platform": "GitHub Blog",
       "url": "https://github.blog/ai-and-ml/feed/",
-      "type": "official-blog",
+      "type": "產業觀察",
       "enabled": true
     },
     {
       "id": "hugging-face-blog",
       "name": "Hugging Face Blog",
-      "platform": "Hugging Face",
+      "platform": "Hugging Face Blog",
       "url": "https://huggingface.co/blog/feed.xml",
-      "type": "official-blog",
+      "type": "產業觀察",
       "enabled": true
     },
     {
@@ -40,32 +40,33 @@
       "name": "The Batch",
       "platform": "DeepLearning.AI",
       "url": "https://www.deeplearning.ai/the-batch/feed/",
-      "type": "newsletter",
-      "enabled": true
+      "type": "產業觀察",
+      "enabled": false,
+      "notes": "Disabled because the current feed URL returns 404."
     },
     {
       "id": "hn-ai",
       "name": "Hacker News AI Search",
       "platform": "Hacker News",
       "url": "https://hnrss.org/newest?q=AI",
-      "type": "community-signal",
+      "type": "產業觀察",
       "enabled": true
     },
     {
       "id": "anthropic-news",
       "name": "Anthropic News",
-      "platform": "Anthropic",
+      "platform": "Anthropic News",
       "url": "",
-      "type": "official-news",
+      "type": "產業觀察",
       "enabled": false,
       "notes": "No stable official RSS feed confirmed yet. Enable only after adding a verified feed URL."
     },
     {
       "id": "github-trending-ai",
       "name": "GitHub Trending AI",
-      "platform": "GitHub",
+      "platform": "GitHub Trending",
       "url": "",
-      "type": "community-signal",
+      "type": "產業觀察",
       "enabled": false,
       "notes": "No stable official RSS feed confirmed yet. Add a trusted feed manually if needed."
     }
