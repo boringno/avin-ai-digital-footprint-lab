@@ -50,6 +50,7 @@ It lists Markdown documents in this repository by folder and first H1 title.
 ## 06-platform-outputs
 
 - [GitHub Profile README 草稿](06-platform-outputs/github-profile-readme-draft.md)
+- [LinkedIn Profile Update Draft](06-platform-outputs/linkedin-profile-update-draft.md)
 
 ## Root Documents
 
