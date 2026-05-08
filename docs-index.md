@@ -12,6 +12,10 @@ It lists Markdown documents in this repository by folder and first H1 title.
 
 - [Learning Notes](01-learning-notes/README.md)
 
+## 01-system-overview
+
+- [AVIN AI 數位足跡 OS 2.0｜系統總覽](01-system-overview/avin-ai-digital-footprint-os-2.0-overview.md)
+
 ## 02-prompts-and-skills
 
 - [AI 研究拆解師 | AI Research Breakdown Skill](02-prompts-and-skills/ai-research-breakdown-skill.md)

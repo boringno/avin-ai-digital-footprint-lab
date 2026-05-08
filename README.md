@@ -105,6 +105,7 @@ avin-ai-digital-footprint-lab/
 
 - [User Guide](./USER_GUIDE.md)
 - [Docs Index](./docs-index.md)
+- [System Overview](./01-system-overview/avin-ai-digital-footprint-os-2.0-overview.md)
 - [Prompt and Skill Library](./02-prompts-and-skills/)
 - [Featured Case Study](./04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
