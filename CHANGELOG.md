@@ -17,3 +17,4 @@ All notable changes to this repository should be documented in this file.
 - free docs index generation automation
 - GitHub Actions workflows
 - environment variable example
+- free AI signal radar config, script, and workflow

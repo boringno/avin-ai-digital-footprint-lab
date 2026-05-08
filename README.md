@@ -57,13 +57,17 @@ avin-ai-digital-footprint-lab/
 │   ├── github-doc-template.md
 │   ├── portfolio-case-template.md
 │   └── resume-bullet-template.md
+├── config/
+│   └── ai-signal-sources.json
 ├── scripts/
 │   ├── notion-to-github-issues.js
-│   └── generate-docs-index.js
+│   ├── generate-docs-index.js
+│   └── collect-ai-signals.js
 ├── .github/
 │   └── workflows/
 │       ├── notion-to-github-issues.yml
-│       └── generate-docs-index.yml
+│       ├── generate-docs-index.yml
+│       └── collect-ai-signals.yml
 ├── docs-index.md
 ├── .env.example
 └── CHANGELOG.md
@@ -77,6 +81,7 @@ avin-ai-digital-footprint-lab/
 - `03-workflows/`: repeatable workflows for turning learning into public assets
 - `04-case-studies/`: longer-form breakdowns of systems, experiments, and transitions
 - `05-templates/`: starter templates for notes, posts, docs, and portfolio assets
+- `config/`: source configuration for free automation jobs
 - `scripts/`: free automation scripts powered by Node.js
 - `.github/workflows/`: GitHub Actions workflows for scheduled and push-based automation
 
@@ -144,6 +149,26 @@ On every push to `main`, scan all Markdown files, read their first H1 title, and
 
 If the file changes, GitHub Actions commits the updated index automatically.
 
+### 3. AI Signal Radar
+
+Purpose:
+Collect daily AI signals from configured RSS feeds and write them into the Notion database `AI 靈感雷達｜Daily Signal Inbox`.
+
+Scope:
+
+- collect and dedupe RSS items
+- write title, source, link, type, summary, and date into Notion
+- stay free by using source excerpts as the first-pass summary field
+- keep final opinion and publishing decisions manual
+
+Default behavior:
+
+- runs once per day
+- reads source URLs from `config/ai-signal-sources.json`
+- writes at most 15 signals per run by default
+- skips items when the same original link already exists in Notion
+- skips items when the title and source platform already exist together
+
 ## Setup
 
 ### Create a Notion Integration
@@ -166,6 +191,7 @@ Set the following repository secrets in GitHub:
 
 - `NOTION_TOKEN`
 - `NOTION_DATABASE_ID`
+- `NOTION_AI_SIGNAL_DATABASE_ID`
 
 You do not need to manually create `GITHUB_TOKEN` for GitHub Actions. The built-in `secrets.GITHUB_TOKEN` is used by default.
 
@@ -184,6 +210,7 @@ The included [.env.example](./.env.example) shows the expected variables:
 ```text
 NOTION_TOKEN=
 NOTION_DATABASE_ID=
+NOTION_AI_SIGNAL_DATABASE_ID=
 GITHUB_REPOSITORY=
 GITHUB_TOKEN=
 ```
@@ -195,10 +222,12 @@ PowerShell example:
 ```powershell
 $env:NOTION_TOKEN="your_notion_token"
 $env:NOTION_DATABASE_ID="your_database_id"
+$env:NOTION_AI_SIGNAL_DATABASE_ID="your_ai_signal_database_id"
 $env:GITHUB_REPOSITORY="owner/repo"
 $env:GITHUB_TOKEN="your_personal_access_token"
 node scripts/notion-to-github-issues.js
 node scripts/generate-docs-index.js
+node scripts/collect-ai-signals.js
 ```
 
 ## Manual Testing
@@ -219,12 +248,23 @@ node scripts/generate-docs-index.js
 3. Open the `generate-docs-index` workflow run.
 4. Confirm that `docs-index.md` was updated and committed when needed.
 
+### Test the AI Signal Radar Workflow
+
+1. Create a Notion database named `AI 靈感雷達｜Daily Signal Inbox`.
+2. Add these suggested properties:
+   `訊號標題`, `來源平台`, `原始連結`, `類型`, `AI 摘要`, `AVIN 消化筆記`, `可轉內容`, `狀態`, `優先級`, `建立日期`
+3. Add `NOTION_AI_SIGNAL_DATABASE_ID` as a GitHub Actions secret.
+4. Run `collect-ai-signals` manually from the `Actions` tab using `workflow_dispatch`.
+5. Confirm that new rows appear in Notion and that duplicate links are skipped on repeated runs.
+
 ## How To Confirm It Worked
 
 - the `notion-to-github-issues` workflow run finishes successfully
 - a new GitHub Issue appears with the expected `[Docs]` title
 - the issue body contains the Notion link and the hidden Notion page id marker
 - `docs-index.md` lists the expected Markdown files and titles
+- the `collect-ai-signals` workflow run reports collected and skipped counts
+- the AI signal inbox in Notion receives new rows without duplicating the same original link
 
 ## Troubleshooting
 
@@ -263,6 +303,16 @@ Check:
 - the changed files are actually inside the repository
 - the generated output is different from the committed version
 
+### AI signal radar did not write to Notion
+
+Check:
+
+- `NOTION_AI_SIGNAL_DATABASE_ID` is correct
+- the AI signal inbox database is shared with the integration
+- the database contains a title property that can hold `訊號標題`
+- the configured RSS feed URLs still respond with valid XML
+- duplicate detection did not already skip the item because the same link or title plus source already exists
+
 ## Roadmap
 
 - add the first real AI learning notes
@@ -271,3 +321,4 @@ Check:
 - add issue templates for new notes and new workflows
 - connect published GitHub docs back to LinkedIn or other public channels
 - refine the Notion schema after real weekly usage
+- upgrade AI signal summaries from feed excerpts to a local or low-cost model only when the free workflow proves useful

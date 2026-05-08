@@ -1,0 +1,73 @@
+{
+  "daily_limit": 15,
+  "lookback_days": 7,
+  "sources": [
+    {
+      "id": "openai-news",
+      "name": "OpenAI News",
+      "platform": "OpenAI",
+      "url": "https://openai.com/news/rss.xml",
+      "type": "official-news",
+      "enabled": true
+    },
+    {
+      "id": "google-ai-keyword",
+      "name": "Google Blog RSS",
+      "platform": "Google AI",
+      "url": "https://blog.google/rss/",
+      "type": "official-blog",
+      "enabled": true,
+      "notes": "Official Google Blog feed. Broader than AI-only posts."
+    },
+    {
+      "id": "github-ai-ml",
+      "name": "GitHub Blog AI & ML",
+      "platform": "GitHub",
+      "url": "https://github.blog/ai-and-ml/feed/",
+      "type": "official-blog",
+      "enabled": true
+    },
+    {
+      "id": "hugging-face-blog",
+      "name": "Hugging Face Blog",
+      "platform": "Hugging Face",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "type": "official-blog",
+      "enabled": true
+    },
+    {
+      "id": "the-batch",
+      "name": "The Batch",
+      "platform": "DeepLearning.AI",
+      "url": "https://www.deeplearning.ai/the-batch/feed/",
+      "type": "newsletter",
+      "enabled": true
+    },
+    {
+      "id": "hn-ai",
+      "name": "Hacker News AI Search",
+      "platform": "Hacker News",
+      "url": "https://hnrss.org/newest?q=AI",
+      "type": "community-signal",
+      "enabled": true
+    },
+    {
+      "id": "anthropic-news",
+      "name": "Anthropic News",
+      "platform": "Anthropic",
+      "url": "",
+      "type": "official-news",
+      "enabled": false,
+      "notes": "No stable official RSS feed confirmed yet. Enable only after adding a verified feed URL."
+    },
+    {
+      "id": "github-trending-ai",
+      "name": "GitHub Trending AI",
+      "platform": "GitHub",
+      "url": "",
+      "type": "community-signal",
+      "enabled": false,
+      "notes": "No stable official RSS feed confirmed yet. Add a trusted feed manually if needed."
+    }
+  ]
+}
