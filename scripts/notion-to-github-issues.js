@@ -8,11 +8,13 @@
 const NOTION_API_VERSION = "2022-06-28";
 const DEFAULT_NOTION_STATUS = "需更新";
 const DEFAULT_PRIORITY = "高";
+const BACKFILLED_NOTION_STATUS = "已整理文件";
 const PROPERTY_NAMES = {
   topic: ["主題名稱", "Name", "Topic"],
   githubStatus: ["GitHub 狀態", "GitHub Status"],
   priority: ["更新優先級", "Priority"],
   githubLink: ["GitHub 連結", "GitHub Link"],
+  notes: ["備註", "Notes"],
   contentType: ["內容類型", "Content Type"],
   zhSummary: ["中文版摘要", "中文摘要"],
   enSummary: ["英文版摘要", "English Summary"],
@@ -88,14 +90,34 @@ function extractPlainTextFromProperty(property) {
 function findProperty(properties, candidates) {
   for (const name of candidates) {
     if (properties[name]) {
-      return properties[name];
+      return { name, value: properties[name] };
     }
   }
   return null;
 }
 
 function readProperty(properties, candidates) {
-  return extractPlainTextFromProperty(findProperty(properties, candidates));
+  return extractPlainTextFromProperty(findProperty(properties, candidates)?.value);
+}
+
+function buildRichTextItems(text) {
+  if (!text) {
+    return [];
+  }
+
+  const chunks = [];
+  const maxLength = 2000;
+
+  for (let index = 0; index < text.length; index += maxLength) {
+    chunks.push({
+      type: "text",
+      text: {
+        content: text.slice(index, index + maxLength),
+      },
+    });
+  }
+
+  return chunks;
 }
 
 async function notionRequest(url, options) {
@@ -238,6 +260,104 @@ async function createIssue(githubToken, owner, repo, title, body) {
   });
 }
 
+async function updateNotionPage(notionToken, pageId, properties) {
+  return notionRequest(`https://api.notion.com/v1/pages/${pageId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${notionToken}`,
+      "Content-Type": "application/json",
+      "Notion-Version": NOTION_API_VERSION,
+    },
+    body: JSON.stringify({ properties }),
+  });
+}
+
+function buildNotionBackfillProperties(page, createdIssue) {
+  const properties = page.properties || {};
+  const githubLinkProperty = findProperty(properties, PROPERTY_NAMES.githubLink);
+  const githubStatusProperty = findProperty(properties, PROPERTY_NAMES.githubStatus);
+  const notesProperty = findProperty(properties, PROPERTY_NAMES.notes);
+  const propertyPayload = {};
+  const warnings = [];
+  const noteLine = `已建立 GitHub Issue #${createdIssue.number}：${createdIssue.html_url}`;
+
+  if (!githubLinkProperty) {
+    warnings.push("Notion property not found: GitHub 連結");
+  } else if (githubLinkProperty.value.type === "url") {
+    propertyPayload[githubLinkProperty.name] = { url: createdIssue.html_url };
+  } else if (githubLinkProperty.value.type === "rich_text") {
+    propertyPayload[githubLinkProperty.name] = {
+      rich_text: buildRichTextItems(createdIssue.html_url),
+    };
+  } else {
+    warnings.push(
+      `Notion property "GitHub 連結" has unsupported type: ${githubLinkProperty.value.type}`
+    );
+  }
+
+  if (!githubStatusProperty) {
+    warnings.push("Notion property not found: GitHub 狀態");
+  } else if (githubStatusProperty.value.type === "status") {
+    propertyPayload[githubStatusProperty.name] = {
+      status: { name: BACKFILLED_NOTION_STATUS },
+    };
+  } else if (githubStatusProperty.value.type === "select") {
+    propertyPayload[githubStatusProperty.name] = {
+      select: { name: BACKFILLED_NOTION_STATUS },
+    };
+  } else if (githubStatusProperty.value.type === "rich_text") {
+    propertyPayload[githubStatusProperty.name] = {
+      rich_text: buildRichTextItems(BACKFILLED_NOTION_STATUS),
+    };
+  } else {
+    warnings.push(
+      `Notion property "GitHub 狀態" has unsupported type: ${githubStatusProperty.value.type}`
+    );
+  }
+
+  if (!notesProperty) {
+    warnings.push("Notion property not found: 備註");
+  } else if (notesProperty.value.type === "rich_text") {
+    const existingNotes = extractPlainTextFromProperty(notesProperty.value);
+    const nextNotes = existingNotes ? `${existingNotes}\n${noteLine}` : noteLine;
+    propertyPayload[notesProperty.name] = {
+      rich_text: buildRichTextItems(nextNotes),
+    };
+  } else if (notesProperty.value.type === "title") {
+    const existingNotes = extractPlainTextFromProperty(notesProperty.value);
+    const nextNotes = existingNotes ? `${existingNotes}\n${noteLine}` : noteLine;
+    propertyPayload[notesProperty.name] = {
+      title: buildRichTextItems(nextNotes),
+    };
+  } else {
+    warnings.push(`Notion property "備註" has unsupported type: ${notesProperty.value.type}`);
+  }
+
+  return { propertyPayload, warnings };
+}
+
+async function backfillNotionAfterIssueCreate(notionToken, page, createdIssue) {
+  const { propertyPayload, warnings } = buildNotionBackfillProperties(page, createdIssue);
+
+  for (const warning of warnings) {
+    console.warn(`Warning for page ${page.id}: ${warning}`);
+  }
+
+  if (Object.keys(propertyPayload).length === 0) {
+    console.warn(`Warning for page ${page.id}: no compatible Notion properties were available to update.`);
+    return;
+  }
+
+  try {
+    await updateNotionPage(notionToken, page.id, propertyPayload);
+    console.log(`Backfilled Notion page ${page.id} after creating issue #${createdIssue.number}.`);
+  } catch (error) {
+    console.warn(
+      `Warning for page ${page.id}: failed to backfill Notion after creating issue #${createdIssue.number}: ${error.message}`
+    );
+  }
+}
+
 async function main() {
   try {
     const notionToken = getRequiredEnv("NOTION_TOKEN");
@@ -306,6 +426,7 @@ async function main() {
       const created = await createIssue(githubToken, owner, repo, issueTitle, issueBody);
 
       console.log(`Created issue #${created.number}: ${created.html_url}`);
+      await backfillNotionAfterIssueCreate(notionToken, page, created);
       issues.push(created);
       createdCount += 1;
     }
