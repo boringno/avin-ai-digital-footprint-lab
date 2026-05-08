@@ -18,6 +18,7 @@ It lists Markdown documents in this repository by folder and first H1 title.
 
 ## 02-prompts-and-skills
 
+- [四大核心 Skills｜AI 數位足跡引擎 3.0](02-prompts-and-skills/README.md)
 - [AI 研究拆解師 | AI Research Breakdown Skill](02-prompts-and-skills/ai-research-breakdown-skill.md)
 - [可信度與去 AI 味審查官 | Credibility Review Skill](02-prompts-and-skills/credibility-review-skill.md)
 - [數位足跡資產官 | Digital Asset Review Skill](02-prompts-and-skills/digital-asset-review-skill.md)
