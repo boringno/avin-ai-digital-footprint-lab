@@ -111,6 +111,7 @@ avin-ai-digital-footprint-lab/
 - [AI Workflow Explorer Positioning](./03-positioning/avin-ai-workflow-explorer-positioning.md)
 - [GitHub Profile README Draft](./06-platform-outputs/github-profile-readme-draft.md)
 - [LinkedIn Profile Update Draft](./06-platform-outputs/linkedin-profile-update-draft.md)
+- [Personal Website Hero Draft](./06-platform-outputs/personal-website-hero-draft.md)
 - [Featured Case Study](./04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
 ## Automation Included

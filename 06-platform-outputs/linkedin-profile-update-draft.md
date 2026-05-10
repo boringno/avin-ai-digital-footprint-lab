@@ -6,6 +6,26 @@
 
 ---
 
+## 更新狀態
+
+這份文件已從草稿狀態進入實際使用紀錄。
+
+目前 LinkedIn 已完成實際更新，已上線內容包含：
+
+- Headline
+- About
+- Featured
+- Experience / Project
+
+本次實際採用方向如下：
+
+- 職稱選用：`AI Operations Strategist`
+- Headline 維持 `AI Workflow Explorer` 定位
+- Featured 連結放置 GitHub 主 repo
+- 文件用途由草稿整理，轉為更新完成後的留存與回寫紀錄
+
+---
+
 ## 一、這份更新包要解決什麼
 
 目前 Stage 1 Project Log 已經進入 GitHub 公開證據層，代表這套系統不再只是內部想法，而是已經有：
