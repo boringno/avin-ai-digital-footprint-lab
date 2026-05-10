@@ -1,0 +1,19 @@
+專案名稱：AVIN AI Digital Footprint OS
+定位：公開建構中的 AI Workflow Explorer
+
+簡介：
+AVIN 正在學習 AI、研究 AI 工具、實測工作流，並把過程整理成 GitHub 文件、LinkedIn 輸出、個人網站與可長期累積的公開數位足跡，讓學習與實測能被搜尋、驗證、展示與持續累積。
+
+重要連結：
+- GitHub 公開實驗室：https://github.com/boringno/avin-ai-digital-footprint-lab
+- LinkedIn：https://www.linkedin.com/in/iven-%E9%98%BF%E6%BA%AB-848872190/?skipRedirect=true
+- 個人網站首頁：https://boringno.github.io/avin-ai-digital-footprint-lab/
+- Stage 1 階段日誌：https://github.com/boringno/avin-ai-digital-footprint-lab/blob/main/00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md
+- Hero Markdown source of truth：https://github.com/boringno/avin-ai-digital-footprint-lab/blob/main/06-platform-outputs/personal-website-hero-draft.md
+
+內容策略：
+- Markdown 是 source of truth
+- HTML 是對外展示頁
+- GitHub 是公開證據層
+- LinkedIn 是曝光層
+- 個人網站是入口層
