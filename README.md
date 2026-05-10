@@ -112,6 +112,7 @@ avin-ai-digital-footprint-lab/
 - [GitHub Profile README Draft](./06-platform-outputs/github-profile-readme-draft.md)
 - [LinkedIn Profile Update Draft](./06-platform-outputs/linkedin-profile-update-draft.md)
 - [Personal Website Hero Draft](./06-platform-outputs/personal-website-hero-draft.md)
+- [Static Website Homepage](./website/index.html)
 - [Featured Case Study](./04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
 ## Automation Included

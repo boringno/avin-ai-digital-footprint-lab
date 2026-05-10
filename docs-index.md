@@ -62,3 +62,8 @@ It lists Markdown documents in this repository by folder and first H1 title.
 - [Changelog](CHANGELOG.md)
 - [AVIN AI Digital Footprint Lab](README.md)
 - [AI 數位足跡同步中心｜使用說明 v1.1](USER_GUIDE.md)
+
+## website
+
+- [AVIN 個人網站首頁雛形](website/index.html)
+  Website HTML entry is manually maintained until docs-index generator supports HTML files.
