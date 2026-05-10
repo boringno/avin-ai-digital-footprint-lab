@@ -8,6 +8,10 @@ It lists Markdown documents in this repository by folder and first H1 title.
 
 - [AI Workflow Explorer](00-manifesto/ai-workflow-explorer.md)
 
+## 00-project-log
+
+- [AI 數位足跡 OS｜階段日誌、交接摘要與專案背景收斂](00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md)
+
 ## 01-learning-notes
 
 - [Learning Notes](01-learning-notes/README.md)

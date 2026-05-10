@@ -105,6 +105,7 @@ avin-ai-digital-footprint-lab/
 
 - [User Guide](./USER_GUIDE.md)
 - [Docs Index](./docs-index.md)
+- [Stage 1 Project Log](./00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md)
 - [System Overview](./01-system-overview/avin-ai-digital-footprint-os-2.0-overview.md)
 - [Prompt and Skill Library](./02-prompts-and-skills/README.md)
 - [AI Workflow Explorer Positioning](./03-positioning/avin-ai-workflow-explorer-positioning.md)
