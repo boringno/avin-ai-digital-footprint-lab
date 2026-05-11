@@ -49,6 +49,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [Weekly AI Signal Selection Template](04-workflows/templates/weekly-ai-signal-selection-template.md)
 - [Weekly AI Signal to Public Content Workflow](04-workflows/weekly-ai-signal-to-public-content-workflow.md)
+- [Weekly AI Signal Review](04-workflows/weekly-reviews/2026-05-11-weekly-ai-signal-review.md)
 
 ## 05-templates
 
