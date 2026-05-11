@@ -58,6 +58,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [GitHub Profile README 草稿](06-platform-outputs/github-profile-readme-draft.md)
 - [LinkedIn 實際更新包](06-platform-outputs/linkedin-profile-update-draft.md)
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
+- [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
 - [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
 
 ## Root Documents
