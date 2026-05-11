@@ -51,6 +51,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Weekly AI Signal to Public Content Workflow](04-workflows/weekly-ai-signal-to-public-content-workflow.md)
 - [Weekly AI Signal Review](04-workflows/weekly-reviews/2026-05-11-weekly-ai-signal-review.md)
 
+## 05-ai-signal-notes
+
+- [llms.txt as an AI-readable entry point for personal websites](05-ai-signal-notes/2026-05-11-llms-txt-ai-readable-personal-website.md)
+
 ## 05-templates
 
 - [GitHub Doc Template](05-templates/github-doc-template.md)
