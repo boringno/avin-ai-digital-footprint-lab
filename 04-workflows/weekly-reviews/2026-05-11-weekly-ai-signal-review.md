@@ -146,4 +146,4 @@ What should be added to the OS?
 
 ## 7. Status
 
-- Selected
+- Published / Documented

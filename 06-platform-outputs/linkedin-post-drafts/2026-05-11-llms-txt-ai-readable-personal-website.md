@@ -4,7 +4,7 @@
 
 分類：LinkedIn Post Draft / AI-readable Content  
 
-狀態：Draft
+狀態：Published on LinkedIn
 
 ---
 

@@ -68,6 +68,8 @@
   `https://boringno.github.io/avin-ai-digital-footprint-lab/llms.txt`
 - GitHub repo:
   `https://github.com/boringno/avin-ai-digital-footprint-lab`
+- LinkedIn post:
+  Published on LinkedIn. Exact post URL to be added.
 - LinkedIn post draft:
   `06-platform-outputs/linkedin-post-drafts/2026-05-11-llms-txt-ai-readable-personal-website.md`
 - Weekly review:
@@ -78,4 +80,5 @@
 ## 8. Status
 
 - Drafted as GitHub note
-- Ready to support LinkedIn publishing
+- LinkedIn post published
+- Ready as documented GitHub note
