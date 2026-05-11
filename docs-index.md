@@ -14,6 +14,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [GitHub Pages Public Entry Launch](00-project-log/2026-05-11-github-pages-public-entry-launch.md)
 - [Personal Website v1 Completed](00-project-log/2026-05-11-personal-website-v1-milestone.md)
 - [Signal 1 Lifecycle Completed](00-project-log/2026-05-11-signal-1-lifecycle-completed.md)
+- [Stage 1 Summary: Public Entry Layer + First AI Signal Loop](00-project-log/2026-05-11-stage-1-public-entry-and-signal-loop-summary.md)
 
 ## 01-learning-notes
 
