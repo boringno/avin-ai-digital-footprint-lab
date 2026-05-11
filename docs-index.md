@@ -12,6 +12,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [AI 數位足跡 OS｜階段日誌、交接摘要與專案背景收斂](00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md)
 - [GitHub Pages Public Entry Launch](00-project-log/2026-05-11-github-pages-public-entry-launch.md)
+- [Personal Website v1 Completed](00-project-log/2026-05-11-personal-website-v1-milestone.md)
 
 ## 01-learning-notes
 
