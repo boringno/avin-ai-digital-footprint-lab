@@ -45,6 +45,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [Threads 內容生產引擎 2.0 → AI 數位足跡引擎 3.0](04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
+## 04-workflows
+
+- [Weekly AI Signal to Public Content Workflow](04-workflows/weekly-ai-signal-to-public-content-workflow.md)
+
 ## 05-templates
 
 - [GitHub Doc Template](05-templates/github-doc-template.md)
