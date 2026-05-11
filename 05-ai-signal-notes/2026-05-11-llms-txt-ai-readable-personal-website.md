@@ -69,7 +69,7 @@
 - GitHub repo:
   `https://github.com/boringno/avin-ai-digital-footprint-lab`
 - LinkedIn post:
-  Published on LinkedIn. Exact post URL to be added.
+  `https://www.linkedin.com/posts/iven-%E9%98%BF%E6%BA%AB-848872190_%E6%88%91%E6%9C%80%E8%BF%91%E5%9C%A8%E5%80%8B%E4%BA%BA%E7%B6%B2%E7%AB%99%E5%8A%A0%E4%BA%86%E4%B8%80%E5%80%8B%E5%B0%8F%E6%AA%94%E6%A1%88llmstxt-%E5%AE%83%E4%B8%8D%E6%98%AF%E7%B5%A6%E4%BA%BA%E7%9C%8B%E7%9A%84%E6%BC%82%E4%BA%AE%E9%A0%81%E9%9D%A2%E8%80%8C%E6%98%AF%E7%B5%A6-share-7459449091056615424-QYJT?utm_source=share&utm_medium=member_desktop&rcm=ACoAACz6aTgBv-ouRu4G4kpqEiADiCoFk5yZDAE`
 - LinkedIn post draft:
   `06-platform-outputs/linkedin-post-drafts/2026-05-11-llms-txt-ai-readable-personal-website.md`
 - Weekly review:
