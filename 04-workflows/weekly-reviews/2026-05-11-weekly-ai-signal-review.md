@@ -32,20 +32,20 @@
 ### Signal 1
 
 ```text
-Signal title:
-Source:
-Link:
-Captured date:
-One-sentence summary:
-Why it caught my attention:
-Relevance to AI Workflow Explorer: /5
-Workflow potential: /5
-Documentation potential: /5
-Public content potential: /5
-Connection to AVIN background: /5
-Effort to test or explain: /5
-Decision: Keep / Skip / Later
-Selected output type:
+Signal title: llms.txt as an AI-readable entry point for personal websites
+Source: AVIN AI Digital Footprint OS website v1 launch
+Link: https://boringno.github.io/avin-ai-digital-footprint-lab/llms.txt
+Captured date: 2026-05-11
+One-sentence summary: llms.txt can act as a lightweight AI-readable guide that helps LLMs understand a personal website, public project structure, key links, and positioning.
+Why it caught my attention: AVIN has just launched a GitHub Pages homepage and made /llms.txt publicly accessible, turning the website from a human-facing page into a dual human-readable and AI-readable entry layer.
+Relevance to AI Workflow Explorer: 5/5
+Workflow potential: 5/5
+Documentation potential: 5/5
+Public content potential: 4/5
+Connection to AVIN background: 4/5
+Effort to test or explain: 2/5
+Decision: Keep
+Selected output type: LinkedIn post + GitHub note
 ```
 
 ### Signal 2
@@ -91,14 +91,14 @@ Selected output type:
 ## 4. Weekly Selection
 
 ```text
-Selected Signal 1:
+Selected Signal 1: llms.txt as an AI-readable entry point for personal websites
 Selected Signal 2:
 Selected Signal 3:
-Main public output this week:
-Secondary output:
-Documentation target:
-LinkedIn angle:
-GitHub file / issue target:
+Main public output this week: LinkedIn post explaining why AVIN added llms.txt to the personal website
+Secondary output: GitHub note documenting llms.txt as part of the AI-readable layer
+Documentation target: GitHub project log or workflow note
+LinkedIn angle: A personal website is no longer only for humans. It can also provide a readable entry point for AI systems through lightweight context files like llms.txt.
+GitHub file / issue target: Create a short note under project logs or workflows explaining the llms.txt entry layer.
 ```
 
 ---
@@ -107,11 +107,25 @@ GitHub file / issue target:
 
 ```text
 What is the signal?
+llms.txt is a lightweight context file that can help AI systems understand the structure, purpose, and key links of a public project or personal website.
+
 Why does it matter?
+As AI search and LLM-based browsing become more common, personal websites and public portfolios should not only be visually readable but also structurally understandable by AI.
+
 What workflow does it imply?
+When publishing a personal website or public project, create both a human-facing homepage and an AI-readable context file.
+
 How could AVIN test it?
+Ask AI tools to read the website and /llms.txt, then compare whether they can summarize AVIN's positioning and project structure more accurately.
+
 What can be published?
+A LinkedIn post, a GitHub note, and a small documentation update explaining the role of llms.txt in AVIN AI Digital Footprint OS.
+
 What should be linked back?
+- Website homepage
+- llms.txt
+- GitHub repo
+- Personal Website v1 milestone log
 ```
 
 ---
@@ -120,8 +134,11 @@ What should be linked back?
 
 ```text
 What did I learn this week?
+
 What became a reusable workflow?
+
 What should be ignored next time?
+
 What should be added to the OS?
 ```
 
@@ -129,4 +146,4 @@ What should be added to the OS?
 
 ## 7. Status
 
-- Draft / Selected / Published / Documented
+- Selected
