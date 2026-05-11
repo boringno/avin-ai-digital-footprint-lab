@@ -69,6 +69,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 ## 06-platform-outputs
 
 - [LinkedIn Website Entry Update](06-platform-outputs/2026-05-11-linkedin-website-entry-update.md)
+- [你的 AI 工具今天正常嗎？](06-platform-outputs/carousel-final-versions/2026-05-11-gawk-dev-ai-tool-status-radar-final-carousel.md)
 - [你的 AI 工具今天正常嗎？](06-platform-outputs/carousel-test-materials/2026-05-11-gawk-dev-ai-tool-status-radar-carousel.md)
 - [Gawk Dev Carousel Comparison Note](06-platform-outputs/carousel-test-results/2026-05-11-gawk-dev-carousel-comparison-note.md)
 - [Gawk Dev External Carousel Output v1](06-platform-outputs/carousel-test-results/2026-05-11-gawk-dev-external-carousel-output-v1.md)
