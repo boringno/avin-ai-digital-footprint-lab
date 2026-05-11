@@ -1,16 +1,14 @@
 # External Skill Evaluation Workflow
 
-日期：2026-05-11  
-
-分類：Workflow / Skill Evaluation  
-
-狀態：Draft
+Date: 2026-05-11
+Type: Workflow / Skill Evaluation
+Status: Draft
 
 ---
 
 ## 1. Purpose
 
-說明 AVIN 不閉門造車，會先實測外部 skill，再決定是否導入、在地化或拒絕。
+這個流程說明 AVIN 不閉門造車，也不會直接把外部 skill 整包接進來。做法是先實測外部 skill，再決定是否導入、在地化、融合，或直接拒絕。
 
 ---
 
@@ -38,21 +36,10 @@
 
 ## 4. Decision Types
 
-### Adopt
-
-直接採用
-
-### Localize
-
-保留外部優點，但補回 AVIN 語氣與 OS 脈絡
-
-### Merge
-
-融合進本地 skill
-
-### Reject
-
-不採用
+- Adopt: 直接採用
+- Localize: 保留外部優點，但補回 AVIN 語氣與 OS 脈絡
+- Merge: 融合進本地 skill
+- Reject: 不採用
 
 ---
 

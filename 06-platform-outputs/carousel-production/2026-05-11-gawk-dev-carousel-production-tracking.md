@@ -1,10 +1,8 @@
 # Gawk Dev AI Tool Status Radar Carousel Production Tracking
 
-日期：2026-05-11  
-
-分類：Carousel Production / Tracking  
-
-狀態：Designed / Scheduled
+Date: 2026-05-11
+Type: Carousel Production / Tracking
+Status: Designed / Scheduled
 
 ---
 

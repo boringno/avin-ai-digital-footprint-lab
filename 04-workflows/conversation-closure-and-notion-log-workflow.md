@@ -1,23 +1,21 @@
 # Conversation Closure and Notion Log Workflow
 
-日期：2026-05-11  
-
-分類：Workflow / Closure / Notion  
-
-狀態：Draft
+Date: 2026-05-11
+Type: Workflow / Closure / Notion
+Status: Draft
 
 ---
 
 ## 1. Purpose
 
-此流程用於以下情境的收斂：
+This workflow is used to close and compress work when:
 
-- 對話太長
-- 任務完成前
-- Codex 關閉前
-- 需要交接時
+- 對話太長，需要中途收斂
+- 任務尚未完成，但已經完成一個明確階段
+- Codex 關閉前需要留下可接續的紀錄
+- 需要交接給其他 AI 或之後的自己
 
-目標不是只做技術紀錄，而是把技術收斂、策略判斷、AVIN 的觀點與下一步，都整理成可交接、可回寫、可延續的 OS 記憶。
+這份流程的目的不是只做摘要，而是把工作進度、判斷脈絡、下一步與記憶回寫一起整理好，讓 AVIN AI Digital Footprint OS 可以持續累積而不是每次重來。
 
 ---
 
@@ -85,17 +83,17 @@
 
 ## 9. Standard Prompt
 
-可使用以下摘要版提示，作為對話收斂與 Notion 日誌回寫的標準起點：
+以下是目前可重用的「對話收斂與 Notion 日誌回寫」提示詞摘要版：
 
 ```text
-請幫我做一次對話收斂與 Notion 日誌回寫。
+請根據目前這輪工作的進度，做一次對話收斂與 Notion 日誌回寫準備。
 
 請整理：
-1. 這一輪完成了什麼
-2. 哪些檔案 / 連結 / 輸出已經產生
-3. 目前 repo 狀態與 lifecycle 狀態
-4. 下一步建議
-5. 幫我轉成一版適合 Notion 的 AI工作室日誌
+1. 這一輪完成了哪些明確成果
+2. 還有哪些未完成 / 待確認 / 待發布事項
+3. repo / GitHub / lifecycle 還缺哪些回寫
+4. 下一步最合理的接續動作
+5. 一段可寫進 Notion 的 AI工作室日誌
 
-寫法不要只有流水帳，要保留 AVIN 的觀點、策略判斷與為什麼這樣選。
+請不要只列事情，要保留 AVIN 的觀點、判斷與為什麼這樣做。
 ```
