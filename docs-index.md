@@ -63,6 +63,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [LinkedIn Website Entry Update](06-platform-outputs/2026-05-11-linkedin-website-entry-update.md)
 - [GitHub Profile README 草稿](06-platform-outputs/github-profile-readme-draft.md)
+- [LinkedIn Post Draft｜llms.txt as an AI-readable Personal Website Layer](06-platform-outputs/linkedin-post-drafts/2026-05-11-llms-txt-ai-readable-personal-website.md)
 - [LinkedIn 實際更新包](06-platform-outputs/linkedin-profile-update-draft.md)
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
 - [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
