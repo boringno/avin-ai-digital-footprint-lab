@@ -49,7 +49,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 04-workflows
 
+- [Conversation Closure and Notion Log Workflow](04-workflows/conversation-closure-and-notion-log-workflow.md)
 - [External Carousel Skill Test Plan](04-workflows/external-carousel-skill-test-plan.md)
+- [External Skill Evaluation Workflow](04-workflows/external-skill-evaluation-workflow.md)
 - [Weekly AI Signal Selection Template](04-workflows/templates/weekly-ai-signal-selection-template.md)
 - [Weekly AI Signal to Public Content Workflow](04-workflows/weekly-ai-signal-to-public-content-workflow.md)
 - [Weekly AI Signal Review](04-workflows/weekly-reviews/2026-05-11-weekly-ai-signal-review.md)
@@ -70,6 +72,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [LinkedIn Website Entry Update](06-platform-outputs/2026-05-11-linkedin-website-entry-update.md)
 - [你的 AI 工具今天正常嗎？](06-platform-outputs/carousel-final-versions/2026-05-11-gawk-dev-ai-tool-status-radar-final-carousel.md)
+- [Gawk Dev AI Tool Status Radar Carousel Production Tracking](06-platform-outputs/carousel-production/2026-05-11-gawk-dev-carousel-production-tracking.md)
 - [你的 AI 工具今天正常嗎？](06-platform-outputs/carousel-test-materials/2026-05-11-gawk-dev-ai-tool-status-radar-carousel.md)
 - [Gawk Dev Carousel Comparison Note](06-platform-outputs/carousel-test-results/2026-05-11-gawk-dev-carousel-comparison-note.md)
 - [Gawk Dev External Carousel Output v1](06-platform-outputs/carousel-test-results/2026-05-11-gawk-dev-external-carousel-output-v1.md)
