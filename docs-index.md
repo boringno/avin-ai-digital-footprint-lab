@@ -54,6 +54,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 06-platform-outputs
 
+- [LinkedIn Website Entry Update](06-platform-outputs/2026-05-11-linkedin-website-entry-update.md)
 - [GitHub Profile README 草稿](06-platform-outputs/github-profile-readme-draft.md)
 - [LinkedIn 實際更新包](06-platform-outputs/linkedin-profile-update-draft.md)
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
