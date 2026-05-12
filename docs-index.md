@@ -15,6 +15,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Personal Website v1 Completed](00-project-log/2026-05-11-personal-website-v1-milestone.md)
 - [Signal 1 Lifecycle Completed](00-project-log/2026-05-11-signal-1-lifecycle-completed.md)
 - [Stage 1 Summary: Public Entry Layer + First AI Signal Loop](00-project-log/2026-05-11-stage-1-public-entry-and-signal-loop-summary.md)
+- [Claude Code Handoff: Gawk Dev Carousel Workflow State](00-project-log/2026-05-12-claude-code-handoff.md)
 
 ## 01-learning-notes
 
