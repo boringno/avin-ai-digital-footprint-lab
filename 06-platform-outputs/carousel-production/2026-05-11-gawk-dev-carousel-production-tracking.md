@@ -22,7 +22,8 @@ Status: Designed / Scheduled
 - IG caption completed
 - Canva / Figma design brief completed
 - Visual output generated
-- Scheduled for IG publishing at 2026-05-11 19:00
+- Published to IG at 2026-05-12 19:00
+- Lifecycle completed
 
 ---
 
@@ -35,36 +36,33 @@ Status: Designed / Scheduled
 - CTA label checked
 - IG carousel uploaded
 - IG caption reviewed
-- Published to IG
-- IG post URL saved
-- Notion status updated
-- GitHub lifecycle updated
+- Published to IG ✓
+- IG post URL saved ✓
+- Notion status updated ✓
+- GitHub lifecycle updated ✓
 
 ---
 
 ## 4. Publish Metadata
 
 - Platform: Instagram
-- Publish date: 2026-05-11
+- Publish date: 2026-05-12
 - Publish time: 19:00
-- Post URL:
+- Post URL: https://www.instagram.com/p/DYMihOzD5I2/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==
 - CTA keyword: AI
-- Notes:
+- Notes: Published as AI Tool Status Radar content line — first public sample
 
 ---
 
 ## 5. Lifecycle Status
 
-- Designed / Scheduled
-- Not yet Published
-- Not yet URL Linked
-- Not yet Completed
+- Designed ✓
+- Published ✓
+- URL Linked ✓
+- Completed ✓
 
 ---
 
 ## 6. Next Actions
 
-- Publish IG carousel
-- Save IG post URL
-- Update Notion / GitHub lifecycle
-- Consider creating lifecycle completion log
+- Lifecycle completed. See: `00-project-log/2026-05-12-gawk-dev-carousel-lifecycle-completed.md`
