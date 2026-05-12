@@ -10,9 +10,11 @@ Part of AVIN AI Digital Footprint OS — Threads MVP 1.
 
 ## Current Status
 
-**Skeleton only.** No external API calls are implemented yet.
+**Notion read test implemented.** Threads Insights API sync not yet implemented.
 
-The script validates environment variables and supports `--dry-run` mode. All sync functions are stubs (`NotImplementedError`).
+- `--dry-run`: validates environment variables, no API calls
+- `--notion-read-test`: reads Notion Content Queue, prints safe row summaries, no Threads API calls, no writes
+- All Threads sync functions remain stubs (`NotImplementedError`)
 
 ---
 
@@ -24,9 +26,38 @@ python scripts/threads/sync_threads_insights.py --dry-run
 
 Dry run will:
 - Load `.env` (if `python-dotenv` is installed) or read from shell environment
-- Check all required environment variable names are present (not values)
+- Check all required environment variable names are present (values are never printed)
 - Print next implementation steps
 - Make no API calls and no Notion writes
+
+---
+
+## How to Run (Notion Read Test)
+
+```bash
+python scripts/threads/sync_threads_insights.py --notion-read-test
+```
+
+**Required env keys for this mode:** `NOTION_API_KEY`, `NOTION_DATABASE_ID` only.
+`THREADS_ACCESS_TOKEN` and `META_APP_SECRET` are not used in this step.
+
+**What this test does:**
+- Reads the Notion Content Queue database
+- Filters rows matching: `Platform = Threads`, `Status = Published or Insights Synced`, `Sync Enabled = true`, `No Blocking Issue = true`
+- Prints a safe summary: total rows, eligible count, skipped count
+- Per eligible row: title (truncated to 60 chars), status, whether Threads Post ID exists
+
+**What this test does NOT do:**
+- Does not call the Threads Insights API
+- Does not write anything back to Notion
+- Does not print API keys or token values
+- Does not print raw API responses
+- Does not modify any data
+
+**Safety notes for this mode:**
+- The `NOTION_API_KEY` value is used in request headers and is never printed
+- If you see a 404 error, confirm the Notion Integration has been shared with the database (Notion UI: Share → Invite)
+- Only row titles, statuses, and Post ID presence are shown in output
 
 ---
 
@@ -55,29 +86,28 @@ NOTION_DATABASE_ID=
 
 ---
 
-## Dependencies (not yet installed)
+## Dependencies
 
-Required when moving beyond skeleton:
+Currently installed (no action needed):
+- `python-dotenv` — loads `.env` file
+- `requests` — used for Notion REST API calls (already available)
 
-- `python-dotenv` — load `.env` file
-- `notion-client` — Notion API
-- `requests` — Threads API HTTP calls
+Not yet needed:
+- `notion-client` — not required; Notion API is called directly via `requests`
 
-Install when ready:
-
+Still needed for Threads API sync (install when ready):
 ```bash
-pip install python-dotenv notion-client requests
+pip install requests python-dotenv
 ```
-
-Do not install until live sync implementation begins.
+(both already available in this environment)
 
 ---
 
 ## Next Implementation Steps
 
-1. Pass Manual Test Checklist (`04-workflows/threads-mvp-1-manual-test-checklist.md`)
-2. Implement `read_notion_items()` — connect Notion, apply MVP 1 filters
-3. Implement `validate_threads_post_id()` — Post ID format check
+1. ~~Pass Manual Test Checklist~~ → in progress
+2. ~~Implement `read_notion_items()`~~ → done (Notion REST API via `requests`)
+3. Run `--notion-read-test` with real `.env` to confirm filter returns correct rows
 4. Implement `fetch_threads_insights()` — Threads Insights API call
 5. Implement `normalize_metrics()` — map API fields to Notion fields
 6. Implement `write_metrics_to_notion()` — writeback with failure guard
