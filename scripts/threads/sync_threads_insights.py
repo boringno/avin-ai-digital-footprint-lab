@@ -2,12 +2,13 @@
 sync_threads_insights.py
 
 Threads MVP 1 - Local Script
-Status: Notion read test implemented; Threads URL resolver implemented; Insights sync not yet implemented
+Status: Notion read + URL resolver + Insights fetch test implemented; Notion writeback not yet implemented
 
 Usage:
     python scripts/threads/sync_threads_insights.py --dry-run
     python scripts/threads/sync_threads_insights.py --notion-read-test
     python scripts/threads/sync_threads_insights.py --resolve-threads-url "THREADS_URL"
+    python scripts/threads/sync_threads_insights.py --fetch-insights-test --post-id POST_ID
 
 See scripts/threads/README.md for setup instructions.
 """
@@ -489,6 +490,8 @@ def run_resolve_threads_url(url):
         media_type = item.get("media_type", "")
         text_raw   = item.get("text", "") or ""
         text_preview = text_raw[:80] + ("..." if len(text_raw) > 80 else "")
+        # Safely encode text for Windows consoles that may not support all Unicode
+        text_safe = text_preview.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8")
 
         print("\n[resolve] Match found:")
         print(f"  Media ID    : {media_id}")
@@ -496,7 +499,7 @@ def run_resolve_threads_url(url):
         print(f"  Permalink   : {permalink}")
         print(f"  Timestamp   : {timestamp}")
         print(f"  Media Type  : {media_type}")
-        print(f"  Text preview: {text_preview}")
+        print(f"  Text preview: {text_safe}")
         print("\n[resolve] Next step: copy the Media ID above into Notion 'Threads Post ID' field.")
         print("[resolve] Do NOT use the shortcode as the Post ID — use the numeric Media ID.")
     else:
@@ -512,6 +515,131 @@ def run_resolve_threads_url(url):
     print("\n[resolve] No Notion writes performed.")
     print("[resolve] No Insights API calls made.")
     print("[resolve] Complete.")
+
+
+# ---------------------------------------------------------------------------
+# Threads Insights Fetch
+# ---------------------------------------------------------------------------
+
+INSIGHTS_METRICS = ["views", "likes", "replies", "reposts", "quotes", "shares"]
+
+
+def fetch_threads_insights(post_id):
+    """
+    Call Threads Insights API for the given Media ID.
+    Returns normalized metric dict with None for unavailable metrics.
+    Never logs access token or raw response.
+
+    Args:
+        post_id (str): Numeric Threads Media ID
+
+    Returns:
+        tuple[dict, list[str], list[str]]:
+          (metrics_dict, available_names, missing_names)
+    """
+    params = {
+        "metric": ",".join(INSIGHTS_METRICS),
+        "access_token": os.environ["THREADS_ACCESS_TOKEN"],
+    }
+    response = requests.get(
+        f"{THREADS_API_BASE}/{post_id}/insights",
+        params=params,
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    metrics = {m: None for m in INSIGHTS_METRICS}
+    available = []
+    missing = []
+
+    for item in data.get("data", []):
+        name = item.get("name")
+        if name in metrics:
+            vals = item.get("values", [])
+            metrics[name] = vals[0].get("value") if vals else None
+            if metrics[name] is not None:
+                available.append(name)
+            else:
+                missing.append(name)
+
+    for name in INSIGHTS_METRICS:
+        if name not in available and name not in missing:
+            missing.append(name)
+
+    return metrics, available, missing
+
+
+def run_fetch_insights_test(post_id):
+    print("=" * 50)
+    print("Threads MVP 1 - Insights Fetch Test")
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 50)
+
+    if not REQUESTS_AVAILABLE:
+        print("[error] 'requests' library is not installed.")
+        print("[error] Install it: pip install requests")
+        sys.exit(1)
+
+    if not post_id or not post_id.strip():
+        print("[error] --post-id is required and must not be empty.")
+        sys.exit(1)
+    post_id = post_id.strip()
+
+    print(f"\n[insights-test] Post ID : {post_id}")
+    print("[insights-test] Checking THREADS_ACCESS_TOKEN...")
+    validate_environment(keys=THREADS_ENV_KEYS)
+
+    print(f"\n[insights-test] Calling Threads Insights API (read-only)...")
+    print(f"[insights-test] Metrics requested: {', '.join(INSIGHTS_METRICS)}")
+
+    try:
+        metrics, available, missing = fetch_threads_insights(post_id)
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"\n[error] Threads Insights API HTTP error: {status_code}")
+        if status_code == 400:
+            print("[error] Post ID may be invalid or not accessible by this token.")
+        elif status_code == 401:
+            print("[error] THREADS_ACCESS_TOKEN is invalid or expired.")
+        elif status_code == 403:
+            print("[error] Token lacks required permission scope (threads_basic or similar).")
+        else:
+            print(f"[error] {e}")
+        sys.exit(1)
+    except requests.exceptions.ConnectionError:
+        print("[error] Could not connect to Threads API. Check network connection.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[error] Unexpected error: {e}")
+        sys.exit(1)
+
+    print(f"\n[insights-test] API status  : success")
+    print(f"[insights-test] Available metrics ({len(available)}):")
+    for name in INSIGHTS_METRICS:
+        if name in available:
+            print(f"  {name:<10}: {metrics[name]}")
+
+    if missing:
+        print(f"\n[insights-test] Unavailable / API dependent ({len(missing)}):")
+        for name in missing:
+            print(f"  {name:<10}: unsupported or null (API dependent)")
+
+    # Engagement Rate preview (not written to Notion in this mode)
+    views = metrics.get("views")
+    if views and views > 0:
+        engagements = sum(
+            metrics.get(k) or 0
+            for k in ["likes", "replies", "reposts", "quotes", "shares"]
+        )
+        eng_rate = engagements / views
+        print(f"\n[insights-test] Engagement Rate preview : {eng_rate:.4f} ({eng_rate*100:.2f}%)")
+        print("[insights-test] Note: this value is NOT written to Notion in this mode.")
+    else:
+        print("\n[insights-test] Engagement Rate: not calculated (views unavailable or zero).")
+
+    print("\n[insights-test] No Notion writes performed.")
+    print("[insights-test] Complete.")
 
 
 def main():
@@ -533,6 +661,16 @@ def main():
         metavar="URL",
         help="Resolve a Threads post URL to its Media ID. Read-only. No writes.",
     )
+    parser.add_argument(
+        "--fetch-insights-test",
+        action="store_true",
+        help="Fetch Insights for a single post. Read-only. No Notion writes. Requires --post-id.",
+    )
+    parser.add_argument(
+        "--post-id",
+        metavar="MEDIA_ID",
+        help="Threads Media ID to use with --fetch-insights-test.",
+    )
     args = parser.parse_args()
 
     load_environment()
@@ -549,11 +687,19 @@ def main():
         run_resolve_threads_url(args.resolve_threads_url)
         return
 
+    if args.fetch_insights_test:
+        if not args.post_id:
+            print("[error] --fetch-insights-test requires --post-id MEDIA_ID")
+            sys.exit(1)
+        run_fetch_insights_test(args.post_id)
+        return
+
     # Live sync — not yet implemented
     print("[error] Live sync is not yet implemented.")
     print("[info]  Run with --dry-run to validate environment setup.")
     print("[info]  Run with --notion-read-test to verify Notion connectivity.")
     print("[info]  Run with --resolve-threads-url URL to find a post's Media ID.")
+    print("[info]  Run with --fetch-insights-test --post-id ID to fetch insights.")
     sys.exit(1)
 
 

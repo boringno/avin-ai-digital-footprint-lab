@@ -10,12 +10,12 @@ Part of AVIN AI Digital Footprint OS — Threads MVP 1.
 
 ## Current Status
 
-**Notion read test and Threads URL resolver implemented.** Insights sync not yet implemented.
+**Notion read, URL resolver, and Insights fetch test implemented.** Notion writeback not yet implemented.
 
 - `--dry-run`: validates environment variables, no API calls
-- `--notion-read-test`: reads Notion Content Queue, prints safe row summaries, no Threads API calls, no writes
+- `--notion-read-test`: reads Notion Content Queue, prints safe row summaries, no writes
 - `--resolve-threads-url URL`: resolves a Threads post URL to its numeric Media ID (read-only, no writes)
-- All Threads Insights sync functions remain stubs (`NotImplementedError`)
+- `--fetch-insights-test --post-id ID`: fetches Insights for a single post, prints safe metric summary, no Notion writes
 
 ---
 
@@ -87,6 +87,33 @@ NOTION_DATABASE_ID=
 
 ---
 
+## How to Run (Insights Fetch Test)
+
+```bash
+python scripts/threads/sync_threads_insights.py --fetch-insights-test --post-id MEDIA_ID
+```
+
+**Required env key for this mode:** `THREADS_ACCESS_TOKEN` only.
+
+**What this test does:**
+- Calls Threads Insights API for a single post (read-only)
+- Requests all 6 metrics: `views`, `likes`, `replies`, `reposts`, `quotes`, `shares`
+- Prints which metrics are available and their values
+- Prints which metrics are unsupported / API dependent
+- Previews Engagement Rate calculation (not written to Notion)
+
+**What this test does NOT do:**
+- Does not write anything to Notion
+- Does not call any other Threads API endpoint
+- Does not print the access token value
+- Does not print raw API responses
+
+**Metrics are API dependent.** If a metric is not returned by the API, it is marked as `unsupported or null (API dependent)` — this is not a script error.
+
+**Engagement Rate** (`(likes + replies + reposts + quotes + shares) / views`) is previewed in this mode but will only be written to Notion during the writeback phase. If `views` is 0 or unavailable, Engagement Rate is not calculated.
+
+---
+
 ## How to Run (Resolve Threads URL → Media ID)
 
 ```bash
@@ -142,12 +169,12 @@ pip install requests python-dotenv
 ## Next Implementation Steps
 
 1. ~~Pass Manual Test Checklist~~ → in progress
-2. ~~Implement `read_notion_items()`~~ → done (Notion REST API via `requests`)
-3. ~~Run `--notion-read-test`~~ → done (filter confirmed working)
+2. ~~Implement `read_notion_items()`~~ → done
+3. ~~Run `--notion-read-test`~~ → done (1 eligible row confirmed)
 4. ~~Implement `--resolve-threads-url`~~ → done (shortcode → Media ID)
-5. Run `--resolve-threads-url` with a real post URL to get correct Media ID
-6. Update Notion `Threads Post ID` field with the resolved Media ID
-7. Implement `fetch_threads_insights()` — Threads Insights API call
+5. ~~Run `--resolve-threads-url`~~ → done (Media ID: `17935258965186803`)
+6. ~~Implement `--fetch-insights-test`~~ → done
+7. Run `--fetch-insights-test --post-id 17935258965186803` to confirm metrics
 8. Implement `normalize_metrics()` — map API fields to Notion fields
 9. Implement `write_metrics_to_notion()` — writeback with failure guard
 10. Run live sync with a real test post
