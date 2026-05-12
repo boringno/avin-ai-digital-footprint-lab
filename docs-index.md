@@ -18,6 +18,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Claude Code Handoff: Gawk Dev Carousel Workflow State](00-project-log/2026-05-12-claude-code-handoff.md)
 - [Lifecycle Completed Log｜Gawk Dev IG Carousel](00-project-log/2026-05-12-gawk-dev-carousel-lifecycle-completed.md)
 - [Threads MVP 1 Lifecycle Completed](00-project-log/2026-05-12-threads-mvp1-lifecycle-completed.md)
+- [Threads MVP 1 Public Output Completed](00-project-log/2026-05-12-threads-mvp1-public-output-completed.md)
 
 ## 01-learning-notes
 
