@@ -10,11 +10,12 @@ Part of AVIN AI Digital Footprint OS — Threads MVP 1.
 
 ## Current Status
 
-**Notion read test implemented.** Threads Insights API sync not yet implemented.
+**Notion read test and Threads URL resolver implemented.** Insights sync not yet implemented.
 
 - `--dry-run`: validates environment variables, no API calls
 - `--notion-read-test`: reads Notion Content Queue, prints safe row summaries, no Threads API calls, no writes
-- All Threads sync functions remain stubs (`NotImplementedError`)
+- `--resolve-threads-url URL`: resolves a Threads post URL to its numeric Media ID (read-only, no writes)
+- All Threads Insights sync functions remain stubs (`NotImplementedError`)
 
 ---
 
@@ -86,6 +87,41 @@ NOTION_DATABASE_ID=
 
 ---
 
+## How to Run (Resolve Threads URL → Media ID)
+
+```bash
+python scripts/threads/sync_threads_insights.py --resolve-threads-url "https://www.threads.com/@username/post/SHORTCODE"
+```
+
+**Required env key for this mode:** `THREADS_ACCESS_TOKEN` only.
+
+### Why shortcode ≠ Media ID
+
+The shortcode (`DVOMbrOEd6Q`) visible in a Threads URL is **not** the Threads Media ID used by the Insights API. The actual Media ID is a numeric string (e.g. `18034789651234567`) returned by the Threads Graph API.
+
+This mode:
+1. Extracts the shortcode from the URL
+2. Lists the authenticated user's threads via `GET /me/threads`
+3. Matches by `shortcode` field
+4. Prints the numeric `id` (= the Media ID to use)
+
+### After resolving
+
+Copy the **Media ID** from the output and paste it into the Notion `Threads Post ID` field. Do **not** use the shortcode as the Post ID.
+
+**What this mode does:**
+- Reads the authenticated user's thread list (read-only)
+- Matches by shortcode across all paginated results
+- Prints Media ID, permalink, timestamp, media type, text preview (80 chars)
+
+**What this mode does NOT do:**
+- Does not call the Insights endpoint
+- Does not write anything to Notion
+- Does not print the access token value
+- Does not print raw API responses
+
+---
+
 ## Dependencies
 
 Currently installed (no action needed):
@@ -107,11 +143,14 @@ pip install requests python-dotenv
 
 1. ~~Pass Manual Test Checklist~~ → in progress
 2. ~~Implement `read_notion_items()`~~ → done (Notion REST API via `requests`)
-3. Run `--notion-read-test` with real `.env` to confirm filter returns correct rows
-4. Implement `fetch_threads_insights()` — Threads Insights API call
-5. Implement `normalize_metrics()` — map API fields to Notion fields
-6. Implement `write_metrics_to_notion()` — writeback with failure guard
-7. Run live sync with a real test post
+3. ~~Run `--notion-read-test`~~ → done (filter confirmed working)
+4. ~~Implement `--resolve-threads-url`~~ → done (shortcode → Media ID)
+5. Run `--resolve-threads-url` with a real post URL to get correct Media ID
+6. Update Notion `Threads Post ID` field with the resolved Media ID
+7. Implement `fetch_threads_insights()` — Threads Insights API call
+8. Implement `normalize_metrics()` — map API fields to Notion fields
+9. Implement `write_metrics_to_notion()` — writeback with failure guard
+10. Run live sync with a real test post
 
 ---
 

@@ -2,16 +2,18 @@
 sync_threads_insights.py
 
 Threads MVP 1 - Local Script
-Status: Notion read test implemented; Threads API sync not yet implemented
+Status: Notion read test implemented; Threads URL resolver implemented; Insights sync not yet implemented
 
 Usage:
     python scripts/threads/sync_threads_insights.py --dry-run
     python scripts/threads/sync_threads_insights.py --notion-read-test
+    python scripts/threads/sync_threads_insights.py --resolve-threads-url "THREADS_URL"
 
 See scripts/threads/README.md for setup instructions.
 """
 
 import os
+import re
 import sys
 import argparse
 from datetime import datetime, timezone
@@ -42,6 +44,9 @@ NOTION_ENV_KEYS = [
 
 NOTION_API_VERSION = "2022-06-28"
 NOTION_API_BASE = "https://api.notion.com/v1"
+
+THREADS_API_BASE = "https://graph.threads.net/v1.0"
+THREADS_ENV_KEYS = ["THREADS_ACCESS_TOKEN"]
 
 
 def load_environment():
@@ -255,6 +260,85 @@ def create_performance_log_draft(items_processed):
 
 
 # ---------------------------------------------------------------------------
+# Threads URL Resolver
+# ---------------------------------------------------------------------------
+
+def extract_shortcode_from_url(url):
+    """
+    Extract shortcode from a Threads post URL.
+
+    Examples:
+      https://www.threads.com/@username/post/DVOMbrOEd6Q?xmt=... → DVOMbrOEd6Q
+      https://www.threads.net/@username/post/DVOMbrOEd6Q        → DVOMbrOEd6Q
+
+    Returns:
+        str | None: shortcode string, or None if not found
+    """
+    match = re.search(r'/post/([A-Za-z0-9_-]+)', url)
+    return match.group(1) if match else None
+
+
+def _threads_list_media(after_cursor=None):
+    """
+    Call GET /me/threads to list the authenticated user's thread media objects.
+    Returns one page of results. Never logs the access token.
+
+    Returns:
+        dict: Raw API response (data list + paging)
+    """
+    params = {
+        "fields": "id,shortcode,permalink,media_type,text,timestamp",
+        "access_token": os.environ["THREADS_ACCESS_TOKEN"],
+        "limit": 100,
+    }
+    if after_cursor:
+        params["after"] = after_cursor
+
+    response = requests.get(
+        f"{THREADS_API_BASE}/me/threads",
+        params=params,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def resolve_shortcode_to_media(shortcode):
+    """
+    Search the authenticated user's threads for a post matching the shortcode.
+    Paginates through all available posts.
+
+    Args:
+        shortcode (str): The shortcode extracted from the Threads URL
+
+    Returns:
+        tuple[dict | None, str | None]: (media_item, error_message)
+          - On success: (item_dict, None)
+          - On failure: (None, reason_string)
+    """
+    after = None
+    pages_checked = 0
+
+    while True:
+        data = _threads_list_media(after_cursor=after)
+        items = data.get("data", [])
+        pages_checked += 1
+
+        for item in items:
+            if item.get("shortcode") == shortcode:
+                return item, None
+
+        paging = data.get("paging", {})
+        after = paging.get("cursors", {}).get("after")
+        if not after or not paging.get("next"):
+            break
+
+    return None, (
+        f"No thread found with shortcode '{shortcode}' after checking {pages_checked} page(s) of results."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
 
@@ -347,6 +431,89 @@ def run_notion_read_test():
     print("[notion-read-test] Complete.")
 
 
+def run_resolve_threads_url(url):
+    print("=" * 50)
+    print("Threads MVP 1 - Resolve Threads URL")
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 50)
+
+    if not REQUESTS_AVAILABLE:
+        print("[error] 'requests' library is not installed.")
+        print("[error] Install it: pip install requests")
+        sys.exit(1)
+
+    # Step 1: extract shortcode
+    shortcode = extract_shortcode_from_url(url)
+    if not shortcode:
+        print(f"\n[error] Could not extract shortcode from URL: {url}")
+        print("[error] Expected format: https://www.threads.com/@username/post/SHORTCODE")
+        sys.exit(1)
+    print(f"\n[resolve] Input URL    : {url}")
+    print(f"[resolve] Shortcode    : {shortcode}")
+    print("[resolve] Note: shortcode is NOT the Threads Media ID. Resolving...")
+
+    # Step 2: validate token
+    print("\n[resolve] Checking THREADS_ACCESS_TOKEN...")
+    validate_environment(keys=THREADS_ENV_KEYS)
+
+    # Step 3: search for matching media object
+    print("\n[resolve] Searching authenticated user's threads for matching shortcode...")
+    print("[resolve] Calling: GET /me/threads (read-only, no writes)")
+
+    try:
+        item, error = resolve_shortcode_to_media(shortcode)
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"\n[error] Threads API HTTP error: {status_code}")
+        if status_code == 401:
+            print("[error] THREADS_ACCESS_TOKEN may be invalid or expired.")
+        elif status_code == 403:
+            print("[error] App may lack required permissions (threads_basic scope).")
+        elif status_code == 400:
+            print("[error] Bad request — check that THREADS_ACCESS_TOKEN is a valid user token.")
+        else:
+            print(f"[error] {e}")
+        sys.exit(1)
+    except requests.exceptions.ConnectionError:
+        print("[error] Could not connect to Threads API. Check network connection.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[error] Unexpected error: {e}")
+        sys.exit(1)
+
+    # Step 4: output result
+    if item:
+        media_id   = item.get("id", "")
+        permalink  = item.get("permalink", "")
+        timestamp  = item.get("timestamp", "")
+        media_type = item.get("media_type", "")
+        text_raw   = item.get("text", "") or ""
+        text_preview = text_raw[:80] + ("..." if len(text_raw) > 80 else "")
+
+        print("\n[resolve] Match found:")
+        print(f"  Media ID    : {media_id}")
+        print(f"  Shortcode   : {shortcode}")
+        print(f"  Permalink   : {permalink}")
+        print(f"  Timestamp   : {timestamp}")
+        print(f"  Media Type  : {media_type}")
+        print(f"  Text preview: {text_preview}")
+        print("\n[resolve] Next step: copy the Media ID above into Notion 'Threads Post ID' field.")
+        print("[resolve] Do NOT use the shortcode as the Post ID — use the numeric Media ID.")
+    else:
+        print(f"\n[resolve] Not found. {error}")
+        print("\n[resolve] Possible reasons:")
+        print("  1. THREADS_ACCESS_TOKEN belongs to a different Threads account")
+        print("  2. App lacks 'threads_basic' permission scope")
+        print("  3. Post was deleted or is not accessible via API")
+        print("  4. Post is older than the API's pagination limit")
+        print("  5. URL domain difference (threads.com vs threads.net) does not affect shortcode extraction")
+        print("  6. Threads API does not support direct lookup by shortcode — this script lists all posts and matches")
+
+    print("\n[resolve] No Notion writes performed.")
+    print("[resolve] No Insights API calls made.")
+    print("[resolve] Complete.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Threads MVP 1 Insights Sync Script"
@@ -361,6 +528,11 @@ def main():
         action="store_true",
         help="Read Notion Content Queue and print safe summary. No Threads API calls. No writes.",
     )
+    parser.add_argument(
+        "--resolve-threads-url",
+        metavar="URL",
+        help="Resolve a Threads post URL to its Media ID. Read-only. No writes.",
+    )
     args = parser.parse_args()
 
     load_environment()
@@ -373,10 +545,15 @@ def main():
         run_notion_read_test()
         return
 
+    if args.resolve_threads_url:
+        run_resolve_threads_url(args.resolve_threads_url)
+        return
+
     # Live sync — not yet implemented
     print("[error] Live sync is not yet implemented.")
     print("[info]  Run with --dry-run to validate environment setup.")
     print("[info]  Run with --notion-read-test to verify Notion connectivity.")
+    print("[info]  Run with --resolve-threads-url URL to find a post's Media ID.")
     sys.exit(1)
 
 
