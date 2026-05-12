@@ -102,6 +102,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [AVIN GitHub Pages 首頁](docs/index.html)
 - [AVIN AI Digital Footprint OS LLM Guide](docs/llms.txt)
 
+## scripts
+
+- [Threads Insights Sync](scripts/threads/README.md)
+
 ## website
 
 - [AVIN 個人網站首頁雛形](website/index.html)
