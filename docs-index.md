@@ -51,6 +51,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 04-workflows
 
+- [Content Format Experiment Library](04-workflows/content-format-experiment-library.md)
 - [Conversation Closure and Notion Log Workflow](04-workflows/conversation-closure-and-notion-log-workflow.md)
 - [External Carousel Skill Test Plan](04-workflows/external-carousel-skill-test-plan.md)
 - [External Skill Evaluation Workflow](04-workflows/external-skill-evaluation-workflow.md)
