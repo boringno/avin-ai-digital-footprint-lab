@@ -1,4 +1,4 @@
-# Threads Publishing & Feedback Loop
+# Threads Publishing & Feedback Loop (Phase 1 Threads-only)
 
 日期：2026-05-12
 分類：Workflow / Automation Planning / Threads Publishing

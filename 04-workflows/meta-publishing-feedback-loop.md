@@ -1,4 +1,4 @@
-# Meta Publishing & Feedback Loop
+# Meta Publishing & Feedback Loop (Long-term Architecture)
 
 日期：2026-05-12
 分類：Workflow / Automation Planning / Publishing
