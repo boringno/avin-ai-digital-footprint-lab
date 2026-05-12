@@ -57,6 +57,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Meta Publishing & Feedback Loop (Long-term Architecture)](04-workflows/meta-publishing-feedback-loop.md)
 - [Threads Publishing & Feedback Loop (Phase 1 Threads-only)](04-workflows/threads-publishing-feedback-loop.md)
 - [Threads MVP 1｜Manual Publish + Auto Insights Sync](04-workflows/threads-mvp-1-manual-publish-auto-insights-sync.md)
+- [Threads MVP 1｜Notion Fields Spec](04-workflows/threads-mvp-1-notion-fields-spec.md)
 - [Weekly AI Signal Selection Template](04-workflows/templates/weekly-ai-signal-selection-template.md)
 - [Weekly AI Signal to Public Content Workflow](04-workflows/weekly-ai-signal-to-public-content-workflow.md)
 - [Weekly AI Signal Review](04-workflows/weekly-reviews/2026-05-11-weekly-ai-signal-review.md)
