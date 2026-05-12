@@ -2,13 +2,15 @@
 sync_threads_insights.py
 
 Threads MVP 1 - Local Script
-Status: Notion read + URL resolver + Insights fetch test implemented; Notion writeback not yet implemented
+Status: Notion read + URL resolver + Insights fetch + Writeback test + Token exchange implemented; Batch sync not yet implemented
 
 Usage:
     python scripts/threads/sync_threads_insights.py --dry-run
     python scripts/threads/sync_threads_insights.py --notion-read-test
     python scripts/threads/sync_threads_insights.py --resolve-threads-url "THREADS_URL"
     python scripts/threads/sync_threads_insights.py --fetch-insights-test --post-id POST_ID
+    python scripts/threads/sync_threads_insights.py --writeback-test --post-id POST_ID
+    python scripts/threads/sync_threads_insights.py --exchange-long-lived-token
 
 See scripts/threads/README.md for setup instructions.
 """
@@ -642,6 +644,404 @@ def run_fetch_insights_test(post_id):
     print("[insights-test] Complete.")
 
 
+# ---------------------------------------------------------------------------
+# Notion Writeback
+# ---------------------------------------------------------------------------
+
+def _find_notion_row_by_post_id(post_id):
+    """
+    Query Notion for a row whose 'Threads Post ID' matches post_id exactly.
+
+    Returns:
+        tuple[dict | None, str | None]:
+          (page_object, error_message)
+          error_message is set if 0 or 2+ rows found.
+    """
+    database_id = os.environ["NOTION_DATABASE_ID"]
+    filter_body = {
+        "property": "Threads Post ID",
+        "rich_text": {"equals": post_id},
+    }
+    data = _query_notion_database(database_id, filter_body)
+    results = data.get("results", [])
+
+    if len(results) == 0:
+        return None, f"No Notion row found with Threads Post ID = '{post_id}'"
+    if len(results) > 1:
+        return None, (
+            f"Duplicate rows ({len(results)}) found with Threads Post ID = '{post_id}'. "
+            "Manual resolution required — writeback aborted."
+        )
+    return results[0], None
+
+
+def normalize_metrics(raw_metrics):
+    """
+    Map raw API metric dict to Notion field names.
+    None values stay as None (API did not return the metric).
+
+    Args:
+        raw_metrics (dict): {metric_name: value_or_None}
+
+    Returns:
+        dict: Notion-field-keyed metrics
+    """
+    field_map = {
+        "views":   "Views",
+        "likes":   "Likes",
+        "replies": "Replies",
+        "reposts": "Reposts",
+        "quotes":  "Quotes",
+        "shares":  "Shares",
+    }
+    normalized = {}
+    missing_fields = []
+    for api_key, notion_key in field_map.items():
+        val = raw_metrics.get(api_key)
+        normalized[notion_key] = val
+        if val is None:
+            missing_fields.append(api_key)
+    return normalized, missing_fields
+
+
+def _compute_engagement_rate(metrics_dict):
+    """
+    Compute Engagement Rate = (likes + replies + reposts + quotes + shares) / views.
+    Returns (rate_float, note_str).
+    rate_float is None if views is unavailable or 0.
+    """
+    views = metrics_dict.get("Views")
+    if not views or views == 0:
+        return None, "views unavailable or zero — engagement rate not calculated"
+
+    engagement_keys = ["Likes", "Replies", "Reposts", "Quotes", "Shares"]
+    null_keys = [k for k in engagement_keys if metrics_dict.get(k) is None]
+    engagements = sum(metrics_dict.get(k) or 0 for k in engagement_keys)
+    rate = engagements / views
+
+    note = None
+    if null_keys:
+        note = f"null metrics substituted with 0 for engagement rate: {', '.join(null_keys)}"
+    return rate, note
+
+
+def _build_notion_properties(metrics_dict, eng_rate, sync_status, now_iso,
+                              error_note=None, clear_error=False):
+    """
+    Build the Notion PATCH properties payload.
+    Only includes fields with non-None values (does not overwrite with null).
+    """
+    props = {}
+
+    for notion_key in ["Views", "Likes", "Replies", "Reposts", "Quotes", "Shares"]:
+        val = metrics_dict.get(notion_key)
+        if val is not None:
+            props[notion_key] = {"number": val}
+
+    if eng_rate is not None:
+        props["Engagement Rate"] = {"number": round(eng_rate, 6)}
+
+    props["Sync Status"] = {"select": {"name": sync_status}}
+    props["Last Sync Attempt At"] = {"date": {"start": now_iso}}
+
+    if sync_status == "Synced":
+        props["Data Last Synced At"] = {"date": {"start": now_iso}}
+
+    if clear_error:
+        props["Sync Error Note"] = {"rich_text": []}
+    elif error_note:
+        safe_note = error_note[:500]  # Notion rich_text has length limits
+        props["Sync Error Note"] = {"rich_text": [{"type": "text", "text": {"content": safe_note}}]}
+
+    return props
+
+
+def _patch_notion_page(page_id, properties):
+    """
+    PATCH a Notion page with the given properties dict.
+    Raises on HTTP error. Never logs the API key.
+    """
+    url = f"{NOTION_API_BASE}/pages/{page_id}"
+    response = requests.patch(url, headers=_notion_headers(), json={"properties": properties}, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def write_metrics_to_notion(page_id, metrics_dict, eng_rate, sync_status,
+                             now_iso, error_note=None, clear_error=False):
+    """
+    Write normalized metrics and sync status to a single Notion page.
+    On failure guard: caller must NOT call this if insights fetch failed.
+
+    Args:
+        page_id (str): Notion page ID
+        metrics_dict (dict): Notion-field-keyed metrics (None values are skipped)
+        eng_rate (float | None): Engagement rate, or None
+        sync_status (str): 'Synced' | 'Failed' | 'Skipped' | 'Needs Review'
+        now_iso (str): ISO 8601 timestamp string
+        error_note (str | None): Error message for Sync Error Note
+        clear_error (bool): If True, clears Sync Error Note
+
+    Returns:
+        bool: True on success
+    """
+    props = _build_notion_properties(
+        metrics_dict, eng_rate, sync_status, now_iso,
+        error_note=error_note, clear_error=clear_error
+    )
+    _patch_notion_page(page_id, props)
+    return True
+
+
+def _write_failure_status(page_id, now_iso, error_note):
+    """Write only failure fields to Notion — never touches metric columns."""
+    props = {
+        "Sync Status": {"select": {"name": "Failed"}},
+        "Last Sync Attempt At": {"date": {"start": now_iso}},
+        "Sync Error Note": {
+            "rich_text": [{"type": "text", "text": {"content": error_note[:500]}}]
+        },
+    }
+    _patch_notion_page(page_id, props)
+
+
+def run_writeback_test(post_id):
+    print("=" * 50)
+    print("Threads MVP 1 - Notion Writeback Test")
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 50)
+
+    if not REQUESTS_AVAILABLE:
+        print("[error] 'requests' library is not installed.")
+        sys.exit(1)
+
+    if not post_id or not post_id.strip():
+        print("[error] --post-id is required.")
+        sys.exit(1)
+    post_id = post_id.strip()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Step 1: validate env
+    print("\n[writeback-test] Checking environment variables...")
+    validate_environment(keys=REQUIRED_ENV_KEYS[:1] + NOTION_ENV_KEYS)  # TOKEN + Notion keys
+
+    # Step 2: find Notion row
+    print(f"\n[writeback-test] Looking up Notion row for Post ID: {post_id}")
+    try:
+        page, find_error = _find_notion_row_by_post_id(post_id)
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"[error] Notion API error while searching: {status_code}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[error] Unexpected error during Notion lookup: {e}")
+        sys.exit(1)
+
+    if find_error:
+        print(f"[writeback-test] {find_error}")
+        sys.exit(1)
+
+    page_id = page["id"]
+    summary = _extract_page_summary(page)
+    print(f"[writeback-test] Row found: '{summary['title']}' (Status: {summary['status']})")
+
+    # Step 3: fetch insights (must succeed before any metric writeback)
+    print(f"\n[writeback-test] Fetching Threads Insights for Post ID: {post_id}")
+    insights_ok = False
+    raw_metrics = {}
+    insights_error_note = None
+
+    try:
+        raw_metrics, available, missing_metrics = fetch_threads_insights(post_id)
+        insights_ok = True
+        print(f"[writeback-test] Insights fetched: {len(available)} metrics available")
+        if missing_metrics:
+            print(f"[writeback-test] API dependent (not writing): {', '.join(missing_metrics)}")
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        insights_error_note = f"Threads Insights API error {status_code}"
+        print(f"[writeback-test] Insights fetch failed: {insights_error_note}")
+    except Exception as e:
+        insights_error_note = f"Unexpected error during insights fetch: {type(e).__name__}"
+        print(f"[writeback-test] Insights fetch failed: {insights_error_note}")
+
+    # Step 4a: insights failed — write only failure status, preserve existing metrics
+    if not insights_ok:
+        print(f"\n[writeback-test] Writing failure status to Notion (metrics NOT overwritten)...")
+        try:
+            _write_failure_status(page_id, now_iso, insights_error_note)
+            print(f"[writeback-test] Sync Status = Failed | Sync Error Note updated")
+            print(f"[writeback-test] Existing metric values preserved.")
+        except Exception as e:
+            print(f"[error] Could not write failure status to Notion: {type(e).__name__}")
+        sys.exit(1)
+
+    # Step 4b: insights succeeded — normalize and write back
+    metrics_dict, null_fields = normalize_metrics(raw_metrics)
+    eng_rate, eng_note = _compute_engagement_rate(metrics_dict)
+
+    error_note_parts = []
+    if null_fields:
+        error_note_parts.append(f"null metrics (API dependent): {', '.join(null_fields)}")
+    if eng_note and "not calculated" in eng_note:
+        error_note_parts.append(eng_note)
+    combined_note = "; ".join(error_note_parts) if error_note_parts else None
+
+    print(f"\n[writeback-test] Writing metrics to Notion...")
+    print(f"[writeback-test] Fields to write:")
+    for k, v in metrics_dict.items():
+        if v is not None:
+            print(f"  {k}: {v}")
+    if eng_rate is not None:
+        print(f"  Engagement Rate: {round(eng_rate, 6)} ({eng_rate*100:.2f}%)")
+    print(f"  Sync Status: Synced")
+    print(f"  Data Last Synced At: {now_iso}")
+    print(f"  Last Sync Attempt At: {now_iso}")
+    if combined_note:
+        print(f"  Sync Error Note: {combined_note}")
+    else:
+        print(f"  Sync Error Note: (cleared)")
+
+    try:
+        write_metrics_to_notion(
+            page_id, metrics_dict, eng_rate,
+            sync_status="Synced",
+            now_iso=now_iso,
+            error_note=combined_note,
+            clear_error=(combined_note is None),
+        )
+        print(f"\n[writeback-test] Notion writeback successful.")
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"[error] Notion writeback failed: HTTP {status_code}")
+        print("[error] Existing metrics preserved (write did not complete).")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[error] Notion writeback failed: {type(e).__name__}")
+        sys.exit(1)
+
+    print("[writeback-test] Complete.")
+
+
+# ---------------------------------------------------------------------------
+# Token Exchange
+# ---------------------------------------------------------------------------
+
+def _mask_token(token):
+    """Return a masked preview: first 6 chars + ... + last 4 chars."""
+    if not token or len(token) < 12:
+        return "***"
+    return f"{token[:6]}...{token[-4:]}"
+
+
+def run_exchange_long_lived_token():
+    print("=" * 50)
+    print("Threads MVP 1 - Long-lived Token Exchange")
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print("=" * 50)
+
+    if not REQUESTS_AVAILABLE:
+        print("[error] 'requests' library is not installed.")
+        sys.exit(1)
+
+    print("\n[token-exchange] Checking required environment variables...")
+    validate_environment(keys=["THREADS_ACCESS_TOKEN", "META_APP_SECRET"])
+
+    print("\n[token-exchange] Calling Threads long-lived token exchange endpoint...")
+    print("[token-exchange] Endpoint: GET https://graph.threads.net/access_token")
+    print("[token-exchange] grant_type: th_exchange_token")
+
+    params = {
+        "grant_type": "th_exchange_token",
+        "client_secret": os.environ["META_APP_SECRET"],
+        "access_token": os.environ["THREADS_ACCESS_TOKEN"],
+    }
+
+    try:
+        response = requests.get(
+            "https://graph.threads.net/access_token",
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"\n[error] Token exchange HTTP error: {status_code}")
+        try:
+            err = e.response.json().get("error", {})
+            print(f"[error] Code    : {err.get('code', 'unknown')}")
+            print(f"[error] Type    : {err.get('type', 'unknown')}")
+            msg = err.get("message", "")
+            if "threads_basic" in msg.lower() or "permission" in msg.lower():
+                print("[error] Reason  : App may not have 'threads_basic' permission or is not approved.")
+            elif "short" in msg.lower() or "exchange" in msg.lower():
+                print("[error] Reason  : Token may already be a long-lived token (not exchangeable again).")
+            elif "expired" in msg.lower() or "invalid" in msg.lower():
+                print("[error] Reason  : Token is expired or invalid. Obtain a fresh short-lived token.")
+            else:
+                # Print a truncated safe message without token values
+                safe_msg = msg[:200] if msg else "no detail"
+                print(f"[error] Message : {safe_msg}")
+        except Exception:
+            pass
+        sys.exit(1)
+    except requests.exceptions.ConnectionError:
+        print("[error] Could not connect to Threads API. Check network connection.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[error] Unexpected error: {type(e).__name__}")
+        sys.exit(1)
+
+    new_token = data.get("access_token", "")
+    token_type = data.get("token_type", "unknown")
+    expires_in = data.get("expires_in")
+
+    if not new_token:
+        print("\n[error] Exchange succeeded but response did not contain access_token.")
+        sys.exit(1)
+
+    expires_at_str = "unknown"
+    if expires_in is not None:
+        from datetime import timedelta
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        expires_at_str = expires_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    print("\n[token-exchange] Exchange successful:")
+    print(f"  token_type      : {token_type}")
+    print(f"  expires_in      : {expires_in} seconds" + (f" (~{expires_in//86400} days)" if expires_in else ""))
+    print(f"  expires_at      : {expires_at_str}")
+    print(f"  new token       : present: YES")
+    print(f"  new token preview: {_mask_token(new_token)}")
+
+    # Write full token to a local gitignored file (never to stdout)
+    token_output_path = ".new_threads_token"
+    try:
+        with open(token_output_path, "w") as f:
+            f.write(f"# Threads long-lived token — generated {datetime.now(timezone.utc).isoformat()}\n")
+            f.write(f"# expires_at: {expires_at_str}\n")
+            f.write(f"# DO NOT COMMIT THIS FILE\n")
+            f.write(f"THREADS_ACCESS_TOKEN={new_token}\n")
+        print(f"\n[token-exchange] Full token written to: {token_output_path}")
+        print(f"[token-exchange] This file is for local use only. Delete it after updating .env.")
+    except Exception as e:
+        print(f"\n[warning] Could not write token to file: {type(e).__name__}")
+        print("[warning] Token was NOT printed to console. Re-run this command to retry.")
+
+    print("\n[token-exchange] IMPORTANT — Manual action required:")
+    print(f"  1. Run:  cat {token_output_path}")
+    print(f"     (or open the file) to read the new token.")
+    print("  2. Copy the THREADS_ACCESS_TOKEN= value into your local .env file.")
+    print("  3. Delete the output file:  del .new_threads_token  (or rm .new_threads_token)")
+    print("  4. Do NOT commit .env or .new_threads_token to git.")
+    print(f"  5. Record expires_at manually: {expires_at_str}")
+    print("  6. Schedule a token refresh before expiry.")
+    print("\n[token-exchange] This script did NOT update .env automatically.")
+    print("[token-exchange] No Notion writes performed.")
+    print("[token-exchange] Complete.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Threads MVP 1 Insights Sync Script"
@@ -667,9 +1067,19 @@ def main():
         help="Fetch Insights for a single post. Read-only. No Notion writes. Requires --post-id.",
     )
     parser.add_argument(
+        "--writeback-test",
+        action="store_true",
+        help="Fetch Insights and write metrics to a single Notion row. Requires --post-id.",
+    )
+    parser.add_argument(
         "--post-id",
         metavar="MEDIA_ID",
-        help="Threads Media ID to use with --fetch-insights-test.",
+        help="Threads Media ID to use with --fetch-insights-test or --writeback-test.",
+    )
+    parser.add_argument(
+        "--exchange-long-lived-token",
+        action="store_true",
+        help="Exchange current THREADS_ACCESS_TOKEN for a long-lived token. Writes token to .new_threads_token file.",
     )
     args = parser.parse_args()
 
@@ -694,12 +1104,25 @@ def main():
         run_fetch_insights_test(args.post_id)
         return
 
+    if args.writeback_test:
+        if not args.post_id:
+            print("[error] --writeback-test requires --post-id MEDIA_ID")
+            sys.exit(1)
+        run_writeback_test(args.post_id)
+        return
+
+    if args.exchange_long_lived_token:
+        run_exchange_long_lived_token()
+        return
+
     # Live sync — not yet implemented
     print("[error] Live sync is not yet implemented.")
     print("[info]  Run with --dry-run to validate environment setup.")
     print("[info]  Run with --notion-read-test to verify Notion connectivity.")
     print("[info]  Run with --resolve-threads-url URL to find a post's Media ID.")
     print("[info]  Run with --fetch-insights-test --post-id ID to fetch insights.")
+    print("[info]  Run with --writeback-test --post-id ID to write metrics to Notion.")
+    print("[info]  Run with --exchange-long-lived-token to get a 60-day token.")
     sys.exit(1)
 
 
