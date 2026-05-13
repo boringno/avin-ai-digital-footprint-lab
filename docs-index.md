@@ -33,6 +33,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [AVIN AI 數位足跡 OS 2.0｜系統總覽](01-system-overview/avin-ai-digital-footprint-os-2.0-overview.md)
 
+## 02-analysis
+
+- [Idea Opportunity Radar](02-analysis/idea-opportunity-radar.md)
+
 ## 02-prompts-and-skills
 
 - [四大核心 Skills｜AI 數位足跡引擎 3.0](02-prompts-and-skills/README.md)
