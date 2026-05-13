@@ -59,6 +59,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [External Skill Evaluation Workflow](04-workflows/external-skill-evaluation-workflow.md)
 - [Meta Publishing & Feedback Loop (Long-term Architecture)](04-workflows/meta-publishing-feedback-loop.md)
 - [Personal Website Progress Update Spec](04-workflows/personal-website-progress-update-spec.md)
+- [Productization Opportunity Evaluation Test Plan](04-workflows/productization-opportunity-evaluation-test-plan.md)
 - [Weekly AI Signal Selection Template](04-workflows/templates/weekly-ai-signal-selection-template.md)
 - [Threads MVP 1｜Manual Publish + Auto Threads Insights Sync](04-workflows/threads-mvp-1-manual-publish-auto-insights-sync.md)
 - [Threads MVP 1｜Manual Test Checklist](04-workflows/threads-mvp-1-manual-test-checklist.md)
