@@ -8,6 +8,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [AI Workflow Explorer](00-manifesto/ai-workflow-explorer.md)
 
+## 00-meta
+
+- [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
+
 ## 00-project-log
 
 - [AI 數位足跡 OS｜階段日誌、交接摘要與專案背景收斂](00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md)
