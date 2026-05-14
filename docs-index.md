@@ -10,7 +10,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 00-meta
 
-- [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md) - 記錄 AVIN 本地端專案、repo、workflow、內容資產、醫美 / 行銷資產與高風險混淆路徑，作為後續 Internal Project Radar Scan 與整理決策依據。
+- [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
 - [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
 
 ## 00-project-log
