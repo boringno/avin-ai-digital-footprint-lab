@@ -50,6 +50,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 ## 03-offers
 
 - [AI Workflow 諮詢與案例陪跑策略](03-offers/ai-workflow-consulting-and-case-building-strategy.md)
+- [AI Workflow 診斷訪談問題清單](03-offers/ai-workflow-diagnosis-intake-questions.md) - 用於一對一 AI Workflow 診斷前期訪談，協助收集真實 workflow 卡點、驗證訊號與可複用資產潛力。
 
 ## 03-positioning
 
