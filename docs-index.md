@@ -10,6 +10,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 00-meta
 
+- [Internal Project Radar Scan｜內部專案雷達掃描](00-meta/internal-project-radar-scan.md)
 - [Local Project Explained Inventory｜本地端專案人話說明書](00-meta/local-project-explained-inventory.md)
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
 - [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
