@@ -26,6 +26,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [AI Workflow 諮詢與案例陪跑策略完成紀錄](00-project-log/2026-05-13-ai-workflow-consulting-case-building-strategy-completed.md)
 - [Productization Opportunity Evaluation Test Plan Completed](00-project-log/2026-05-13-productization-opportunity-evaluation-test-plan-completed.md)
 - [Website Consulting Entry Section Completed](00-project-log/2026-05-13-website-consulting-entry-section-completed.md)
+- [AI Workflow 診斷訪談問題清單完成紀錄](00-project-log/2026-05-14-ai-workflow-diagnosis-intake-questions-completed.md)
 
 ## 01-learning-notes
 
