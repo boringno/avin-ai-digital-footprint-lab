@@ -29,6 +29,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Productization Opportunity Evaluation Test Plan Completed](00-project-log/2026-05-13-productization-opportunity-evaluation-test-plan-completed.md)
 - [Website Consulting Entry Section Completed](00-project-log/2026-05-13-website-consulting-entry-section-completed.md)
 - [AI Workflow 診斷訪談問題清單完成紀錄](00-project-log/2026-05-14-ai-workflow-diagnosis-intake-questions-completed.md)
+- [本地端全域專案盤點與人話說明書完成紀錄](00-project-log/2026-05-14-local-project-inventory-and-explained-map-completed.md)
 
 ## 01-learning-notes
 
