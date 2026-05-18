@@ -10,6 +10,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 00-meta
 
+- [Agent Evaluation and Observability Layer｜Agent 評估與觀測層](00-meta/agent-evaluation-and-observability-layer.md)
+- [AI Trend Intake and Architecture Fit｜AI 趨勢 Intake 與架構契合層](00-meta/ai-trend-intake-and-architecture-fit.md)
 - [Internal Project Radar Scan｜本地端專案內部雷達掃描](00-meta/internal-project-radar-scan.md)
 - [Local Project Explained Inventory｜本地端專案人話說明書](00-meta/local-project-explained-inventory.md)
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
@@ -32,6 +34,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [AI Workflow 診斷訪談問題清單完成紀錄](00-project-log/2026-05-14-ai-workflow-diagnosis-intake-questions-completed.md)
 - [Internal Project Radar Scan Completed｜2026-05-14](00-project-log/2026-05-14-internal-project-radar-scan-completed.md)
 - [本地端全域專案盤點與人話說明書完成紀錄](00-project-log/2026-05-14-local-project-inventory-and-explained-map-completed.md)
+- [AI Trend Intake Architecture Fit Completed｜2026-05-18](00-project-log/2026-05-18-ai-trend-intake-architecture-fit-completed.md)
 
 ## 01-learning-notes
 
@@ -75,6 +78,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 04-workflows
 
+- [AI Trend to Workflow Experiment｜AI 趨勢到工作流實驗](04-workflows/ai-trend-to-workflow-experiment.md)
 - [Content Format Experiment Library](04-workflows/content-format-experiment-library.md)
 - [Conversation Closure and Notion Log Workflow](04-workflows/conversation-closure-and-notion-log-workflow.md)
 - [External Carousel Skill Test Plan](04-workflows/external-carousel-skill-test-plan.md)
@@ -118,6 +122,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
 - [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
 - [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
+
+## open-source-vault
+
+- [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 
 ## Root Documents
 
