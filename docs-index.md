@@ -35,9 +35,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Internal Project Radar Scan Completed｜2026-05-14](00-project-log/2026-05-14-internal-project-radar-scan-completed.md)
 - [本地端全域專案盤點與人話說明書完成紀錄](00-project-log/2026-05-14-local-project-inventory-and-explained-map-completed.md)
 - [AI Trend Intake Architecture Fit Completed｜2026-05-18](00-project-log/2026-05-18-ai-trend-intake-architecture-fit-completed.md)
+- [GitHub AI Capability Candidate Batch Completed｜2026-05-18](00-project-log/2026-05-18-github-ai-capability-candidate-batch-completed.md)
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
-- [GitHub AI Capability Candidate Batch Completed｜2026-05-18](00-project-log/2026-05-18-github-ai-capability-candidate-batch-completed.md)
 
 ## 01-learning-notes
 
