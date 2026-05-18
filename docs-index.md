@@ -123,10 +123,6 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
 - [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
 
-## open-source-vault
-
-- [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
-
 ## Root Documents
 
 - [Changelog](CHANGELOG.md)
@@ -137,6 +133,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [AVIN GitHub Pages 首頁](docs/index.html)
 - [AVIN AI Digital Footprint OS LLM Guide](docs/llms.txt)
+
+## open-source-vault
+
+- [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 
 ## scripts
 
