@@ -15,8 +15,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Internal Project Radar Scan｜本地端專案內部雷達掃描](00-meta/internal-project-radar-scan.md)
 - [Local Project Explained Inventory｜本地端專案人話說明書](00-meta/local-project-explained-inventory.md)
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
-- [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
 - [OS Control Panel Reference Research](00-meta/os-control-panel-reference-research.md)
+- [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
 
 ## 00-project-log
 
@@ -40,8 +40,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [mattpocock/skills Document Only Review Completed｜2026-05-18](00-project-log/2026-05-18-mattpocock-skills-document-only-review-completed.md)
 - [Open Source Vault First Project Candidates Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-first-project-candidates-completed.md)
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
-- [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 - [OS Control Panel Reference Research Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-reference-research-completed.md)
+- [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 
 ## 01-learning-notes
 
