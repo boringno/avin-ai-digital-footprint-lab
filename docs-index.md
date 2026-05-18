@@ -37,6 +37,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [AI Trend Intake Architecture Fit Completed｜2026-05-18](00-project-log/2026-05-18-ai-trend-intake-architecture-fit-completed.md)
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
+- [GitHub AI Capability Candidate Batch Completed｜2026-05-18](00-project-log/2026-05-18-github-ai-capability-candidate-batch-completed.md)
 
 ## 01-learning-notes
 
@@ -139,6 +140,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 ## open-source-vault
 
 - [Open Source Vault｜開源能力觀察庫](open-source-vault/README.md)
+- [GitHub AI Capability Candidate Batch｜2026-05-18](open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md)
 - [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 - [Practical Trial Lane｜開源工具安全試用通道](open-source-vault/practical-trial-lane.md)
 - [Open Source Vault Project Template｜候選項目模板](open-source-vault/project-template.md)
