@@ -43,8 +43,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
 - [OS Control Panel Reference Research Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-reference-research-completed.md)
 - [OS Control Panel Static Dashboard Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-static-dashboard-completed.md)
-- [OS Control Panel UI UX Architecture Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-ui-ux-architecture-completed.md)
 - [OS Control Panel Static Dashboard UI Review Fixes Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-static-dashboard-ui-review-fixes-completed.md)
+- [OS Control Panel UI UX Architecture Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-ui-ux-architecture-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 
 ## 01-learning-notes
