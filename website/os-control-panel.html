@@ -1030,6 +1030,7 @@
             </div>
             <p>這不是 Jira，也不是 runtime scheduler。它只是把目前的 workflow lane 清楚放出來，讓 AVIN 一眼知道哪些項目在哪個狀態。</p>
           </div>
+          <p class="kpi-note">On smaller screens, scroll horizontally to view all workflow lanes.</p>
           <div class="board" aria-label="workflow experiment board">
             <article class="board-column">
               <h3>Watch</h3>
@@ -1151,9 +1152,9 @@
               <div class="text-block"><strong>Role:</strong> Repo changes / docs update / frontend static page / commit / push</div>
               <div class="text-block"><strong>Allowed actions:</strong> create markdown, update docs-index, create static HTML, commit / push when safe</div>
               <div class="text-block"><strong>Forbidden actions:</strong> install packages, clone repo, force push, delete files, operate parent repo</div>
-              <div class="text-block"><strong>Current recommended task:</strong> Finish static OS Control Panel</div>
+              <div class="text-block"><strong>Current recommended task:</strong> Validate dashboard readability, then design dashboard-data.json fields.</div>
               <div class="prompt-box">
-                <pre>Work only in avin-ai-digital-footprint-lab. Build the static OS Control Panel dashboard page without npm, framework install, API, MCP, or runtime agent execution. Keep human review gate visible.</pre>
+                <pre>Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.</pre>
                 <div class="cta-row">
                   <button class="button secondary" type="button" data-copy-prompt="codex-task">Copy Prompt</button>
                   <button class="button muted" type="button" disabled>Paste Report</button>
@@ -1233,16 +1234,17 @@
               </article>
             </div>
             <article class="card">
-              <span class="card-tag">Decision Controls</span>
-              <h3>Visual-only Review Actions</h3>
+              <span class="card-tag">Decision Preview</span>
+              <h3>Visual-only Decision States</h3>
               <p>這些按鈕目前只代表 AVIN 可以在這裡做的決策類型，不會真的寫資料或呼叫外部系統。</p>
-              <div class="decision-buttons">
-                <button class="button secondary" type="button">Approve</button>
-                <button class="button secondary" type="button">Needs Edit</button>
-                <button class="button secondary" type="button">Keep Watching</button>
-                <button class="button secondary" type="button">Archive</button>
-                <button class="button secondary" type="button">Move to Practical Trial</button>
-                <button class="button secondary" type="button">Move to Sandbox Test</button>
+              <p>These are visual-only decision states. No action is executed from this dashboard.</p>
+              <div class="decision-buttons" aria-label="visual-only decision previews">
+                <span class="chip status-review">Preview: Approve</span>
+                <span class="chip status-planning">Preview: Needs Edit</span>
+                <span class="chip status-watch">Preview: Keep Watching</span>
+                <span class="chip status-future">Preview: Archive</span>
+                <span class="chip status-active">Preview: Move to Practical Trial</span>
+                <span class="chip status-planning">Preview: Move to Sandbox Test</span>
               </div>
               <div class="text-block" style="margin-top: 16px;">
                 <strong>Rule:</strong> Human Review Gate stays mandatory even if future dashboard data becomes automated.
