@@ -163,6 +163,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 ## website
 
 - [AVIN 個人網站首頁雛形](website/index.html)
+- [AVIN OS Control Panel](website/os-control-panel.html)
 
 Hand-maintained note:
 - `docs/index.html`, `website/index.html`, and `docs/llms.txt` are important manually maintained entry files.

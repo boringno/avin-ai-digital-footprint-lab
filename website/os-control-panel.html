@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AVIN OS Control Panel</title>
+  <meta name="description" content="AVIN AI Digital Footprint OS 的第一版靜態控制面板，集中顯示 Stage 2 狀態、架構層、open-source-vault 候選、任務交接、Review Gate 與未來整合路線。">
+  <style>
+    :root {
+      --bg: #071018;
+      --bg-alt: #0b1724;
+      --panel: rgba(13, 25, 39, 0.92);
+      --panel-strong: rgba(9, 18, 30, 0.98);
+      --line: rgba(140, 180, 220, 0.16);
+      --text: #eff5ff;
+      --muted: #9fb4cf;
+      --soft: #cfdced;
+      --accent: #87f0c5;
+      --accent-strong: #44d9ae;
+      --blue: #7eb5ff;
+      --amber: #ffca72;
+      --rose: #ff8ba7;
+      --violet: #95a0ff;
+      --shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+      --radius: 24px;
+      --radius-sm: 18px;
+      --max: 1240px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+      line-height: 1.65;
+      background:
+        radial-gradient(circle at top left, rgba(135, 240, 197, 0.12), transparent 26%),
+        radial-gradient(circle at 88% 12%, rgba(126, 181, 255, 0.16), transparent 24%),
+        linear-gradient(180deg, #09121d 0%, #050c14 100%);
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+
+    .shell {
+      width: min(calc(100% - 28px), var(--max));
+      margin: 0 auto;
+    }
+
+    .hero { padding: 26px 0 18px; }
+
+    .hero-panel {
+      position: relative;
+      overflow: hidden;
+      padding: 34px;
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      background:
+        linear-gradient(145deg, rgba(135, 240, 197, 0.07), rgba(126, 181, 255, 0.03)),
+        var(--panel-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-panel::before,
+    .hero-panel::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .hero-panel::before {
+      width: 280px;
+      height: 280px;
+      right: -90px;
+      top: -110px;
+      background: radial-gradient(circle, rgba(126, 181, 255, 0.18) 0%, transparent 72%);
+    }
+
+    .hero-panel::after {
+      width: 240px;
+      height: 240px;
+      left: -60px;
+      bottom: -120px;
+      background: radial-gradient(circle, rgba(135, 240, 197, 0.13) 0%, transparent 72%);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(135, 240, 197, 0.22);
+      background: rgba(135, 240, 197, 0.08);
+      color: var(--accent);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      font-size: 0.82rem;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.82fr);
+      gap: 26px;
+      align-items: end;
+      margin-top: 22px;
+    }
+
+    h1, h2, h3, h4, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(2.35rem, 4vw, 4.7rem);
+      line-height: 1.03;
+      letter-spacing: -0.05em;
+      max-width: 10ch;
+    }
+
+    .hero-subtitle {
+      margin-top: 14px;
+      color: var(--soft);
+      font-size: 1.16rem;
+      font-weight: 600;
+    }
+
+    .hero-description {
+      margin-top: 18px;
+      max-width: 46rem;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(126, 181, 255, 0.18);
+      background: rgba(126, 181, 255, 0.08);
+      color: #d7e6fb;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+
+    .chip.status-active { border-color: rgba(135, 240, 197, 0.24); color: var(--accent); }
+    .chip.status-planning { border-color: rgba(126, 181, 255, 0.28); color: var(--blue); }
+    .chip.status-future { border-color: rgba(149, 160, 255, 0.22); color: #c5ccff; }
+    .chip.status-watch { border-color: rgba(255, 202, 114, 0.2); color: var(--amber); }
+    .chip.status-review { border-color: rgba(255, 139, 167, 0.2); color: #ffc0d0; }
+    .chip.risk-low { color: var(--accent); border-color: rgba(135, 240, 197, 0.22); }
+    .chip.risk-medium { color: var(--amber); border-color: rgba(255, 202, 114, 0.22); }
+    .chip.risk-high { color: #ffb0a9; border-color: rgba(255, 135, 122, 0.24); }
+    .chip.risk-unknown { color: #d5dff1; border-color: rgba(213, 223, 241, 0.18); }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .button:hover { transform: translateY(-2px); }
+
+    .button.primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: #081118;
+      font-weight: 700;
+    }
+
+    .button.secondary {
+      background: rgba(126, 181, 255, 0.08);
+      border-color: rgba(126, 181, 255, 0.24);
+      color: var(--text);
+    }
+
+    .button.muted {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--line);
+      color: var(--muted);
+    }
+
+    .hero-aside {
+      padding: 22px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: rgba(8, 17, 28, 0.7);
+    }
+
+    .hero-aside h2 {
+      font-size: 1.05rem;
+      margin-bottom: 12px;
+    }
+
+    .bullet-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 12px;
+      color: var(--muted);
+    }
+
+    .bullet-list li {
+      position: relative;
+      padding-left: 16px;
+    }
+
+    .bullet-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 11px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(135, 240, 197, 0.45);
+    }
+
+    main { padding-bottom: 32px; }
+    section { padding: 18px 0; }
+
+    .section-frame {
+      padding: 22px;
+      border-radius: 28px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-title h2 {
+      font-size: clamp(1.55rem, 2.2vw, 2.1rem);
+      letter-spacing: -0.03em;
+    }
+
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--blue);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .section-head p {
+      max-width: 42rem;
+      color: var(--muted);
+    }
+
+    .section-tools {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      min-height: 100%;
+      padding: 20px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(15, 28, 44, 0.92), rgba(9, 18, 29, 0.97));
+    }
+
+    .card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 10px;
+      letter-spacing: -0.02em;
+    }
+
+    .card p { color: var(--muted); }
+
+    .card-tag {
+      display: inline-block;
+      margin-bottom: 12px;
+      color: var(--blue);
+      font-size: 0.81rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .card.kpi {
+      grid-column: span 4;
+      min-height: 184px;
+    }
+
+    .kpi-number {
+      display: block;
+      margin-top: 18px;
+      font-size: clamp(2rem, 3vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.05em;
+      color: var(--text);
+    }
+
+    .kpi-note {
+      margin-top: 8px;
+      font-size: 0.94rem;
+      color: var(--soft);
+    }
+
+    .list-grid {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .list-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .list-item strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+
+    .architecture-card {
+      grid-column: span 3;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .meta-list {
+      display: grid;
+      gap: 10px;
+      margin-top: auto;
+      padding-top: 6px;
+      font-size: 0.93rem;
+      color: var(--muted);
+    }
+
+    .meta-list div strong { color: var(--soft); }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .flow-card {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .flow-card h3 {
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+
+    .flow-arrow {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(135, 240, 197, 0.08);
+      border: 1px solid rgba(135, 240, 197, 0.18);
+      color: var(--accent);
+      font-size: 0.84rem;
+      margin-top: 12px;
+    }
+
+    .queue-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .queue-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .queue-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .queue-specs {
+      display: grid;
+      gap: 8px;
+      font-size: 0.94rem;
+      color: var(--muted);
+    }
+
+    .queue-specs strong { color: var(--soft); }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(220px, 1fr));
+      gap: 14px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .board-column {
+      min-width: 220px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .board-column h3 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+    }
+
+    .board-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .board-item {
+      padding: 12px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(14, 24, 37, 0.96), rgba(9, 17, 27, 0.98));
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .board-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.94rem;
+    }
+
+    .board-item p {
+      font-size: 0.88rem;
+    }
+
+    .handoff-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .handoff-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .role-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .text-block {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .prompt-box {
+      display: grid;
+      gap: 10px;
+    }
+
+    .prompt-box pre {
+      margin: 0;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(126, 181, 255, 0.18);
+      background: rgba(6, 14, 22, 0.9);
+      color: #dce8f8;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 0.83rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+      gap: 16px;
+    }
+
+    .decision-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .decision-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .decision-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .timeline-item:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .timeline-phase {
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .integration-note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .footer {
+      padding: 18px 0 42px;
+    }
+
+    .footer-panel {
+      display: grid;
+      gap: 12px;
+      padding: 22px;
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: rgba(6, 13, 21, 0.92);
+    }
+
+    .footer-title {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .footer-note { color: var(--muted); }
+
+    .copy-feedback {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(135, 240, 197, 0.18);
+      background: rgba(135, 240, 197, 0.08);
+      color: var(--accent);
+      font-size: 0.85rem;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .copy-feedback.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1180px) {
+      .architecture-card { grid-column: span 4; }
+      .flow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .queue-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .decision-grid,
+      .handoff-grid,
+      .queue-grid,
+      .flow-grid { grid-template-columns: 1fr; }
+
+      .cards-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .card.kpi,
+      .architecture-card { grid-column: span 6; }
+
+      .section-head {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .shell { width: min(calc(100% - 20px), var(--max)); }
+      .hero-panel,
+      .section-frame,
+      .footer-panel { padding: 18px; }
+      .cards-grid { grid-template-columns: 1fr; }
+      .card.kpi,
+      .architecture-card { grid-column: span 1; }
+      .cta-row,
+      .decision-buttons,
+      .section-tools { flex-direction: column; }
+      .button { width: 100%; }
+      .timeline-item { grid-template-columns: 1fr; gap: 8px; }
+      .hero { padding-top: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="shell">
+      <div class="hero-panel" data-module="hero">
+        <div class="eyebrow">AVIN AI Digital Footprint OS</div>
+        <div class="hero-grid">
+          <div>
+            <h1>AVIN OS Control Panel</h1>
+            <p class="hero-subtitle">AI Digital Footprint OS｜Stage 2 Mission Control</p>
+            <p class="hero-description">
+              把 AI 趨勢研究、open-source-vault、workflow experiments、候選 repo、任務交接與 AVIN Review Gate
+              集中在一個靜態控制面板。第一版只做可視化、導覽與 handoff，不做 API、MCP、Hermes runtime 或任何自動執行。
+            </p>
+            <div class="chip-row" aria-label="dashboard status chips">
+              <span class="chip status-active">Stage 2｜Public Research &amp; Real Workflow Experiments</span>
+              <span class="chip status-planning">Static Dashboard v1</span>
+              <span class="chip status-planning">Demo-first / Engineering-aware</span>
+              <span class="chip status-review">Human Review Gate Required</span>
+            </div>
+            <div class="cta-row">
+              <a class="button primary" href="https://github.com/boringno/avin-ai-digital-footprint-lab" target="_blank" rel="noreferrer">View GitHub Evidence Layer</a>
+              <a class="button secondary" href="../docs-index.md">Open Docs Index</a>
+              <a class="button secondary" href="../open-source-vault/README.md">Review Open-source Vault</a>
+              <button class="button secondary" type="button" data-copy-prompt="codex-next-task">Copy Next Codex Task</button>
+            </div>
+            <div class="section-tools" style="margin-top: 12px;">
+              <span id="copy-feedback" class="copy-feedback" aria-live="polite">Prompt copied.</span>
+            </div>
+          </div>
+          <aside class="hero-aside">
+            <h2>Control Tower Rules</h2>
+            <ul class="bullet-list">
+              <li>顯示狀態、風險、任務 handoff 與下一步，不直接執行。</li>
+              <li>GitHub Markdown、docs-index 與 project cards 仍是 source of truth。</li>
+              <li>Codex / Claude Code / Hermes 區塊目前只到 prompt 與 proposal layer。</li>
+              <li>未來即使接 API / MCP，也先從 read-only 與 AVIN approval 開始。</li>
+            </ul>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="mission-control">
+      <div class="shell">
+        <div class="section-frame" data-module="mission-control">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Mission Control</span>
+              <h2>Current State</h2>
+            </div>
+            <p>先回答 AVIN 每天最需要知道的事：現在在哪個 stage、最近完成了什麼、接下來該做哪一步，以及哪些事項仍需要人工 review。</p>
+          </div>
+          <div class="cards-grid">
+            <article class="card kpi" data-field="stage">
+              <span class="card-tag">Current Stage</span>
+              <h3>Stage 2｜Public Research &amp; Real Workflow Experiments</h3>
+              <span class="kpi-number">4</span>
+              <p class="kpi-note">目前主要控制軸：AI Trend Intake、open-source-vault、Practical Trial Lane、OS Control Panel。</p>
+            </article>
+            <article class="card kpi" data-field="system-health">
+              <span class="card-tag">System Health</span>
+              <h3>Static-first / Low-bug Surface</h3>
+              <span class="kpi-number">Read-only</span>
+              <p class="kpi-note">沒有 API、沒有 MCP、沒有 agent runtime。先把資訊架構、狀態欄位與 handoff 規則講清楚。</p>
+            </article>
+            <article class="card kpi" data-field="next-action">
+              <span class="card-tag">Next Recommended Action</span>
+              <h3>Keep building visible workflow evidence</h3>
+              <span class="kpi-number">1</span>
+              <p class="kpi-note">下一步應補 `dashboard-data.json` 規格，而不是直接衝 API、MCP 或 Hermes 自動執行。</p>
+            </article>
+          </div>
+          <div class="cards-grid" style="margin-top: 16px;">
+            <article class="card" style="grid-column: span 6;" data-field="main-focus">
+              <span class="card-tag">Main Focus</span>
+              <h3>Current Working Focus</h3>
+              <div class="list-grid">
+                <div class="list-item"><strong>AI Trend Intake</strong>先判斷 signal 是否有效，再決定 Watch / Document / Trial。</div>
+                <div class="list-item"><strong>Open-source Vault</strong>把外部 repo 變成可追蹤、可審核的候選隊列。</div>
+                <div class="list-item"><strong>Practical Trial Lane</strong>建立安全試用通道，而不是熱門 repo 直接 install。</div>
+                <div class="list-item"><strong>OS Control Panel</strong>讓 AVIN 不用靠記憶去追每一份 Markdown。</div>
+                <div class="list-item"><strong>Static-first dashboard</strong>先穩定顯示，再考慮資料自動化。</div>
+              </div>
+            </article>
+            <article class="card" style="grid-column: span 6;" data-field="completed-layers">
+              <span class="card-tag">Latest Completed Layers</span>
+              <h3>Recent Completed Work</h3>
+              <div class="list-grid">
+                <div class="list-item"><strong>OS Control Panel Reference Research</strong>整理外部 dashboard / control plane / registry pattern。</div>
+                <div class="list-item"><strong>OS Control Panel UI UX Architecture</strong>定義 screen、state model、data source、future path。</div>
+                <div class="list-item"><strong>mattpocock/skills Document Only Review</strong>完成第一份正式 review note。</div>
+                <div class="list-item"><strong>Practical Trial Lane</strong>完成安全試用規則。</div>
+                <div class="list-item"><strong>GitHub AI Capability Candidate Batch</strong>建立第一批 13 個候選 repo 池。</div>
+              </div>
+            </article>
+          </div>
+          <article class="card" data-field="recommended-actions" style="margin-top: 16px;">
+            <span class="card-tag">Next Recommended Actions</span>
+            <h3>Recommended Sequence</h3>
+            <div class="list-grid">
+              <div class="list-item"><strong>1. Build static OS Control Panel</strong>現在這頁就是第一版完成結果。</div>
+              <div class="list-item"><strong>2. Add `dashboard-data.json` later</strong>把硬編資料改成可抽離的結構。</div>
+              <div class="list-item"><strong>3. Add GitHub Action generated data later</strong>從 repo 檔案自動生成計數與索引。</div>
+              <div class="list-item"><strong>4. Keep API / MCP / Hermes as future integration</strong>先不要讓 runtime 層反客為主。</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture-map">
+      <div class="shell">
+        <div class="section-frame" data-module="architecture-map">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Architecture Map</span>
+              <h2>OS Layers</h2>
+            </div>
+            <p>這一層不是產品 sitemap，而是 AVIN 每天工作的 operating map。每張卡片都對應一個 layer、一個 trigger 與一個下一步。</p>
+          </div>
+          <div class="cards-grid">
+            <article class="card architecture-card">
+              <span class="card-tag">Active</span>
+              <h3>Manual OS</h3>
+              <p>AVIN 手控主系統，負責最終判斷、文件寫回、內容方向與 source of truth 維護。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Human-controlled mission core</div>
+                <div><strong>Trigger:</strong> Need judgment, commit, publish, or review</div>
+                <div><strong>Related files:</strong> `00-meta/`, `00-project-log/`, `docs-index.md`</div>
+                <div><strong>Next action:</strong> Keep the UI as a view layer, not a replacement</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Active</span>
+              <h3>AI Trend Intake Layer</h3>
+              <p>新 repo、新 trend、新工具先經過 signal 判斷、architecture fit 與 risk check，再決定要不要進下一步。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Signal filtering and decision framing</div>
+                <div><strong>Trigger:</strong> New GitHub repo or AI trend signal found</div>
+                <div><strong>Related files:</strong> `00-meta/ai-trend-intake-and-architecture-fit.md`</div>
+                <div><strong>Next action:</strong> Connect to dashboard data schema later</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Active</span>
+              <h3>open-source-vault</h3>
+              <p>外部 repo 的治理層。先候選、先審查、先 project card，再談 practical trial、localize 或 reject。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Controlled external capability intake</div>
+                <div><strong>Trigger:</strong> Candidate batch or project card created</div>
+                <div><strong>Related files:</strong> `open-source-vault/README.md`, `workflow.md`</div>
+                <div><strong>Next action:</strong> Expand more review notes and comparison notes</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Active</span>
+              <h3>Practical Trial Lane</h3>
+              <p>安全實測通道。只處理風險可控、README 清楚、能用 demo 或 sandbox 初步理解的候選工具。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Safe trial without lowering governance</div>
+                <div><strong>Trigger:</strong> Candidate moves beyond document-only review</div>
+                <div><strong>Related files:</strong> `open-source-vault/practical-trial-lane.md`</div>
+                <div><strong>Next action:</strong> Add first real sandbox safety review</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Future</span>
+              <h3>Hermes Agent Track</h3>
+              <p>未來的 proposal layer 與自主探索支線，不是目前這頁要直接控制的 runtime agent system。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Agent proposal, observability, and bounded exploration</div>
+                <div><strong>Trigger:</strong> Future agent proposal or import suggestion</div>
+                <div><strong>Related files:</strong> `00-meta/agent-evaluation-and-observability-layer.md`</div>
+                <div><strong>Next action:</strong> Stay proposal-only, AVIN approval required</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Watch</span>
+              <h3>Content Pipeline</h3>
+              <p>把 GitHub note、review note、workflow experiment 與 public output 串成可持續的內容證據層。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Turn research into public proof-of-work</div>
+                <div><strong>Trigger:</strong> Note completed or published URL added</div>
+                <div><strong>Related files:</strong> `04-workflows/`, `06-platform-outputs/`</div>
+                <div><strong>Next action:</strong> Keep output tied to documented evidence</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Planning</span>
+              <h3>Productization Layer</h3>
+              <p>不是現在就做產品，而是保留未來判斷：哪些 workflow 值得產品化，哪些只是研究與內容資產。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Future productization judgment, not build scope</div>
+                <div><strong>Trigger:</strong> Repeated workflow value or stable asset pattern</div>
+                <div><strong>Related files:</strong> `04-workflows/productization-opportunity-evaluation-test-plan.md`</div>
+                <div><strong>Next action:</strong> Continue evidence gathering before expansion</div>
+              </div>
+            </article>
+            <article class="card architecture-card">
+              <span class="card-tag">Active</span>
+              <h3>OS Control Panel</h3>
+              <p>這一頁本身是靜態控制面板。它集中顯示狀態、佇列、handoff 與 Review Gate，但不取代 GitHub Markdown。</p>
+              <div class="meta-list">
+                <div><strong>Purpose:</strong> Daily visual cockpit for AVIN</div>
+                <div><strong>Trigger:</strong> Need fast orientation across layers</div>
+                <div><strong>Related files:</strong> `website/os-control-panel.html`</div>
+                <div><strong>Next action:</strong> Extract data model later without rewriting the UI</div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="trigger-map">
+      <div class="shell">
+        <div class="section-frame" data-module="trigger-map">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Trigger Map</span>
+              <h2>What Triggers What</h2>
+            </div>
+            <p>第一版不需要複雜互動，只要清楚顯示事件、去向與 review gate。AVIN 不該靠記憶去追每個流程分支。</p>
+          </div>
+          <div class="flow-grid">
+            <article class="flow-card">
+              <h3>New GitHub repo found</h3>
+              <p>新 repo 先進候選層，不直接 clone 或 install。</p>
+              <div class="flow-arrow">→ Candidate Batch</div>
+            </article>
+            <article class="flow-card">
+              <h3>Candidate selected</h3>
+              <p>從批次中挑出單一候選，建立 project card。</p>
+              <div class="flow-arrow">→ Project Card</div>
+            </article>
+            <article class="flow-card">
+              <h3>Document Only selected</h3>
+              <p>做公開頁面與 README 層的保守研究，不做執行。</p>
+              <div class="flow-arrow">→ Review Note</div>
+            </article>
+            <article class="flow-card">
+              <h3>Practical Trial selected</h3>
+              <p>只有風險可控的候選才走這條路。</p>
+              <div class="flow-arrow">→ Trial Log</div>
+            </article>
+            <article class="flow-card">
+              <h3>Sandbox Test selected</h3>
+              <p>先進安全審查與邊界定義，不進主 repo。</p>
+              <div class="flow-arrow">→ Security Review</div>
+            </article>
+            <article class="flow-card">
+              <h3>Review completed</h3>
+              <p>AI / Codex / Claude 產出的結果需要人工門檻。</p>
+              <div class="flow-arrow">→ AVIN Review Gate</div>
+            </article>
+            <article class="flow-card">
+              <h3>Published URL added</h3>
+              <p>有公開輸出時，回寫 lifecycle 與 URL 層。</p>
+              <div class="flow-arrow">→ Lifecycle Log</div>
+            </article>
+            <article class="flow-card">
+              <h3>Agent proposal created</h3>
+              <p>未來 Hermes 也只能先提 proposal，不自動執行。</p>
+              <div class="flow-arrow">→ AVIN Approval Needed</div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="vault-queue">
+      <div class="shell">
+        <div class="section-frame" data-module="open-source-vault-queue">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Open-source Vault Queue</span>
+              <h2>Current Candidates</h2>
+            </div>
+            <p>這裡顯示現在真的在隊列裡的候選，而不是抽象概念。卡片欄位刻意結構化，之後才能抽成 `dashboard-data.json`。</p>
+          </div>
+          <div class="queue-grid">
+            <article class="card queue-card" data-status="document-only">
+              <div class="queue-head">
+                <div>
+                  <span class="card-tag">Repo Candidate</span>
+                  <h3>mattpocock/skills</h3>
+                </div>
+                <span class="chip risk-medium">Medium / Unknown</span>
+              </div>
+              <div class="status-row">
+                <span class="chip status-active">Document Only Review Completed</span>
+                <span class="chip status-watch">Agent Skills</span>
+              </div>
+              <div class="queue-specs">
+                <div><strong>Architecture Fit:</strong> Hermes Agent Track / open-source-vault / Workflow Experiment / Content Pipeline</div>
+                <div><strong>Suggested First Action:</strong> Document Only</div>
+                <div><strong>Lifecycle Status:</strong> Document Only Review Completed</div>
+                <div><strong>Next action:</strong> Comparison Note with `tech-leads-club/agent-skills`</div>
+              </div>
+              <a class="button muted" href="../open-source-vault/projects/mattpocock-skills.md">Open Project Card</a>
+            </article>
+            <article class="card queue-card" data-status="sandbox">
+              <div class="queue-head">
+                <div>
+                  <span class="card-tag">Repo Candidate</span>
+                  <h3>rohitg00/agentmemory</h3>
+                </div>
+                <span class="chip risk-high">Medium / High / Unknown</span>
+              </div>
+              <div class="status-row">
+                <span class="chip status-review">Sandbox Candidate</span>
+                <span class="chip status-watch">Agent Memory</span>
+              </div>
+              <div class="queue-specs">
+                <div><strong>Architecture Fit:</strong> Hermes Agent Track / open-source-vault / Workflow Experiment</div>
+                <div><strong>Suggested First Action:</strong> Sandbox Test</div>
+                <div><strong>Lifecycle Status:</strong> Candidate Created</div>
+                <div><strong>Next action:</strong> Sandbox Safety Review</div>
+              </div>
+              <a class="button muted" href="../open-source-vault/projects/rohitg00-agentmemory.md">Open Project Card</a>
+            </article>
+            <article class="card queue-card" data-status="watch">
+              <div class="queue-head">
+                <div>
+                  <span class="card-tag">Candidate Batch</span>
+                  <h3>GitHub AI Capability Candidate Batch</h3>
+                </div>
+                <span class="chip risk-unknown">13 repos</span>
+              </div>
+              <div class="status-row">
+                <span class="chip status-planning">Created</span>
+                <span class="chip status-watch">Batch</span>
+              </div>
+              <div class="queue-specs">
+                <div><strong>Type:</strong> Batch-level intake pool</div>
+                <div><strong>Suggested First Action:</strong> Select one repo at a time</div>
+                <div><strong>Lifecycle Status:</strong> Created</div>
+                <div><strong>Next action:</strong> Keep triaging one by one instead of broad evaluation</div>
+              </div>
+              <a class="button muted" href="../open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md">Open Candidate Batch</a>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow-board">
+      <div class="shell">
+        <div class="section-frame" data-module="workflow-experiment-board">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Workflow Experiment Board</span>
+              <h2>Status Lanes</h2>
+            </div>
+            <p>這不是 Jira，也不是 runtime scheduler。它只是把目前的 workflow lane 清楚放出來，讓 AVIN 一眼知道哪些項目在哪個狀態。</p>
+          </div>
+          <div class="board" aria-label="workflow experiment board">
+            <article class="board-column">
+              <h3>Watch</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>GitHub AI Capability Candidate Batch</strong>
+                  <p>Batch items stay here until one repo is selected into a project card.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Document Only</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>mattpocock/skills</strong>
+                  <p>Document-only review completed. Next step is comparison note, not direct import.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Practical Trial</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>Empty for now</strong>
+                  <p>First real practical trial should happen only after tighter safety review.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Sandbox Test</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>rohitg00/agentmemory</strong>
+                  <p>Needs sandbox safety framing before any local execution idea.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Localize</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>None yet</strong>
+                  <p>No candidate is approved for localization in this stage.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Archive</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>Future archive lane</strong>
+                  <p>Reserved for rejected or parked items after review.</p>
+                </div>
+              </div>
+            </article>
+            <article class="board-column">
+              <h3>Completed</h3>
+              <div class="board-stack">
+                <div class="board-item">
+                  <strong>AI Trend Intake Layer</strong>
+                  <p>Architecture fit and intake rules documented.</p>
+                </div>
+                <div class="board-item">
+                  <strong>Practical Trial Lane</strong>
+                  <p>Safe trial policy documented.</p>
+                </div>
+                <div class="board-item">
+                  <strong>OS Control Panel Reference Research</strong>
+                  <p>External patterns summarized.</p>
+                </div>
+                <div class="board-item">
+                  <strong>OS Control Panel UI UX Architecture</strong>
+                  <p>Architecture spec completed.</p>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="handoff-panel">
+      <div class="shell">
+        <div class="section-frame" data-module="agent-task-handoff-panel">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Agent Task Handoff Panel</span>
+              <h2>Prompt and Review Only</h2>
+            </div>
+            <p>第一版不直接嵌入 Codex / Claude Code，也不直接執行它們。這裡只管理角色、允許行為、禁止行為、目前建議任務與可複製 prompt。</p>
+          </div>
+          <div class="handoff-grid">
+            <article class="card handoff-card">
+              <div class="role-line">
+                <div>
+                  <span class="card-tag">Strategy Role</span>
+                  <h3>ChatGPT</h3>
+                </div>
+                <span class="chip status-review">Review Needed</span>
+              </div>
+              <div class="text-block"><strong>Role:</strong> Strategy / AVIN view / prompt design / synthesis</div>
+              <div class="text-block"><strong>Typical tasks:</strong> strategy framing, content angle, next-step decision</div>
+              <div class="prompt-box">
+                <pre>Review current OS stage, summarize open decisions, and propose the next highest-value documented step for AVIN without expanding into productization.</pre>
+                <div class="cta-row">
+                  <button class="button secondary" type="button" data-copy-prompt="chatgpt-task">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled>Paste Report</button>
+                </div>
+              </div>
+            </article>
+            <article class="card handoff-card">
+              <div class="role-line">
+                <div>
+                  <span class="card-tag">Repo Change Role</span>
+                  <h3>Codex</h3>
+                </div>
+                <span class="chip status-active">Current Recommended Task</span>
+              </div>
+              <div class="text-block"><strong>Role:</strong> Repo changes / docs update / frontend static page / commit / push</div>
+              <div class="text-block"><strong>Allowed actions:</strong> create markdown, update docs-index, create static HTML, commit / push when safe</div>
+              <div class="text-block"><strong>Forbidden actions:</strong> install packages, clone repo, force push, delete files, operate parent repo</div>
+              <div class="text-block"><strong>Current recommended task:</strong> Finish static OS Control Panel</div>
+              <div class="prompt-box">
+                <pre>Work only in avin-ai-digital-footprint-lab. Build the static OS Control Panel dashboard page without npm, framework install, API, MCP, or runtime agent execution. Keep human review gate visible.</pre>
+                <div class="cta-row">
+                  <button class="button secondary" type="button" data-copy-prompt="codex-task">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled>Paste Report</button>
+                </div>
+              </div>
+            </article>
+            <article class="card handoff-card">
+              <div class="role-line">
+                <div>
+                  <span class="card-tag">Audit Role</span>
+                  <h3>Claude Code</h3>
+                </div>
+                <span class="chip status-planning">Read-only Preferred</span>
+              </div>
+              <div class="text-block"><strong>Role:</strong> Read-only audit / repo scan / quality review</div>
+              <div class="text-block"><strong>Allowed actions:</strong> scan, summarize, recommend</div>
+              <div class="text-block"><strong>Forbidden actions:</strong> commit / push unless explicitly assigned</div>
+              <div class="prompt-box">
+                <pre>Perform a read-only audit of the current dashboard and supporting docs. Focus on clarity, risk labeling, navigation, and whether the UI preserves source-of-truth separation.</pre>
+                <div class="cta-row">
+                  <button class="button secondary" type="button" data-copy-prompt="claude-task">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled>Paste Report</button>
+                </div>
+              </div>
+            </article>
+            <article class="card handoff-card">
+              <div class="role-line">
+                <div>
+                  <span class="card-tag">Future Role</span>
+                  <h3>Hermes Future</h3>
+                </div>
+                <span class="chip status-future">Future</span>
+              </div>
+              <div class="text-block"><strong>Role:</strong> Agent proposal layer</div>
+              <div class="text-block"><strong>Status:</strong> Future</div>
+              <div class="text-block"><strong>Rule:</strong> Proposal only, AVIN approval required</div>
+              <div class="prompt-box">
+                <pre>Future state only. Hermes may propose candidate intake, review routing, or import suggestions, but it must not execute writes or external actions without AVIN approval.</pre>
+                <div class="cta-row">
+                  <button class="button muted" type="button" disabled>Copy Prompt</button>
+                  <button class="button muted" type="button" disabled>Completed</button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="review-gate">
+      <div class="shell">
+        <div class="section-frame" data-module="review-gate">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Review Gate</span>
+              <h2>AVIN Decision Zone</h2>
+            </div>
+            <p>所有 AI / Codex / Claude / future Hermes 的工作最後都要回到這裡。這一層只顯示 waiting items 與決策按鈕，不寫入、不觸發任何外部操作。</p>
+          </div>
+          <div class="decision-grid">
+            <div class="decision-list">
+              <article class="decision-item">
+                <strong>Compare mattpocock/skills with tech-leads-club/agent-skills</strong>
+                <p>目的是理解 agent skills 生態與結構差異，不是直接導入任何 repo。</p>
+              </article>
+              <article class="decision-item">
+                <strong>Prepare rohitg00/agentmemory Sandbox Safety Review</strong>
+                <p>先確認 local file access、state storage、sandbox boundary，再談任何實測可能。</p>
+              </article>
+              <article class="decision-item">
+                <strong>Decide when to create dashboard-data.json</strong>
+                <p>先確認這頁的欄位命名與區塊穩定，再抽離靜態資料。</p>
+              </article>
+              <article class="decision-item">
+                <strong>Decide whether to expose a public version later</strong>
+                <p>如果要公開，也應該是裁剪版，而不是把內部控制面板完整暴露。</p>
+              </article>
+            </div>
+            <article class="card">
+              <span class="card-tag">Decision Controls</span>
+              <h3>Visual-only Review Actions</h3>
+              <p>這些按鈕目前只代表 AVIN 可以在這裡做的決策類型，不會真的寫資料或呼叫外部系統。</p>
+              <div class="decision-buttons">
+                <button class="button secondary" type="button">Approve</button>
+                <button class="button secondary" type="button">Needs Edit</button>
+                <button class="button secondary" type="button">Keep Watching</button>
+                <button class="button secondary" type="button">Archive</button>
+                <button class="button secondary" type="button">Move to Practical Trial</button>
+                <button class="button secondary" type="button">Move to Sandbox Test</button>
+              </div>
+              <div class="text-block" style="margin-top: 16px;">
+                <strong>Rule:</strong> Human Review Gate stays mandatory even if future dashboard data becomes automated.
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="future-integration">
+      <div class="shell">
+        <div class="section-frame" data-module="future-integration-panel">
+          <div class="section-head">
+            <div class="section-title">
+              <span class="section-label">Future Integration Panel</span>
+              <h2>Read-only First, Proposal Layer Later</h2>
+            </div>
+            <p>這張 roadmap 是為了保留未來工程化路線，不是要現在就加上 API、MCP、Hermes runtime 或 automation surface。</p>
+          </div>
+          <div class="timeline">
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 0</div>
+              <div><strong>Reference Research</strong><p>已完成。整理外部 mission control、knowledge map、agent dashboard 與 MCP registry pattern。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 1</div>
+              <div><strong>UI/UX Architecture Spec</strong><p>已完成。定義 core screens、state model、data source 與 non-goals。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 2</div>
+              <div><strong>Static GitHub Pages Dashboard</strong><p>目前這頁就是第一版靜態面板。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 3</div>
+              <div><strong>`dashboard-data.json`</strong><p>之後把硬編資料抽成結構化檔案，讓 UI 與內容更容易同步。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 4</div>
+              <div><strong>GitHub Action auto-generates dashboard data</strong><p>從 repo docs、project cards、logs 自動生成 counts 與狀態。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 5</div>
+              <div><strong>GitHub / Notion API read-only sync</strong><p>只在欄位穩定後考慮加入 read-only sync。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 6</div>
+              <div><strong>MCP / Hermes proposal layer</strong><p>Proposal first, no direct action。任何 agent 建議都要先回到 AVIN Review Gate。</p></div>
+            </article>
+            <article class="timeline-item">
+              <div class="timeline-phase">Phase 7</div>
+              <div><strong>Human-approved actions only</strong><p>即使未來有整合，最後也只能在人類批准後執行。</p></div>
+            </article>
+          </div>
+          <p class="integration-note">關鍵原則：未來即使接 GitHub API、Notion API、MCP 或 Hermes，也要從 read-only 或 proposal layer 開始，不可跳過人工門檻。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div class="footer-panel">
+        <div class="footer-title">AVIN AI Digital Footprint OS</div>
+        <div class="footer-note">AI Workflow Explorer / AI Operations Strategist</div>
+        <div class="footer-note">Static dashboard v1</div>
+        <div class="footer-note">Source of truth remains GitHub Markdown + docs-index + project cards.</div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const prompts = {
+        "codex-next-task": "Continue working only in avin-ai-digital-footprint-lab. Keep the OS Control Panel static-first and engineering-aware. Do not add API, MCP, Hermes runtime, or package installs. The next likely step is to define dashboard-data.json shape from the current HTML fields.",
+        "chatgpt-task": "Review the current AVIN OS Control Panel state and propose the next highest-value documented step without expanding into SaaS, backend, API, MCP, or agent auto-run.",
+        "codex-task": "Work only in avin-ai-digital-footprint-lab. Create or update repo files safely, keep docs as source of truth, and avoid npm installs, framework setup, API, MCP, or Hermes runtime work.",
+        "claude-task": "Perform a read-only audit of the current static dashboard and supporting docs. Focus on clarity, state naming consistency, navigation, and whether Human Review Gate remains visible."
+      };
+
+      const feedback = document.getElementById("copy-feedback");
+      const buttons = document.querySelectorAll("[data-copy-prompt]");
+
+      async function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "absolute";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(area);
+        return ok;
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const key = button.getAttribute("data-copy-prompt");
+          const text = prompts[key];
+          if (!text) return;
+
+          try {
+            const ok = await copyText(text);
+            if (!ok) return;
+            feedback.textContent = "Prompt copied.";
+            feedback.classList.add("visible");
+            window.clearTimeout(window.__copyFeedbackTimer);
+            window.__copyFeedbackTimer = window.setTimeout(() => {
+              feedback.classList.remove("visible");
+            }, 1800);
+          } catch (error) {
+            feedback.textContent = "Copy failed. Use the text in the card.";
+            feedback.classList.add("visible");
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
