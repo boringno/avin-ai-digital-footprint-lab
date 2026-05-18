@@ -126,6 +126,53 @@
     .inline-actions { margin-top: 18px; }
     .status-stack { margin-top: 14px; }
 
+    .topbar-side {
+      display: grid;
+      gap: 14px;
+      justify-items: end;
+    }
+
+    .language-tools {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .language-label {
+      padding-left: 8px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .language-switch {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .lang-button {
+      min-width: 62px;
+      min-height: 38px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    }
+
+    .lang-button.active {
+      background: rgba(135, 240, 197, 0.14);
+      border-color: rgba(135, 240, 197, 0.24);
+      color: var(--text);
+    }
+
     .chip {
       display: inline-flex;
       align-items: center;
@@ -609,6 +656,10 @@
         grid-template-columns: 1fr;
       }
 
+      .topbar-side {
+        justify-items: start;
+      }
+
       .toolbar-actions {
         justify-content: flex-start;
       }
@@ -700,6 +751,19 @@
         align-items: stretch;
       }
 
+      .language-tools {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .language-switch {
+        flex: 1;
+      }
+
+      .lang-button {
+        flex: 1;
+      }
+
       .button,
       .mini-link {
         width: 100%;
@@ -716,28 +780,35 @@
     <div class="shell">
       <header class="topbar">
         <div>
-          <div class="brand-line"><span class="brand-dot"></span>AVIN AI Digital Footprint OS</div>
-          <h1>OS Control Panel</h1>
-          <p class="topbar-copy">
+          <div class="brand-line" data-i18n="brand_line" data-i18n-html="true"><span class="brand-dot"></span>AVIN AI Digital Footprint OS</div>
+          <h1 data-i18n="page_title">OS Control Panel</h1>
+          <p class="topbar-copy" data-i18n="topbar_copy">
             Static-first categorized control panel for Stage 2. It organizes AVIN's architecture layers,
             open-source vault queue, workflow lanes, task handoff prompts, and review states without turning
             this page into an execution runtime.
           </p>
           <div class="chip-row">
-            <span class="chip status-active">Stage 2: Public Research</span>
-            <span class="chip status-planning">Navigation Layout v2</span>
-            <span class="chip status-review">Human Review Gate Required</span>
-            <span class="chip status-future">Proposal-first Integrations</span>
+            <span class="chip status-active" data-i18n="chip_stage">Stage 2: Public Research</span>
+            <span class="chip status-planning" data-i18n="chip_layout">Navigation Layout v2</span>
+            <span class="chip status-review" data-i18n="chip_review">Human Review Gate Required</span>
+            <span class="chip status-future" data-i18n="chip_future">Proposal-first Integrations</span>
           </div>
         </div>
-        <div>
-          <div class="toolbar-actions">
-            <a class="button primary" href="https://github.com/boringno/avin-ai-digital-footprint-lab" target="_blank" rel="noreferrer">View GitHub Evidence</a>
-            <a class="button secondary" href="../docs-index.md">Open Docs Index</a>
-            <a class="button secondary" href="../open-source-vault/README.md">Open Vault README</a>
-            <button class="button secondary" type="button" data-copy-prompt="codex-next-task">Copy Next Codex Task</button>
+        <div class="topbar-side">
+          <div class="language-tools" aria-label="Language switch">
+            <span class="language-label" data-i18n="language_label">Language</span>
+            <div class="language-switch">
+              <button class="lang-button active" type="button" data-lang="zh" aria-pressed="true">繁中</button>
+              <button class="lang-button" type="button" data-lang="en" aria-pressed="false">EN</button>
+            </div>
           </div>
-          <div id="copy-feedback" class="copy-feedback" aria-live="polite">Prompt copied.</div>
+          <div class="toolbar-actions">
+            <a class="button primary" href="https://github.com/boringno/avin-ai-digital-footprint-lab" target="_blank" rel="noreferrer" data-i18n="button_github">View GitHub Evidence</a>
+            <a class="button secondary" href="../docs-index.md" data-i18n="button_docs">Open Docs Index</a>
+            <a class="button secondary" href="../open-source-vault/README.md" data-i18n="button_vault">Open Vault README</a>
+            <button class="button secondary" type="button" data-copy-prompt="codex-next-task" data-i18n="button_copy_next_codex">Copy Next Codex Task</button>
+          </div>
+          <div id="copy-feedback" class="copy-feedback" aria-live="polite" data-i18n="copy_feedback_success">Prompt copied.</div>
         </div>
       </header>
     </div>
@@ -746,42 +817,42 @@
   <div class="shell">
     <div class="app">
       <aside class="sidebar" aria-label="OS control panel navigation">
-        <div class="sidebar-title">Navigation</div>
+        <div class="sidebar-title" data-i18n="sidebar_title">Navigation</div>
         <div class="nav-list" role="tablist" aria-label="Control panel sections">
           <button class="nav-button active" type="button" data-target="overview" role="tab" aria-selected="true">
-            <span class="nav-label">Overview</span>
-            <span class="nav-meta">Current state and next actions</span>
+            <span class="nav-label" data-i18n="nav_overview">Overview</span>
+            <span class="nav-meta" data-i18n="nav_overview_meta">Current state and next actions</span>
           </button>
           <button class="nav-button" type="button" data-target="architecture" role="tab" aria-selected="false">
-            <span class="nav-label">Architecture</span>
-            <span class="nav-meta">Operating layers and file map</span>
+            <span class="nav-label" data-i18n="nav_architecture">Architecture</span>
+            <span class="nav-meta" data-i18n="nav_architecture_meta">Operating layers and file map</span>
           </button>
           <button class="nav-button" type="button" data-target="triggers" role="tab" aria-selected="false">
-            <span class="nav-label">Triggers</span>
-            <span class="nav-meta">Route events to the right lane</span>
+            <span class="nav-label" data-i18n="nav_triggers">Triggers</span>
+            <span class="nav-meta" data-i18n="nav_triggers_meta">Route events to the right lane</span>
           </button>
           <button class="nav-button" type="button" data-target="vault" role="tab" aria-selected="false">
-            <span class="nav-label">Open-source Vault</span>
-            <span class="nav-meta">Candidate repos and watch list</span>
+            <span class="nav-label" data-i18n="nav_vault">Open-source Vault</span>
+            <span class="nav-meta" data-i18n="nav_vault_meta">Candidate repos and watch list</span>
           </button>
           <button class="nav-button" type="button" data-target="workflows" role="tab" aria-selected="false">
-            <span class="nav-label">Workflows</span>
-            <span class="nav-meta">Experiment lanes and mobile fallback</span>
+            <span class="nav-label" data-i18n="nav_workflows">Workflows</span>
+            <span class="nav-meta" data-i18n="nav_workflows_meta">Experiment lanes and mobile fallback</span>
           </button>
           <button class="nav-button" type="button" data-target="handoff" role="tab" aria-selected="false">
-            <span class="nav-label">Agent Handoff</span>
-            <span class="nav-meta">Prompt prep and review status</span>
+            <span class="nav-label" data-i18n="nav_handoff">Agent Handoff</span>
+            <span class="nav-meta" data-i18n="nav_handoff_meta">Prompt prep and review status</span>
           </button>
           <button class="nav-button" type="button" data-target="review" role="tab" aria-selected="false">
-            <span class="nav-label">Review Gate</span>
-            <span class="nav-meta">Visual-only decisions for AVIN</span>
+            <span class="nav-label" data-i18n="nav_review">Review Gate</span>
+            <span class="nav-meta" data-i18n="nav_review_meta">Visual-only decisions for AVIN</span>
           </button>
           <button class="nav-button" type="button" data-target="future" role="tab" aria-selected="false">
-            <span class="nav-label">Future Integrations</span>
-            <span class="nav-meta">Read-only and proposal-first path</span>
+            <span class="nav-label" data-i18n="nav_future">Future Integrations</span>
+            <span class="nav-meta" data-i18n="nav_future_meta">Read-only and proposal-first path</span>
           </button>
         </div>
-        <div class="sidebar-note">
+        <div class="sidebar-note" data-i18n="sidebar_note">
           This control panel does not run agents, write repo data, or execute approval actions.
           It prepares navigation, task handoff prompts, and review states.
         </div>
@@ -791,11 +862,11 @@
         <section class="panel active" id="panel-overview" data-panel="overview" role="tabpanel">
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Overview</span>
-              <h2>Current Operating Snapshot</h2>
-              <p>First screen only shows the signals AVIN needs now, not every detail from every lane.</p>
+              <span class="panel-tag" data-i18n="overview_tag">Overview</span>
+              <h2 data-i18n="overview_heading">Current Operating Snapshot</h2>
+              <p data-i18n="overview_intro">First screen only shows the signals AVIN needs now, not every detail from every lane.</p>
             </div>
-            <p class="panel-note">
+            <p class="panel-note" data-i18n="overview_note">
               Use this panel for fast orientation, then move into a category. The dashboard remains static-first,
               demo-first, and engineering-aware.
             </p>
@@ -803,77 +874,77 @@
 
           <div class="overview-grid">
             <article class="card card-kpi">
-              <span class="small-label">Current Stage</span>
+              <span class="small-label" data-i18n="overview_current_stage">Current Stage</span>
               <div class="metric">Stage 2</div>
-              <p class="card-copy">Public Research and Real Workflow Experiments remain the active operating frame.</p>
+              <p class="card-copy" data-i18n="overview_current_stage_copy">Public Research and Real Workflow Experiments remain the active operating frame.</p>
               <div class="status-stack">
-                <span class="chip status-active">Research Live</span>
-                <span class="chip status-planning">Static-first</span>
+                <span class="chip status-active" data-i18n="overview_stage_chip_a">Research Live</span>
+                <span class="chip status-planning" data-i18n="overview_stage_chip_b">Static-first</span>
               </div>
             </article>
 
             <article class="card card-kpi">
-              <span class="small-label">System Health</span>
-              <div class="metric">Read-only Surface</div>
-              <p class="card-copy">No API, no MCP, no Hermes runtime, and no auto-write actions from this page.</p>
+              <span class="small-label" data-i18n="overview_system_health">System Health</span>
+              <div class="metric" data-i18n="overview_system_metric">Read-only Surface</div>
+              <p class="card-copy" data-i18n="overview_system_copy">No API, no MCP, no Hermes runtime, and no auto-write actions from this page.</p>
               <div class="status-stack">
-                <span class="chip risk-low">Low Bug Surface</span>
-                <span class="chip status-review">Human Approval Required</span>
+                <span class="chip risk-low" data-i18n="overview_system_chip_a">Low Bug Surface</span>
+                <span class="chip status-review" data-i18n="overview_system_chip_b">Human Approval Required</span>
               </div>
             </article>
 
             <article class="card card-kpi">
-              <span class="small-label">Latest Completed</span>
-              <div class="metric">Navigation Layout</div>
-              <p class="card-copy">OS Control Panel now uses categorized navigation instead of a single long-scroll stream.</p>
+              <span class="small-label" data-i18n="overview_latest_completed">Latest Completed</span>
+              <div class="metric" data-i18n="overview_latest_metric">Navigation Layout</div>
+              <p class="card-copy" data-i18n="overview_latest_copy">OS Control Panel now uses categorized navigation instead of a single long-scroll stream.</p>
               <div class="status-stack">
-                <span class="chip status-active">UI Review Fixes Preserved</span>
+                <span class="chip status-active" data-i18n="overview_latest_chip">UI Review Fixes Preserved</span>
               </div>
             </article>
 
             <article class="card card-wide">
-              <span class="small-label">Next 3 Actions</span>
+              <span class="small-label" data-i18n="overview_next_actions">Next 3 Actions</span>
               <div class="next-actions">
                 <div class="next-action">
                   <div class="next-step-number">1</div>
                   <div>
-                    <strong>Validate dashboard readability on desktop and mobile</strong>
-                    <p class="card-copy">Confirm navigation, information density, and section switching feel like a control cabin.</p>
+                    <strong data-i18n="overview_next_1_title">Validate dashboard readability on desktop and mobile</strong>
+                    <p class="card-copy" data-i18n="overview_next_1_copy">Confirm navigation, information density, and section switching feel like a control cabin.</p>
                   </div>
                 </div>
                 <div class="next-action">
                   <div class="next-step-number">2</div>
                   <div>
-                    <strong>Add Workspace Map for New project / New project 2</strong>
-                    <p class="card-copy">Prevent checkout confusion by exposing primary versus legacy workspaces more clearly.</p>
+                    <strong data-i18n="overview_next_2_title">Add Workspace Map for New project / New project 2</strong>
+                    <p class="card-copy" data-i18n="overview_next_2_copy">Prevent checkout confusion by exposing primary versus legacy workspaces more clearly.</p>
                   </div>
                 </div>
                 <div class="next-action">
                   <div class="next-step-number">3</div>
                   <div>
-                    <strong>Design dashboard-data.json fields</strong>
-                    <p class="card-copy">Define fields only after section names and panel responsibilities stabilize.</p>
+                    <strong data-i18n="overview_next_3_title">Design dashboard-data.json fields</strong>
+                    <p class="card-copy" data-i18n="overview_next_3_copy">Define fields only after section names and panel responsibilities stabilize.</p>
                   </div>
                 </div>
               </div>
             </article>
 
             <article class="card card-wide">
-              <span class="small-label">Attention / Risk Notes</span>
+              <span class="small-label" data-i18n="overview_risk_notes">Attention / Risk Notes</span>
               <ul class="list">
-                <li>OS Control Panel is a management page, not a Codex / Claude Code replacement.</li>
-                <li>Review Gate remains visual-only. No decision state writes back to the repo from this page.</li>
-                <li>Open-source candidates must still pass document-only review, comparison notes, and AVIN approval.</li>
-                <li>Future integrations must start as read-only sync or proposal layer, not runtime authority.</li>
+                <li data-i18n="overview_risk_1">OS Control Panel is a management page, not a Codex / Claude Code replacement.</li>
+                <li data-i18n="overview_risk_2">Review Gate remains visual-only. No decision state writes back to the repo from this page.</li>
+                <li data-i18n="overview_risk_3">Open-source candidates must still pass document-only review, comparison notes, and AVIN approval.</li>
+                <li data-i18n="overview_risk_4">Future integrations must start as read-only sync or proposal layer, not runtime authority.</li>
               </ul>
             </article>
 
             <article class="card card-full workspace-reminder">
-              <span class="small-label">Workspace Map | Needed Next</span>
+              <span class="small-label" data-i18n="overview_workspace">Workspace Map | Needed Next</span>
               <div class="field-grid">
-                <div class="field"><strong>Primary clean workspace:</strong> New project / avin-ai-digital-footprint-lab</div>
-                <div class="field"><strong>Legacy / experimental workspace:</strong> New project 2, currently dirty and diverged</div>
-                <div class="field"><strong>Next action:</strong> Add a dedicated Workspace Map section in a future iteration.</div>
+                <div class="field" data-i18n="overview_workspace_primary" data-i18n-html="true"><strong>Primary clean workspace:</strong> New project / avin-ai-digital-footprint-lab</div>
+                <div class="field" data-i18n="overview_workspace_legacy" data-i18n-html="true"><strong>Legacy / experimental workspace:</strong> New project 2, currently dirty and diverged</div>
+                <div class="field" data-i18n="overview_workspace_next" data-i18n-html="true"><strong>Next action:</strong> Add a dedicated Workspace Map section in a future iteration.</div>
               </div>
             </article>
           </div>
@@ -882,16 +953,16 @@
         <section class="panel" id="panel-architecture" data-panel="architecture" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Architecture</span>
-              <h2>Operating Layers</h2>
-              <p>Each card keeps the same field structure so the section feels like a control layer, not a document wall.</p>
+              <span class="panel-tag" data-i18n="architecture_tag">Architecture</span>
+              <h2 data-i18n="architecture_heading">Operating Layers</h2>
+              <p data-i18n="architecture_intro">Each card keeps the same field structure so the section feels like a control layer, not a document wall.</p>
             </div>
-            <p class="panel-note">Purpose, trigger, related files, and next action stay short on purpose.</p>
+            <p class="panel-note" data-i18n="architecture_note">Purpose, trigger, related files, and next action stay short on purpose.</p>
           </div>
 
           <div class="card-grid">
             <article class="card">
-              <h3>AVIN Review Layer</h3>
+              <h3 data-i18n="architecture_card_1">AVIN Review Layer</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> AVIN Review Layer</div>
                 <div class="field"><strong>Purpose:</strong> Final judgment before adoption, publish, or repo change</div>
@@ -903,7 +974,7 @@
             </article>
 
             <article class="card">
-              <h3>Trend Intake</h3>
+              <h3 data-i18n="architecture_card_2">Trend Intake</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> AI Trend Intake and Architecture Fit</div>
                 <div class="field"><strong>Purpose:</strong> Filter new repos, tools, and signals before deeper work</div>
@@ -915,7 +986,7 @@
             </article>
 
             <article class="card">
-              <h3>Open-source Vault</h3>
+              <h3 data-i18n="architecture_card_3">Open-source Vault</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> Open-source Vault</div>
                 <div class="field"><strong>Purpose:</strong> Turn external repos into traceable, reviewable candidates</div>
@@ -927,7 +998,7 @@
             </article>
 
             <article class="card">
-              <h3>Practical Trial Lane</h3>
+              <h3 data-i18n="architecture_card_4">Practical Trial Lane</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> Practical Trial Lane</div>
                 <div class="field"><strong>Purpose:</strong> Test real utility without installing or trusting too early</div>
@@ -939,7 +1010,7 @@
             </article>
 
             <article class="card">
-              <h3>Hermes Proposal Track</h3>
+              <h3 data-i18n="architecture_card_5">Hermes Proposal Track</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> Hermes Proposal Track</div>
                 <div class="field"><strong>Purpose:</strong> Reserve a future place for agent suggestions only</div>
@@ -951,7 +1022,7 @@
             </article>
 
             <article class="card">
-              <h3>Productization Layer</h3>
+              <h3 data-i18n="architecture_card_6">Productization Layer</h3>
               <div class="field-grid">
                 <div class="field"><strong>Layer:</strong> Productization Layer</div>
                 <div class="field"><strong>Purpose:</strong> Judge whether a finished workflow has reusable asset potential</div>
@@ -967,16 +1038,16 @@
         <section class="panel" id="panel-triggers" data-panel="triggers" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Triggers</span>
-              <h2>Route Events Into the Right Lane</h2>
-              <p>Trigger cards replace the long narrative map and make routing decisions easier to scan.</p>
+              <span class="panel-tag" data-i18n="triggers_tag">Triggers</span>
+              <h2 data-i18n="triggers_heading">Route Events Into the Right Lane</h2>
+              <p data-i18n="triggers_intro">Trigger cards replace the long narrative map and make routing decisions easier to scan.</p>
             </div>
-            <p class="panel-note">Every trigger keeps route, output, and review expectation visible.</p>
+            <p class="panel-note" data-i18n="triggers_note">Every trigger keeps route, output, and review expectation visible.</p>
           </div>
 
           <div class="trigger-grid">
             <article class="card trigger-card">
-              <h3>New GitHub repo found</h3>
+              <h3 data-i18n="trigger_card_1">New GitHub repo found</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> New GitHub repo or AI tool appears</div>
                 <div class="field"><strong>Route To:</strong> Candidate Batch</div>
@@ -986,7 +1057,7 @@
             </article>
 
             <article class="card trigger-card">
-              <h3>Candidate looks promising</h3>
+              <h3 data-i18n="trigger_card_2">Candidate looks promising</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> Candidate survives initial architecture fit</div>
                 <div class="field"><strong>Route To:</strong> Document Only or Watch</div>
@@ -996,7 +1067,7 @@
             </article>
 
             <article class="card trigger-card">
-              <h3>Workflow completed</h3>
+              <h3 data-i18n="trigger_card_3">Workflow completed</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> Workflow, note, or public output reaches completion</div>
                 <div class="field"><strong>Route To:</strong> Completed lane and project log</div>
@@ -1006,7 +1077,7 @@
             </article>
 
             <article class="card trigger-card">
-              <h3>Need repo-safe execution</h3>
+              <h3 data-i18n="trigger_card_4">Need repo-safe execution</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> Need file edits, docs updates, or static UI work</div>
                 <div class="field"><strong>Route To:</strong> Codex handoff</div>
@@ -1016,7 +1087,7 @@
             </article>
 
             <article class="card trigger-card">
-              <h3>Need read-only quality audit</h3>
+              <h3 data-i18n="trigger_card_5">Need read-only quality audit</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> Need a second pass on clarity, structure, or risk</div>
                 <div class="field"><strong>Route To:</strong> Claude Code handoff</div>
@@ -1026,7 +1097,7 @@
             </article>
 
             <article class="card trigger-card">
-              <h3>Future agent proposal request</h3>
+              <h3 data-i18n="trigger_card_6">Future agent proposal request</h3>
               <div class="field-grid">
                 <div class="field"><strong>Trigger Event:</strong> Future discussion about automation or imports</div>
                 <div class="field"><strong>Route To:</strong> Hermes proposal layer</div>
@@ -1040,16 +1111,16 @@
         <section class="panel" id="panel-vault" data-panel="vault" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Open-source Vault</span>
-              <h2>Candidate Queue and Watch List</h2>
-              <p>Repo cards stay structured so AVIN can see category, risk, and first action without opening every file.</p>
+              <span class="panel-tag" data-i18n="vault_tag">Open-source Vault</span>
+              <h2 data-i18n="vault_heading">Candidate Queue and Watch List</h2>
+              <p data-i18n="vault_intro">Repo cards stay structured so AVIN can see category, risk, and first action without opening every file.</p>
             </div>
-            <p class="panel-note">Watch candidates are explicitly marked and do not pretend to be adopted project cards.</p>
+            <p class="panel-note" data-i18n="vault_note">Watch candidates are explicitly marked and do not pretend to be adopted project cards.</p>
           </div>
 
           <div class="vault-grid">
             <article class="card vault-card">
-              <h3>GitHub AI Capability Candidate Batch</h3>
+              <h3 data-i18n="vault_card_1">GitHub AI Capability Candidate Batch</h3>
               <div class="field-grid">
                 <div class="field"><strong>Repo:</strong> Candidate Batch document</div>
                 <div class="field"><strong>Category:</strong> Intake queue</div>
@@ -1059,12 +1130,12 @@
                 <div class="field"><strong>Next Action:</strong> Compare new signals against current architecture fit</div>
               </div>
               <div class="link-row">
-                <a class="mini-link" href="../open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md">Open Candidate Batch</a>
+                <a class="mini-link" href="../open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md" data-i18n="link_open_candidate_batch">Open Candidate Batch</a>
               </div>
             </article>
 
             <article class="card vault-card">
-              <h3>mattpocock/skills</h3>
+              <h3 data-i18n="vault_card_2">mattpocock/skills</h3>
               <div class="field-grid">
                 <div class="field"><strong>Repo:</strong> mattpocock/skills</div>
                 <div class="field"><strong>Category:</strong> Skills system / workflow method</div>
@@ -1074,12 +1145,12 @@
                 <div class="field"><strong>Next Action:</strong> Compare with adjacent skills frameworks and document delta</div>
               </div>
               <div class="link-row">
-                <a class="mini-link" href="../open-source-vault/projects/mattpocock-skills.md">Open Project Card</a>
+                <a class="mini-link" href="../open-source-vault/projects/mattpocock-skills.md" data-i18n="link_open_project_card">Open Project Card</a>
               </div>
             </article>
 
             <article class="card vault-card">
-              <h3>rohitg00/agentmemory</h3>
+              <h3 data-i18n="vault_card_3">rohitg00/agentmemory</h3>
               <div class="field-grid">
                 <div class="field"><strong>Repo:</strong> rohitg00/agentmemory</div>
                 <div class="field"><strong>Category:</strong> Memory / state handling</div>
@@ -1089,12 +1160,12 @@
                 <div class="field"><strong>Next Action:</strong> Decide whether it stays watch-only or enters controlled test</div>
               </div>
               <div class="link-row">
-                <a class="mini-link" href="../open-source-vault/projects/rohitg00-agentmemory.md">Open Project Card</a>
+                <a class="mini-link" href="../open-source-vault/projects/rohitg00-agentmemory.md" data-i18n="link_open_project_card">Open Project Card</a>
               </div>
             </article>
 
             <article class="card vault-card">
-              <h3>obra/superpowers</h3>
+              <h3 data-i18n="vault_card_4">obra/superpowers</h3>
               <div class="field-grid">
                 <div class="field"><strong>Repo:</strong> obra/superpowers</div>
                 <div class="field"><strong>Category:</strong> Coding agent method / skills system</div>
@@ -1103,7 +1174,7 @@
                 <div class="field"><strong>Suggested First Action:</strong> Do a document-only review first</div>
                 <div class="field"><strong>Next Action:</strong> Decide later whether to create a project card in the vault</div>
               </div>
-              <div class="visual-only-note">
+              <div class="visual-only-note" data-i18n="vault_watch_note">
                 Watch Candidate only. No project card is assumed yet, and nothing is imported from this repo in the current state.
               </div>
             </article>
@@ -1113,16 +1184,16 @@
         <section class="panel" id="panel-workflows" data-panel="workflows" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Workflows</span>
-              <h2>Workflow Experiment Board</h2>
-              <p>Desktop can still use board lanes, but mobile gets a stacked fallback instead of relying on one hard-to-read horizontal board.</p>
+              <span class="panel-tag" data-i18n="workflows_tag">Workflows</span>
+              <h2 data-i18n="workflows_heading">Workflow Experiment Board</h2>
+              <p data-i18n="workflows_intro">Desktop can still use board lanes, but mobile gets a stacked fallback instead of relying on one hard-to-read horizontal board.</p>
             </div>
-            <p class="panel-note">On smaller screens, scroll horizontally to view all workflow lanes.</p>
+            <p class="panel-note" data-i18n="workflows_note">On smaller screens, scroll horizontally to view all workflow lanes.</p>
           </div>
 
           <div class="board-desktop" aria-label="workflow experiment board">
             <article class="board-column">
-              <h3>Watch</h3>
+              <h3 data-i18n="lane_watch">Watch</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>GitHub AI Capability Candidate Batch</strong>
@@ -1135,7 +1206,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Document Only</h3>
+              <h3 data-i18n="lane_document_only">Document Only</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>mattpocock/skills</strong>
@@ -1144,7 +1215,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Practical Trial</h3>
+              <h3 data-i18n="lane_practical_trial">Practical Trial</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>Empty for now</strong>
@@ -1153,7 +1224,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Sandbox Test</h3>
+              <h3 data-i18n="lane_sandbox_test">Sandbox Test</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>rohitg00/agentmemory</strong>
@@ -1162,7 +1233,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Localize</h3>
+              <h3 data-i18n="lane_localize">Localize</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>None yet</strong>
@@ -1171,7 +1242,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Archive</h3>
+              <h3 data-i18n="lane_archive">Archive</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>Reserved lane</strong>
@@ -1180,7 +1251,7 @@
               </div>
             </article>
             <article class="board-column">
-              <h3>Completed</h3>
+              <h3 data-i18n="lane_completed">Completed</h3>
               <div class="board-stack">
                 <div class="board-item">
                   <strong>AI Trend Intake Layer</strong>
@@ -1203,35 +1274,35 @@
           </div>
 
           <div class="workflow-mobile">
-            <div class="workflow-mobile-note">Mobile fallback: each lane is stacked below so the board still reads clearly on smaller screens.</div>
+            <div class="workflow-mobile-note" data-i18n="workflow_mobile_note">Mobile fallback: each lane is stacked below so the board still reads clearly on smaller screens.</div>
             <div class="workflow-mobile-stack">
               <article class="card">
-                <h3>Watch</h3>
-                <p class="workflow-mobile-copy">GitHub AI Capability Candidate Batch and obra/superpowers remain watch items.</p>
+                <h3 data-i18n="lane_watch">Watch</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_watch">GitHub AI Capability Candidate Batch and obra/superpowers remain watch items.</p>
               </article>
               <article class="card">
-                <h3>Document Only</h3>
-                <p class="workflow-mobile-copy">mattpocock/skills stays in review and comparison mode only.</p>
+                <h3 data-i18n="lane_document_only">Document Only</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_document_only">mattpocock/skills stays in review and comparison mode only.</p>
               </article>
               <article class="card">
-                <h3>Practical Trial</h3>
-                <p class="workflow-mobile-copy">No active item yet.</p>
+                <h3 data-i18n="lane_practical_trial">Practical Trial</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_practical_trial">No active item yet.</p>
               </article>
               <article class="card">
-                <h3>Sandbox Test</h3>
-                <p class="workflow-mobile-copy">rohitg00/agentmemory needs sandbox safety framing.</p>
+                <h3 data-i18n="lane_sandbox_test">Sandbox Test</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_sandbox_test">rohitg00/agentmemory needs sandbox safety framing.</p>
               </article>
               <article class="card">
-                <h3>Localize</h3>
-                <p class="workflow-mobile-copy">No candidate is approved for localization yet.</p>
+                <h3 data-i18n="lane_localize">Localize</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_localize">No candidate is approved for localization yet.</p>
               </article>
               <article class="card">
-                <h3>Archive</h3>
-                <p class="workflow-mobile-copy">Reserved for rejected or paused items after review.</p>
+                <h3 data-i18n="lane_archive">Archive</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_archive">Reserved for rejected or paused items after review.</p>
               </article>
               <article class="card">
-                <h3>Completed</h3>
-                <p class="workflow-mobile-copy">Trend Intake, Practical Trial Lane, OS Control Panel Reference Research, and OS Control Panel UI UX Architecture are completed.</p>
+                <h3 data-i18n="lane_completed">Completed</h3>
+                <p class="workflow-mobile-copy" data-i18n="workflow_mobile_completed">Trend Intake, Practical Trial Lane, OS Control Panel Reference Research, and OS Control Panel UI UX Architecture are completed.</p>
               </article>
             </div>
           </div>
@@ -1240,11 +1311,11 @@
         <section class="panel" id="panel-handoff" data-panel="handoff" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Agent Handoff</span>
-              <h2>Prompt Prep, Not Agent Execution</h2>
-              <p>OS Control Panel does not run agents. It prepares task handoff prompts and review states.</p>
+              <span class="panel-tag" data-i18n="handoff_tag">Agent Handoff</span>
+              <h2 data-i18n="handoff_heading">Prompt Prep, Not Agent Execution</h2>
+              <p data-i18n="handoff_intro">OS Control Panel does not run agents. It prepares task handoff prompts and review states.</p>
             </div>
-            <p class="panel-note">Copy Prompt is the only interactive pattern kept here.</p>
+            <p class="panel-note" data-i18n="handoff_note">Copy Prompt is the only interactive pattern kept here.</p>
           </div>
 
           <div class="handoff-grid">
@@ -1255,14 +1326,14 @@
                 <div class="field"><strong>Role:</strong> Strategy framing, AVIN view, synthesis</div>
                 <div class="field"><strong>Allowed Actions:</strong> Summarize, frame, propose next documented step</div>
                 <div class="field"><strong>Forbidden Actions:</strong> Repo writes from this panel</div>
-                <div class="field"><strong>Current Suggested Task:</strong> Review the control panel state and identify the next highest-value documented move</div>
-                <div class="field"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
+                <div class="field" data-i18n="handoff_chatgpt_task" data-i18n-html="true"><strong>Current Suggested Task:</strong> Review the control panel state and identify the next highest-value documented move</div>
+                <div class="field" data-i18n="handoff_status_ready" data-i18n-html="true"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
               </div>
               <div class="prompt-box">
-                <pre>Review current OS stage, summarize open decisions, and propose the next highest-value documented step for AVIN without expanding into productization.</pre>
+                <pre data-i18n="handoff_chatgpt_prompt">Review current OS stage, summarize open decisions, and propose the next highest-value documented step for AVIN without expanding into productization.</pre>
                 <div class="inline-actions">
-                  <button class="button secondary" type="button" data-copy-prompt="chatgpt-task">Copy Prompt</button>
-                  <button class="button muted" type="button" disabled>Report Stays External</button>
+                  <button class="button secondary" type="button" data-copy-prompt="chatgpt-task" data-i18n="button_copy_prompt">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled data-i18n="button_report_external">Report Stays External</button>
                 </div>
               </div>
             </article>
@@ -1274,14 +1345,14 @@
                 <div class="field"><strong>Role:</strong> Repo changes, docs updates, static frontend, safe commit flow</div>
                 <div class="field"><strong>Allowed Actions:</strong> Create markdown, update docs-index, edit static HTML, commit and push when safe</div>
                 <div class="field"><strong>Forbidden Actions:</strong> Install packages, clone repos, force push, operate parent repo</div>
-                <div class="field"><strong>Current Suggested Task:</strong> Validate dashboard readability, then design dashboard-data.json fields.</div>
-                <div class="field"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
+                <div class="field" data-i18n="handoff_codex_task" data-i18n-html="true"><strong>Current Suggested Task:</strong> Validate dashboard readability, then design dashboard-data.json fields.</div>
+                <div class="field" data-i18n="handoff_status_ready" data-i18n-html="true"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
               </div>
               <div class="prompt-box">
-                <pre>Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.</pre>
+                <pre data-i18n="handoff_codex_prompt">Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.</pre>
                 <div class="inline-actions">
-                  <button class="button secondary" type="button" data-copy-prompt="codex-task">Copy Prompt</button>
-                  <button class="button muted" type="button" disabled>Report Stays External</button>
+                  <button class="button secondary" type="button" data-copy-prompt="codex-task" data-i18n="button_copy_prompt">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled data-i18n="button_report_external">Report Stays External</button>
                 </div>
               </div>
             </article>
@@ -1293,14 +1364,14 @@
                 <div class="field"><strong>Role:</strong> Read-only audit, repo scan, quality review</div>
                 <div class="field"><strong>Allowed Actions:</strong> Scan, summarize, recommend</div>
                 <div class="field"><strong>Forbidden Actions:</strong> Commit or push unless explicitly assigned</div>
-                <div class="field"><strong>Current Suggested Task:</strong> Audit navigation clarity and whether the page still reads like a control panel</div>
-                <div class="field"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
+                <div class="field" data-i18n="handoff_claude_task" data-i18n-html="true"><strong>Current Suggested Task:</strong> Audit navigation clarity and whether the page still reads like a control panel</div>
+                <div class="field" data-i18n="handoff_status_ready" data-i18n-html="true"><strong>Prompt / Report Status:</strong> Prompt ready, report stays external</div>
               </div>
               <div class="prompt-box">
-                <pre>Perform a read-only audit of the current dashboard and supporting docs. Focus on navigation clarity, state naming consistency, mobile readability, and whether the UI preserves source-of-truth separation.</pre>
+                <pre data-i18n="handoff_claude_prompt">Perform a read-only audit of the current dashboard and supporting docs. Focus on navigation clarity, state naming consistency, mobile readability, and whether the UI preserves source-of-truth separation.</pre>
                 <div class="inline-actions">
-                  <button class="button secondary" type="button" data-copy-prompt="claude-task">Copy Prompt</button>
-                  <button class="button muted" type="button" disabled>Report Stays External</button>
+                  <button class="button secondary" type="button" data-copy-prompt="claude-task" data-i18n="button_copy_prompt">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled data-i18n="button_report_external">Report Stays External</button>
                 </div>
               </div>
             </article>
@@ -1312,14 +1383,14 @@
                 <div class="field"><strong>Role:</strong> Proposal layer only</div>
                 <div class="field"><strong>Allowed Actions:</strong> Suggest routes, imports, or review flows in the future</div>
                 <div class="field"><strong>Forbidden Actions:</strong> Write, run, sync, or call external targets without approval</div>
-                <div class="field"><strong>Current Suggested Task:</strong> None, proposal-only placeholder</div>
-                <div class="field"><strong>Prompt / Report Status:</strong> Future, no runnable prompt</div>
+                <div class="field" data-i18n="handoff_hermes_task" data-i18n-html="true"><strong>Current Suggested Task:</strong> None, proposal-only placeholder</div>
+                <div class="field" data-i18n="handoff_hermes_status" data-i18n-html="true"><strong>Prompt / Report Status:</strong> Future, no runnable prompt</div>
               </div>
               <div class="prompt-box">
-                <pre>Future state only. Hermes may propose candidate intake, review routing, or import suggestions, but it must not execute writes or external actions without AVIN approval.</pre>
+                <pre data-i18n="handoff_hermes_prompt">Future state only. Hermes may propose candidate intake, review routing, or import suggestions, but it must not execute writes or external actions without AVIN approval.</pre>
                 <div class="inline-actions">
-                  <button class="button muted" type="button" disabled>Copy Prompt</button>
-                  <button class="button muted" type="button" disabled>Future Only</button>
+                  <button class="button muted" type="button" disabled data-i18n="button_copy_prompt">Copy Prompt</button>
+                  <button class="button muted" type="button" disabled data-i18n="button_future_only">Future Only</button>
                 </div>
               </div>
             </article>
@@ -1329,16 +1400,16 @@
         <section class="panel" id="panel-review" data-panel="review" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Review Gate</span>
-              <h2>AVIN Review Gate</h2>
-              <p>Review states stay visible here, but this dashboard does not execute approval or workflow transitions.</p>
+              <span class="panel-tag" data-i18n="review_tag">Review Gate</span>
+              <h2 data-i18n="review_heading">AVIN Review Gate</h2>
+              <p data-i18n="review_intro">Review states stay visible here, but this dashboard does not execute approval or workflow transitions.</p>
             </div>
-            <p class="panel-note">Decision chips remain visual-only.</p>
+            <p class="panel-note" data-i18n="review_note">Decision chips remain visual-only.</p>
           </div>
 
           <div class="review-grid">
             <article class="card review-card">
-              <h3>mattpocock/skills comparison scope</h3>
+              <h3 data-i18n="review_card_1">mattpocock/skills comparison scope</h3>
               <div class="field-grid">
                 <div class="field"><strong>Item:</strong> Compare mattpocock/skills with adjacent skills systems</div>
                 <div class="field"><strong>Why review is needed:</strong> Avoid adopting a method pattern before AVIN sees the tradeoffs</div>
@@ -1349,7 +1420,7 @@
             </article>
 
             <article class="card review-card">
-              <h3>rohitg00/agentmemory sandbox framing</h3>
+              <h3 data-i18n="review_card_2">rohitg00/agentmemory sandbox framing</h3>
               <div class="field-grid">
                 <div class="field"><strong>Item:</strong> Prepare sandbox safety review</div>
                 <div class="field"><strong>Why review is needed:</strong> Local file access and state handling could create hidden blast radius</div>
@@ -1360,7 +1431,7 @@
             </article>
 
             <article class="card review-card">
-              <h3>dashboard-data.json timing</h3>
+              <h3 data-i18n="review_card_3">dashboard-data.json timing</h3>
               <div class="field-grid">
                 <div class="field"><strong>Item:</strong> Decide when to define dashboard-data.json fields</div>
                 <div class="field"><strong>Why review is needed:</strong> Section responsibilities should stabilize before the data contract freezes</div>
@@ -1371,7 +1442,7 @@
             </article>
 
             <article class="card review-card">
-              <h3>obra/superpowers watch candidate</h3>
+              <h3 data-i18n="review_card_4">obra/superpowers watch candidate</h3>
               <div class="field-grid">
                 <div class="field"><strong>Item:</strong> Decide whether to add a project card later</div>
                 <div class="field"><strong>Why review is needed:</strong> It looks useful, but it should not pull the OS into premature adoption</div>
@@ -1382,32 +1453,32 @@
             </article>
           </div>
 
-          <div class="visual-only-note">
+          <div class="visual-only-note" data-i18n="review_visual_note">
             Visual-only decision preview. No action is executed from this dashboard, and Human Review Gate stays mandatory even if future data becomes automated.
           </div>
           <div class="decision-preview" aria-label="visual-only decision previews">
-            <span class="chip status-review">Preview: Approve</span>
-            <span class="chip status-planning">Preview: Needs Edit</span>
-            <span class="chip status-watch">Preview: Keep Watching</span>
-            <span class="chip status-active">Preview: Move to Practical Trial</span>
-            <span class="chip status-planning">Preview: Move to Sandbox Test</span>
-            <span class="chip status-future">Preview: Archive</span>
+            <span class="chip status-review" data-i18n="review_preview_approve">Preview: Approve</span>
+            <span class="chip status-planning" data-i18n="review_preview_edit">Preview: Needs Edit</span>
+            <span class="chip status-watch" data-i18n="review_preview_watch">Preview: Keep Watching</span>
+            <span class="chip status-active" data-i18n="review_preview_trial">Preview: Move to Practical Trial</span>
+            <span class="chip status-planning" data-i18n="review_preview_sandbox">Preview: Move to Sandbox Test</span>
+            <span class="chip status-future" data-i18n="review_preview_archive">Preview: Archive</span>
           </div>
         </section>
 
         <section class="panel" id="panel-future" data-panel="future" role="tabpanel" hidden>
           <div class="panel-head">
             <div class="panel-title">
-              <span class="panel-tag">Future Integrations</span>
-              <h2>Read-only and Proposal-first Roadmap</h2>
-              <p>Future engineering moves should deepen maintainability without letting runtime authority outrun AVIN's review process.</p>
+              <span class="panel-tag" data-i18n="future_tag">Future Integrations</span>
+              <h2 data-i18n="future_heading">Read-only and Proposal-first Roadmap</h2>
+              <p data-i18n="future_intro">Future engineering moves should deepen maintainability without letting runtime authority outrun AVIN's review process.</p>
             </div>
-            <p class="panel-note">Human-approved actions only.</p>
+            <p class="panel-note" data-i18n="future_note">Human-approved actions only.</p>
           </div>
 
           <div class="future-grid">
             <article class="card future-card">
-              <h3>dashboard-data.json</h3>
+              <h3 data-i18n="future_card_1">dashboard-data.json</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Separate UI structure from content fields</div>
                 <div class="field"><strong>Status:</strong> Planned</div>
@@ -1416,7 +1487,7 @@
             </article>
 
             <article class="card future-card">
-              <h3>GitHub Action generated data</h3>
+              <h3 data-i18n="future_card_2">GitHub Action generated data</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Generate static dashboard data from repo artifacts later</div>
                 <div class="field"><strong>Status:</strong> Future</div>
@@ -1425,7 +1496,7 @@
             </article>
 
             <article class="card future-card">
-              <h3>GitHub / Notion API read-only sync</h3>
+              <h3 data-i18n="future_card_3">GitHub / Notion API read-only sync</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Surface evidence and notes without manual copy drift</div>
                 <div class="field"><strong>Status:</strong> Future</div>
@@ -1434,7 +1505,7 @@
             </article>
 
             <article class="card future-card">
-              <h3>MCP proposal layer</h3>
+              <h3 data-i18n="future_card_4">MCP proposal layer</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Future proposal routing for external capability ideas</div>
                 <div class="field"><strong>Status:</strong> Future</div>
@@ -1443,7 +1514,7 @@
             </article>
 
             <article class="card future-card">
-              <h3>Hermes proposal layer</h3>
+              <h3 data-i18n="future_card_5">Hermes proposal layer</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Suggest candidate intake or review flow enhancements later</div>
                 <div class="field"><strong>Status:</strong> Future</div>
@@ -1452,7 +1523,7 @@
             </article>
 
             <article class="card future-card">
-              <h3>Human-approved actions only</h3>
+              <h3 data-i18n="future_card_6">Human-approved actions only</h3>
               <div class="field-grid">
                 <div class="field"><strong>Purpose:</strong> Keep the governance boundary explicit</div>
                 <div class="field"><strong>Status:</strong> Active principle</div>
@@ -1468,25 +1539,407 @@
   <footer class="footer">
     <div class="shell">
       <div class="footer-panel">
-        <div class="footer-title">AVIN AI Digital Footprint OS</div>
-        <p>Static-first control panel. Source of truth remains GitHub Markdown, docs-index, project cards, and project logs.</p>
+        <div class="footer-title" data-i18n="footer_title">AVIN AI Digital Footprint OS</div>
+        <p data-i18n="footer_copy">Static-first control panel. Source of truth remains GitHub Markdown, docs-index, project cards, and project logs.</p>
       </div>
     </div>
   </footer>
 
   <script>
     (function () {
+      const storageKey = "avin-os-language";
+      const defaultLanguage = "zh";
+      const translations = {
+        zh: {
+          document_title: "AVIN OS 控制面板",
+          meta_description: "AVIN AI Digital Footprint OS 的 static-first 控制面板，集中顯示分區導航、審核狀態、open-source vault 追蹤、workflow 流程欄位與 agent handoff 提示。",
+          brand_line: '<span class="brand-dot"></span>AVIN AI Digital Footprint OS',
+          page_title: "OS 控制面板",
+          topbar_copy: "這是 Stage 2 的 static-first 分類式控制面板。它集中整理 AVIN 的架構層、open-source vault 佇列、workflow 欄位、任務 handoff 提示與 review 狀態，但不把這頁變成執行 runtime。",
+          chip_stage: "Stage 2：公開研究",
+          chip_layout: "Navigation Layout v2",
+          chip_review: "需要人工 Review Gate",
+          chip_future: "Proposal-first 整合",
+          language_label: "語言",
+          button_github: "查看 GitHub 證據",
+          button_docs: "打開 Docs Index",
+          button_vault: "打開 Vault README",
+          button_copy_next_codex: "複製下一個 Codex 任務",
+          copy_feedback_success: "已複製提示詞。",
+          copy_feedback_failed: "複製失敗，請直接使用卡片中的提示詞。",
+          sidebar_title: "導航",
+          nav_overview: "總覽",
+          nav_overview_meta: "目前狀態與下一步",
+          nav_architecture: "架構層",
+          nav_architecture_meta: "操作層與檔案地圖",
+          nav_triggers: "觸發條件",
+          nav_triggers_meta: "把事件送到正確流程",
+          nav_vault: "Open-source Vault",
+          nav_vault_meta: "候選 repo 與觀察清單",
+          nav_workflows: "Workflow",
+          nav_workflows_meta: "實驗流程欄位與手機 fallback",
+          nav_handoff: "Agent Handoff",
+          nav_handoff_meta: "提示詞準備與審核狀態",
+          nav_review: "Review Gate",
+          nav_review_meta: "給 AVIN 的 visual-only 決策預覽",
+          nav_future: "未來整合",
+          nav_future_meta: "read-only 與 proposal-first 路徑",
+          sidebar_note: "這個控制面板不會執行 agent、不會寫入 repo 資料，也不會執行批准動作。它只負責準備導覽、task handoff prompt 與 review 狀態。",
+          overview_tag: "總覽",
+          overview_heading: "目前操作快照",
+          overview_intro: "第一屏只顯示 AVIN 現在需要的訊號，而不是把每條流程的全部細節一次堆出來。",
+          overview_note: "先用這個 panel 快速定位，再切入對應分類。整體仍維持 static-first、demo-first、engineering-aware。",
+          overview_current_stage: "目前階段",
+          overview_current_stage_copy: "公開研究與真實 workflow 實驗，仍是目前的核心操作框架。",
+          overview_stage_chip_a: "研究進行中",
+          overview_stage_chip_b: "Static-first",
+          overview_system_health: "系統健康",
+          overview_system_metric: "Read-only Surface",
+          overview_system_copy: "這頁沒有 API、沒有 MCP、沒有 Hermes runtime，也沒有任何自動寫回動作。",
+          overview_system_chip_a: "低 bug 面積",
+          overview_system_chip_b: "需要人工批准",
+          overview_latest_completed: "最新完成",
+          overview_latest_metric: "Navigation Layout",
+          overview_latest_copy: "OS Control Panel 已從單一路徑長頁，改成分類式導航控制艙。",
+          overview_latest_chip: "保留 UI review fixes",
+          overview_next_actions: "接下來 3 步",
+          overview_next_1_title: "檢查桌機與手機上的 dashboard 可讀性",
+          overview_next_1_copy: "確認導航、資訊密度與區塊切換是否真的像 control cabin，而不是展示頁。",
+          overview_next_2_title: "加入 New project / New project 2 的 Workspace Map",
+          overview_next_2_copy: "更清楚暴露 primary 與 legacy workspace，避免 checkout 混淆。",
+          overview_next_3_title: "設計 dashboard-data.json 欄位",
+          overview_next_3_copy: "等 section 名稱與 panel 職責穩定後，再定義欄位契約。",
+          overview_risk_notes: "注意 / 風險",
+          overview_risk_1: "OS Control Panel 是管理頁，不是 Codex / Claude Code 的替代品。",
+          overview_risk_2: "Review Gate 仍維持 visual-only；這頁不會把決策狀態寫回 repo。",
+          overview_risk_3: "Open-source 候選仍必須經過 document-only review、comparison note 與 AVIN 批准。",
+          overview_risk_4: "未來整合必須先從 read-only sync 或 proposal layer 開始，不能直接擁有 runtime authority。",
+          overview_workspace: "Workspace Map｜下一步需要",
+          overview_workspace_primary: "<strong>Primary clean workspace：</strong>New project / avin-ai-digital-footprint-lab",
+          overview_workspace_legacy: "<strong>Legacy / experimental workspace：</strong>New project 2，目前仍是 dirty 且 diverged",
+          overview_workspace_next: "<strong>Next action：</strong>未來版本加入獨立的 Workspace Map 區塊。",
+          architecture_tag: "架構層",
+          architecture_heading: "操作層",
+          architecture_intro: "每張卡都維持同一組欄位，讓這區看起來像控制層，而不是文件牆。",
+          architecture_note: "Purpose、trigger、related files 與 next action 都刻意保持短。",
+          architecture_card_1: "AVIN Review Layer",
+          architecture_card_2: "Trend Intake",
+          architecture_card_3: "Open-source Vault",
+          architecture_card_4: "Practical Trial Lane",
+          architecture_card_5: "Hermes Proposal Track",
+          architecture_card_6: "Productization Layer",
+          triggers_tag: "觸發條件",
+          triggers_heading: "把事件送到正確流程",
+          triggers_intro: "Trigger cards 取代原本的長段敘事地圖，讓 routing 判斷更容易掃描。",
+          triggers_note: "每個 trigger 都把 route、output 與 review expectation 放在可視範圍。",
+          trigger_card_1: "發現新的 GitHub repo",
+          trigger_card_2: "候選項看起來有潛力",
+          trigger_card_3: "Workflow 已完成",
+          trigger_card_4: "需要 repo-safe 執行",
+          trigger_card_5: "需要 read-only 品質稽核",
+          trigger_card_6: "未來 agent proposal 請求",
+          vault_tag: "Open-source Vault",
+          vault_heading: "候選佇列與觀察清單",
+          vault_intro: "Repo cards 保持結構化，讓 AVIN 不必打開每個檔案，也能先看到 category、risk 與 first action。",
+          vault_note: "Watch candidates 會被明確標示，不假裝自己已是正式採用的 project card。",
+          vault_card_1: "GitHub AI Capability Candidate Batch",
+          vault_card_2: "mattpocock/skills",
+          vault_card_3: "rohitg00/agentmemory",
+          vault_card_4: "obra/superpowers",
+          link_open_candidate_batch: "打開 Candidate Batch",
+          link_open_project_card: "打開 Project Card",
+          vault_watch_note: "目前僅為 Watch Candidate。這個 repo 尚未被視為已有 project card，也沒有任何內容被匯入。",
+          workflows_tag: "Workflow",
+          workflows_heading: "Workflow 實驗看板",
+          workflows_intro: "桌機仍可使用 board lanes，但手機版改用 stacked fallback，不再只依賴難讀的橫向長板。",
+          workflows_note: "較小螢幕可左右滑動查看全部 workflow 欄位。",
+          lane_watch: "Watch",
+          lane_document_only: "Document Only",
+          lane_practical_trial: "Practical Trial",
+          lane_sandbox_test: "Sandbox Test",
+          lane_localize: "Localize",
+          lane_archive: "Archive",
+          lane_completed: "Completed",
+          workflow_mobile_note: "手機 fallback：每個流程欄位都改為上下堆疊，讓小螢幕也能清楚閱讀。",
+          workflow_mobile_watch: "GitHub AI Capability Candidate Batch 與 obra/superpowers 目前都維持 watch 狀態。",
+          workflow_mobile_document_only: "mattpocock/skills 目前仍停留在 review 與 comparison mode。",
+          workflow_mobile_practical_trial: "目前沒有 active item。",
+          workflow_mobile_sandbox_test: "rohitg00/agentmemory 仍需要 sandbox safety framing。",
+          workflow_mobile_localize: "目前沒有候選被批准進入 localization。",
+          workflow_mobile_archive: "保留給 review 後被拒絕或暫停的項目。",
+          workflow_mobile_completed: "Trend Intake、Practical Trial Lane、OS Control Panel Reference Research 與 UI UX Architecture 已完成。",
+          handoff_tag: "Agent Handoff",
+          handoff_heading: "準備 Prompt，不執行 Agent",
+          handoff_intro: "OS Control Panel 不會執行 agents。它只負責準備 task handoff prompts 與 review states。",
+          handoff_note: "這裡保留的唯一互動模式是 Copy Prompt。",
+          handoff_chatgpt_task: "<strong>Current Suggested Task：</strong>檢查 control panel 狀態，找出下一個最高價值且需要文件化的動作",
+          handoff_status_ready: "<strong>Prompt / Report Status：</strong>Prompt 已就緒，報告維持外部呈現",
+          handoff_chatgpt_prompt: "Review 目前 OS 階段、整理待決事項，並為 AVIN 提出下一個最高價值的文件化步驟，不要擴張到 productization。",
+          button_copy_prompt: "複製 Prompt",
+          button_report_external: "報告維持外部呈現",
+          handoff_codex_task: "<strong>Current Suggested Task：</strong>先檢查 dashboard 可讀性，再設計 dashboard-data.json 欄位。",
+          handoff_codex_prompt: "只在 avin-ai-digital-footprint-lab 內工作。先檢查 static OS Control Panel 在桌機與手機上的可讀性，再準備 dashboard-data.json 欄位設計；不要新增 API、MCP、Hermes runtime 或安裝套件。",
+          handoff_claude_task: "<strong>Current Suggested Task：</strong>稽核導航清晰度，以及這頁是否仍然像 control panel 而不是展示頁",
+          handoff_claude_prompt: "對目前 dashboard 與支援文件做 read-only audit。重點檢查 navigation clarity、state naming consistency、mobile readability，以及 UI 是否維持 source-of-truth 分離。",
+          handoff_hermes_task: "<strong>Current Suggested Task：</strong>目前無，僅為 proposal-only placeholder",
+          handoff_hermes_status: "<strong>Prompt / Report Status：</strong>未來使用，目前沒有可執行 prompt",
+          handoff_hermes_prompt: "僅為未來狀態。Hermes 可以提出 candidate intake、review routing 或 import suggestion，但在 AVIN 批准前不得執行寫入或任何外部動作。",
+          button_future_only: "僅未來使用",
+          review_tag: "Review Gate",
+          review_heading: "AVIN Review Gate",
+          review_intro: "Review 狀態會顯示在這裡，但這個 dashboard 不會執行批准或 workflow 轉移。",
+          review_note: "Decision chips 維持 visual-only。",
+          review_card_1: "mattpocock/skills comparison scope",
+          review_card_2: "rohitg00/agentmemory sandbox framing",
+          review_card_3: "dashboard-data.json timing",
+          review_card_4: "obra/superpowers watch candidate",
+          review_visual_note: "這些只是 visual-only 的 decision preview。這個 dashboard 不會執行任何動作，而且即使未來資料自動化，Human Review Gate 仍然是必要的。",
+          review_preview_approve: "預覽：Approve",
+          review_preview_edit: "預覽：Needs Edit",
+          review_preview_watch: "預覽：Keep Watching",
+          review_preview_trial: "預覽：Move to Practical Trial",
+          review_preview_sandbox: "預覽：Move to Sandbox Test",
+          review_preview_archive: "預覽：Archive",
+          future_tag: "未來整合",
+          future_heading: "Read-only / Proposal-first 路線圖",
+          future_intro: "未來的工程動作應該提升可維護性，但不能讓 runtime authority 跑在 AVIN 的 review 流程前面。",
+          future_note: "只允許人工批准的動作。",
+          future_card_1: "dashboard-data.json",
+          future_card_2: "GitHub Action generated data",
+          future_card_3: "GitHub / Notion API read-only sync",
+          future_card_4: "MCP proposal layer",
+          future_card_5: "Hermes proposal layer",
+          future_card_6: "Human-approved actions only",
+          footer_title: "AVIN AI Digital Footprint OS",
+          footer_copy: "Static-first 控制面板。真正的 source of truth 仍是 GitHub Markdown、docs-index、project cards 與 project logs。"
+        },
+        en: {
+          document_title: "AVIN OS Control Panel",
+          meta_description: "AVIN AI Digital Footprint OS static-first control panel with categorized navigation, review states, open-source vault tracking, workflow lanes, and agent handoff prompts.",
+          brand_line: '<span class="brand-dot"></span>AVIN AI Digital Footprint OS',
+          page_title: "OS Control Panel",
+          topbar_copy: "Static-first categorized control panel for Stage 2. It organizes AVIN's architecture layers, open-source vault queue, workflow lanes, task handoff prompts, and review states without turning this page into an execution runtime.",
+          chip_stage: "Stage 2: Public Research",
+          chip_layout: "Navigation Layout v2",
+          chip_review: "Human Review Gate Required",
+          chip_future: "Proposal-first Integrations",
+          language_label: "Language",
+          button_github: "View GitHub Evidence",
+          button_docs: "Open Docs Index",
+          button_vault: "Open Vault README",
+          button_copy_next_codex: "Copy Next Codex Task",
+          copy_feedback_success: "Prompt copied.",
+          copy_feedback_failed: "Copy failed. Use the prompt text in the card.",
+          sidebar_title: "Navigation",
+          nav_overview: "Overview",
+          nav_overview_meta: "Current state and next actions",
+          nav_architecture: "Architecture",
+          nav_architecture_meta: "Operating layers and file map",
+          nav_triggers: "Triggers",
+          nav_triggers_meta: "Route events to the right lane",
+          nav_vault: "Open-source Vault",
+          nav_vault_meta: "Candidate repos and watch list",
+          nav_workflows: "Workflows",
+          nav_workflows_meta: "Experiment lanes and mobile fallback",
+          nav_handoff: "Agent Handoff",
+          nav_handoff_meta: "Prompt prep and review status",
+          nav_review: "Review Gate",
+          nav_review_meta: "Visual-only decisions for AVIN",
+          nav_future: "Future Integrations",
+          nav_future_meta: "Read-only and proposal-first path",
+          sidebar_note: "This control panel does not run agents, write repo data, or execute approval actions. It prepares navigation, task handoff prompts, and review states.",
+          overview_tag: "Overview",
+          overview_heading: "Current Operating Snapshot",
+          overview_intro: "The first screen only shows the signals AVIN needs now, not every detail from every lane.",
+          overview_note: "Use this panel for fast orientation, then move into a category. The dashboard remains static-first, demo-first, and engineering-aware.",
+          overview_current_stage: "Current Stage",
+          overview_current_stage_copy: "Public Research and Real Workflow Experiments remain the active operating frame.",
+          overview_stage_chip_a: "Research Live",
+          overview_stage_chip_b: "Static-first",
+          overview_system_health: "System Health",
+          overview_system_metric: "Read-only Surface",
+          overview_system_copy: "No API, no MCP, no Hermes runtime, and no auto-write actions from this page.",
+          overview_system_chip_a: "Low Bug Surface",
+          overview_system_chip_b: "Human Approval Required",
+          overview_latest_completed: "Latest Completed",
+          overview_latest_metric: "Navigation Layout",
+          overview_latest_copy: "OS Control Panel now uses categorized navigation instead of a single long-scroll stream.",
+          overview_latest_chip: "UI Review Fixes Preserved",
+          overview_next_actions: "Next 3 Actions",
+          overview_next_1_title: "Validate dashboard readability on desktop and mobile",
+          overview_next_1_copy: "Confirm navigation, information density, and section switching feel like a control cabin.",
+          overview_next_2_title: "Add Workspace Map for New project / New project 2",
+          overview_next_2_copy: "Prevent checkout confusion by exposing primary versus legacy workspaces more clearly.",
+          overview_next_3_title: "Design dashboard-data.json fields",
+          overview_next_3_copy: "Define fields only after section names and panel responsibilities stabilize.",
+          overview_risk_notes: "Attention / Risk Notes",
+          overview_risk_1: "OS Control Panel is a management page, not a Codex / Claude Code replacement.",
+          overview_risk_2: "Review Gate remains visual-only. No decision state writes back to the repo from this page.",
+          overview_risk_3: "Open-source candidates must still pass document-only review, comparison notes, and AVIN approval.",
+          overview_risk_4: "Future integrations must start as read-only sync or proposal layer, not runtime authority.",
+          overview_workspace: "Workspace Map | Needed Next",
+          overview_workspace_primary: "<strong>Primary clean workspace:</strong> New project / avin-ai-digital-footprint-lab",
+          overview_workspace_legacy: "<strong>Legacy / experimental workspace:</strong> New project 2, currently dirty and diverged",
+          overview_workspace_next: "<strong>Next action:</strong> Add a dedicated Workspace Map section in a future iteration.",
+          architecture_tag: "Architecture",
+          architecture_heading: "Operating Layers",
+          architecture_intro: "Each card keeps the same field structure so the section feels like a control layer, not a document wall.",
+          architecture_note: "Purpose, trigger, related files, and next action stay short on purpose.",
+          architecture_card_1: "AVIN Review Layer",
+          architecture_card_2: "Trend Intake",
+          architecture_card_3: "Open-source Vault",
+          architecture_card_4: "Practical Trial Lane",
+          architecture_card_5: "Hermes Proposal Track",
+          architecture_card_6: "Productization Layer",
+          triggers_tag: "Triggers",
+          triggers_heading: "Route Events Into the Right Lane",
+          triggers_intro: "Trigger cards replace the long narrative map and make routing decisions easier to scan.",
+          triggers_note: "Every trigger keeps route, output, and review expectation visible.",
+          trigger_card_1: "New GitHub repo found",
+          trigger_card_2: "Candidate looks promising",
+          trigger_card_3: "Workflow completed",
+          trigger_card_4: "Need repo-safe execution",
+          trigger_card_5: "Need read-only quality audit",
+          trigger_card_6: "Future agent proposal request",
+          vault_tag: "Open-source Vault",
+          vault_heading: "Candidate Queue and Watch List",
+          vault_intro: "Repo cards stay structured so AVIN can see category, risk, and first action without opening every file.",
+          vault_note: "Watch candidates are explicitly marked and do not pretend to be adopted project cards.",
+          vault_card_1: "GitHub AI Capability Candidate Batch",
+          vault_card_2: "mattpocock/skills",
+          vault_card_3: "rohitg00/agentmemory",
+          vault_card_4: "obra/superpowers",
+          link_open_candidate_batch: "Open Candidate Batch",
+          link_open_project_card: "Open Project Card",
+          vault_watch_note: "Watch Candidate only. No project card is assumed yet, and nothing is imported from this repo in the current state.",
+          workflows_tag: "Workflows",
+          workflows_heading: "Workflow Experiment Board",
+          workflows_intro: "Desktop can still use board lanes, but mobile gets a stacked fallback instead of relying on one hard-to-read horizontal board.",
+          workflows_note: "On smaller screens, scroll horizontally to view all workflow lanes.",
+          lane_watch: "Watch",
+          lane_document_only: "Document Only",
+          lane_practical_trial: "Practical Trial",
+          lane_sandbox_test: "Sandbox Test",
+          lane_localize: "Localize",
+          lane_archive: "Archive",
+          lane_completed: "Completed",
+          workflow_mobile_note: "Mobile fallback: each lane is stacked below so the board still reads clearly on smaller screens.",
+          workflow_mobile_watch: "GitHub AI Capability Candidate Batch and obra/superpowers remain watch items.",
+          workflow_mobile_document_only: "mattpocock/skills stays in review and comparison mode only.",
+          workflow_mobile_practical_trial: "No active item yet.",
+          workflow_mobile_sandbox_test: "rohitg00/agentmemory needs sandbox safety framing.",
+          workflow_mobile_localize: "No candidate is approved for localization yet.",
+          workflow_mobile_archive: "Reserved for rejected or paused items after review.",
+          workflow_mobile_completed: "Trend Intake, Practical Trial Lane, OS Control Panel Reference Research, and OS Control Panel UI UX Architecture are completed.",
+          handoff_tag: "Agent Handoff",
+          handoff_heading: "Prompt Prep, Not Agent Execution",
+          handoff_intro: "OS Control Panel does not run agents. It prepares task handoff prompts and review states.",
+          handoff_note: "Copy Prompt is the only interactive pattern kept here.",
+          handoff_chatgpt_task: "<strong>Current Suggested Task:</strong> Review the control panel state and identify the next highest-value documented move",
+          handoff_status_ready: "<strong>Prompt / Report Status:</strong> Prompt ready, report stays external",
+          handoff_chatgpt_prompt: "Review current OS stage, summarize open decisions, and propose the next highest-value documented step for AVIN without expanding into productization.",
+          button_copy_prompt: "Copy Prompt",
+          button_report_external: "Report Stays External",
+          handoff_codex_task: "<strong>Current Suggested Task:</strong> Validate dashboard readability, then design dashboard-data.json fields.",
+          handoff_codex_prompt: "Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.",
+          handoff_claude_task: "<strong>Current Suggested Task:</strong> Audit navigation clarity and whether the page still reads like a control panel",
+          handoff_claude_prompt: "Perform a read-only audit of the current dashboard and supporting docs. Focus on navigation clarity, state naming consistency, mobile readability, and whether the UI preserves source-of-truth separation.",
+          handoff_hermes_task: "<strong>Current Suggested Task:</strong> None, proposal-only placeholder",
+          handoff_hermes_status: "<strong>Prompt / Report Status:</strong> Future, no runnable prompt",
+          handoff_hermes_prompt: "Future state only. Hermes may propose candidate intake, review routing, or import suggestions, but it must not execute writes or external actions without AVIN approval.",
+          button_future_only: "Future Only",
+          review_tag: "Review Gate",
+          review_heading: "AVIN Review Gate",
+          review_intro: "Review states stay visible here, but this dashboard does not execute approval or workflow transitions.",
+          review_note: "Decision chips remain visual-only.",
+          review_card_1: "mattpocock/skills comparison scope",
+          review_card_2: "rohitg00/agentmemory sandbox framing",
+          review_card_3: "dashboard-data.json timing",
+          review_card_4: "obra/superpowers watch candidate",
+          review_visual_note: "Visual-only decision preview. No action is executed from this dashboard, and Human Review Gate stays mandatory even if future data becomes automated.",
+          review_preview_approve: "Preview: Approve",
+          review_preview_edit: "Preview: Needs Edit",
+          review_preview_watch: "Preview: Keep Watching",
+          review_preview_trial: "Preview: Move to Practical Trial",
+          review_preview_sandbox: "Preview: Move to Sandbox Test",
+          review_preview_archive: "Preview: Archive",
+          future_tag: "Future Integrations",
+          future_heading: "Read-only and Proposal-first Roadmap",
+          future_intro: "Future engineering moves should deepen maintainability without letting runtime authority outrun AVIN's review process.",
+          future_note: "Human-approved actions only.",
+          future_card_1: "dashboard-data.json",
+          future_card_2: "GitHub Action generated data",
+          future_card_3: "GitHub / Notion API read-only sync",
+          future_card_4: "MCP proposal layer",
+          future_card_5: "Hermes proposal layer",
+          future_card_6: "Human-approved actions only",
+          footer_title: "AVIN AI Digital Footprint OS",
+          footer_copy: "Static-first control panel. Source of truth remains GitHub Markdown, docs-index, project cards, and project logs."
+        }
+      };
       const prompts = {
-        "codex-next-task": "Continue working only in avin-ai-digital-footprint-lab. Keep the OS Control Panel static-first and management-oriented. Validate desktop and mobile readability, then prepare dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.",
-        "chatgpt-task": "Review the current AVIN OS Control Panel state and propose the next highest-value documented step without expanding into SaaS, backend, API, MCP, or agent auto-run.",
-        "codex-task": "Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.",
-        "claude-task": "Perform a read-only audit of the current dashboard and supporting docs. Focus on navigation clarity, state naming consistency, mobile readability, and whether the UI preserves source-of-truth separation."
+        zh: {
+          "codex-next-task": "只在 avin-ai-digital-footprint-lab 內繼續工作。保持 OS Control Panel 的 static-first 與管理頁定位。先檢查桌機與手機可讀性，再準備 dashboard-data.json 欄位設計；不要新增 API、MCP、Hermes runtime 或安裝套件。",
+          "chatgpt-task": "檢查目前 AVIN OS Control Panel 狀態，提出下一個最高價值且需要文件化的步驟，不要擴張到 SaaS、後端、API、MCP 或 agent auto-run。",
+          "codex-task": "只在 avin-ai-digital-footprint-lab 內工作。檢查 static OS Control Panel 在桌機與手機上的可讀性，再準備 dashboard-data.json 欄位設計；不要新增 API、MCP、Hermes runtime 或安裝套件。",
+          "claude-task": "對目前 dashboard 與支援文件做 read-only audit。重點檢查 navigation clarity、state naming consistency、mobile readability，以及 UI 是否維持 source-of-truth 分離。"
+        },
+        en: {
+          "codex-next-task": "Continue working only in avin-ai-digital-footprint-lab. Keep the OS Control Panel static-first and management-oriented. Validate desktop and mobile readability, then prepare dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.",
+          "chatgpt-task": "Review the current AVIN OS Control Panel state and propose the next highest-value documented step without expanding into SaaS, backend, API, MCP, or agent auto-run.",
+          "codex-task": "Work only in avin-ai-digital-footprint-lab. Review the static OS Control Panel on desktop and mobile, then prepare the dashboard-data.json field design without adding API, MCP, Hermes runtime, or package installs.",
+          "claude-task": "Perform a read-only audit of the current dashboard and supporting docs. Focus on navigation clarity, state naming consistency, mobile readability, and whether the UI preserves source-of-truth separation."
+        }
       };
 
+      const descriptionMeta = document.querySelector('meta[name="description"]');
       const feedback = document.getElementById("copy-feedback");
       const copyButtons = document.querySelectorAll("[data-copy-prompt]");
       const navButtons = document.querySelectorAll(".nav-button");
       const panels = document.querySelectorAll("[data-panel]");
+      const languageButtons = document.querySelectorAll("[data-lang]");
+      let currentLanguage = defaultLanguage;
+
+      function applyLanguage(lang) {
+        const nextLanguage = translations[lang] ? lang : defaultLanguage;
+        const dictionary = translations[nextLanguage];
+
+        document.documentElement.lang = nextLanguage === "zh" ? "zh-Hant" : "en";
+        document.title = dictionary.document_title;
+        if (descriptionMeta) {
+          descriptionMeta.setAttribute("content", dictionary.meta_description);
+        }
+
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          const value = dictionary[key];
+          if (typeof value !== "string") return;
+
+          if (node.hasAttribute("data-i18n-html")) {
+            node.innerHTML = value;
+            return;
+          }
+
+          node.textContent = value;
+        });
+
+        languageButtons.forEach((button) => {
+          const active = button.getAttribute("data-lang") === nextLanguage;
+          button.classList.toggle("active", active);
+          button.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+
+        if (!feedback.classList.contains("visible")) {
+          feedback.textContent = dictionary.copy_feedback_success;
+        }
+
+        currentLanguage = nextLanguage;
+        try {
+          localStorage.setItem(storageKey, nextLanguage);
+        } catch (error) {
+          // Ignore storage errors for file:// or privacy-restricted contexts.
+        }
+      }
 
       function setActivePanel(target) {
         navButtons.forEach((button) => {
@@ -1520,6 +1973,14 @@
         return ok;
       }
 
+      languageButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextLanguage = button.getAttribute("data-lang");
+          if (!nextLanguage) return;
+          applyLanguage(nextLanguage);
+        });
+      });
+
       navButtons.forEach((button) => {
         button.addEventListener("click", () => {
           const target = button.getAttribute("data-target");
@@ -1531,25 +1992,34 @@
       copyButtons.forEach((button) => {
         button.addEventListener("click", async () => {
           const key = button.getAttribute("data-copy-prompt");
-          const text = prompts[key];
+          const promptSet = prompts[currentLanguage] || prompts[defaultLanguage];
+          const text = promptSet[key];
           if (!text) return;
 
           try {
             const ok = await copyText(text);
             if (!ok) return;
-            feedback.textContent = "Prompt copied.";
+            feedback.textContent = translations[currentLanguage].copy_feedback_success;
             feedback.classList.add("visible");
             window.clearTimeout(window.__copyFeedbackTimer);
             window.__copyFeedbackTimer = window.setTimeout(() => {
               feedback.classList.remove("visible");
             }, 1800);
           } catch (error) {
-            feedback.textContent = "Copy failed. Use the prompt text in the card.";
+            feedback.textContent = translations[currentLanguage].copy_feedback_failed;
             feedback.classList.add("visible");
           }
         });
       });
 
+      let savedLanguage = defaultLanguage;
+      try {
+        savedLanguage = localStorage.getItem(storageKey) || defaultLanguage;
+      } catch (error) {
+        savedLanguage = defaultLanguage;
+      }
+
+      applyLanguage(savedLanguage);
       setActivePanel("overview");
     })();
   </script>
