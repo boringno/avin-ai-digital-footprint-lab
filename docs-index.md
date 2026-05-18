@@ -42,6 +42,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Open Source Vault First Project Candidates Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-first-project-candidates-completed.md)
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
 - [OS Control Panel Reference Research Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-reference-research-completed.md)
+- [OS Control Panel Static Dashboard Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-static-dashboard-completed.md)
 - [OS Control Panel UI UX Architecture Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-ui-ux-architecture-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 
@@ -163,7 +164,6 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 ## website
 
 - [AVIN 個人網站首頁雛形](website/index.html)
-- [AVIN OS Control Panel](website/os-control-panel.html)
 
 Hand-maintained note:
 - `docs/index.html`, `website/index.html`, and `docs/llms.txt` are important manually maintained entry files.
