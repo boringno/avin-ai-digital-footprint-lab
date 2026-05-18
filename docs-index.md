@@ -17,6 +17,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
 - [OS Control Panel Reference Research](00-meta/os-control-panel-reference-research.md)
 - [OS Control Panel UI UX Architecture](00-meta/os-control-panel-ui-ux-architecture.md)
+- [OS Trigger Rules and Command Library｜自動觸發條件庫與口令觸發庫](00-meta/os-trigger-rules-and-command-library.md)
 - [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
 
 ## 00-project-log
@@ -48,6 +49,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [OS Control Panel Static Dashboard UI Review Fixes Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-static-dashboard-ui-review-fixes-completed.md)
 - [OS Control Panel UI UX Architecture Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-ui-ux-architecture-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
+- [OS Trigger Rules & Command Library｜Local GitHub Sync Completed | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-local-github-sync-completed.md)
 
 ## 01-learning-notes
 
@@ -91,6 +93,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 04-workflows
 
+- [Agent Tool Fallback and Task Routing Workflow｜工具替補與任務路由規則](04-workflows/agent-tool-fallback-and-task-routing-workflow.md)
 - [AI Trend to Workflow Experiment｜AI 趨勢到工作流實驗](04-workflows/ai-trend-to-workflow-experiment.md)
 - [Content Format Experiment Library](04-workflows/content-format-experiment-library.md)
 - [Conversation Closure and Notion Log Workflow](04-workflows/conversation-closure-and-notion-log-workflow.md)
