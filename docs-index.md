@@ -36,9 +36,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [本地端全域專案盤點與人話說明書完成紀錄](00-project-log/2026-05-14-local-project-inventory-and-explained-map-completed.md)
 - [AI Trend Intake Architecture Fit Completed｜2026-05-18](00-project-log/2026-05-18-ai-trend-intake-architecture-fit-completed.md)
 - [GitHub AI Capability Candidate Batch Completed｜2026-05-18](00-project-log/2026-05-18-github-ai-capability-candidate-batch-completed.md)
+- [Open Source Vault First Project Candidates Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-first-project-candidates-completed.md)
 - [Open Source Vault Governance Baseline Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-governance-baseline-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
-- [Open Source Vault First Project Candidates Completed｜2026-05-18](00-project-log/2026-05-18-open-source-vault-first-project-candidates-completed.md)
 
 ## 01-learning-notes
 
@@ -144,9 +144,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [GitHub AI Capability Candidate Batch｜2026-05-18](open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md)
 - [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 - [Practical Trial Lane｜開源工具安全試用通道](open-source-vault/practical-trial-lane.md)
-- [mattpocock/skills｜候選項目卡](open-source-vault/projects/mattpocock-skills.md)
 - [Open Source Vault Project Template｜候選項目模板](open-source-vault/project-template.md)
-- [rohitg00/agentmemory｜候選項目卡](open-source-vault/projects/rohitg00-agentmemory.md)
+- [mattpocock/skills](open-source-vault/projects/mattpocock-skills.md)
+- [rohitg00/agentmemory](open-source-vault/projects/rohitg00-agentmemory.md)
 - [Open Source Vault Security Checklist｜開源能力安全檢查表](open-source-vault/security-checklist.md)
 - [Open Source Vault Workflow｜開源能力治理流程](open-source-vault/workflow.md)
 
