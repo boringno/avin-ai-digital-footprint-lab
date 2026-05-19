@@ -50,6 +50,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [OS Control Panel UI UX Architecture Completed | 2026-05-18](00-project-log/2026-05-18-os-control-panel-ui-ux-architecture-completed.md)
 - [OS Trigger Rules & Command Library｜本地 GitHub 同步完成紀錄 | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-local-github-sync-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
+- [OS Trigger Rules & Command Library v1.1 Completed | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-v1-1-completed.md)
 
 ## 01-learning-notes
 

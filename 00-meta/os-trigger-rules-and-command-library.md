@@ -199,6 +199,99 @@ completion log, commit hash, next action.
 
 ---
 
+### Rule 9 — Candidate selected for Sandbox Test
+
+**Input signal:**
+AVIN 說候選項目需要 Sandbox Test，或 Security Checklist 判定需要隔離測試。
+
+**Route:**
+open-source-vault → Security Checklist → Practical Trial Lane → Sandbox Plan → AVIN Approval
+
+**Assigned tool:**
+ChatGPT 先定義 sandbox boundary；Claude Code / Codex 只能在明確授權下文件化。
+
+**Allowed:**
+- define sandbox scope
+- define sample data boundary
+- define stop conditions
+- define approval checkpoint
+
+**Forbidden:**
+- 不使用真實資料
+- 不使用 sensitive token
+- 不改主 repo
+- 不在 approval 前執行 runtime adoption
+
+**Required output:**
+sandbox plan, risk boundary, stop conditions, AVIN approval checkpoint.
+
+**Review gate:**
+Approval Required
+
+---
+
+### Rule 10 — MCP Potential Check triggered
+
+**Input signal:**
+新工具、repo、workflow 或 service 可能成為 agent-callable capability 或 MCP candidate。
+
+**Route:**
+AI Trend Intake → open-source-vault → MCP Potential Checklist → Decision
+
+**Assigned tool:**
+ChatGPT
+
+**Allowed:**
+- evaluate MCP fit
+- classify capability
+- recommend Not Fit / Watch / Candidate / Reject
+
+**Forbidden:**
+- 不連接 MCP server
+- 不暴露 credentials
+- 不給 write permission
+- 不把 MCP 當 default destination
+
+**Required output:**
+MCP potential rating, reason, risk level, suggested next action.
+
+**Review gate:**
+AVIN Review Needed
+
+---
+
+### Rule 11 — Security Checklist initiated
+
+**Input signal:**
+候選項目準備從 Watch / Document Only 進入 Practical Trial、Sandbox Test、local execution、API usage 或 install-like behavior。
+
+**Route:**
+open-source-vault → Security Checklist → Risk Level → Decision
+
+**Assigned tool:**
+Claude Code read-only audit 或 ChatGPT 初判
+
+**Allowed:**
+- read public docs
+- inspect repo structure
+- summarize risk indicators
+- recommend safe next route
+
+**Forbidden:**
+- 不 install
+- 不 execution
+- 不使用 secrets
+- 不清理 workspace
+- 不改 main repo
+
+**Required output:**
+security checklist result, risk level, recommended route, stop conditions.
+
+**Review gate:**
+Approval Required
+
+---
+
 ## E. Command Library v1
 
 | Command Phrase | Route To | Assigned Tool | Use When | Required Output | Review Gate |
@@ -213,6 +306,8 @@ completion log, commit hash, next action.
 | 啟動內容轉文章 | Content Pipeline → Platform Output | ChatGPT draft, Codex doc | AI signal 或 workflow 要轉成公開內容 | draft, platform format, published URL | AVIN Review before publish |
 | 啟動 dashboard-data.json 規劃 | OS Control Panel → data layer planning | ChatGPT design, Codex implement | 要更新 OS Control Panel 的資料來源 | schema design, data spec, implementation plan | Approval Required |
 | 啟動 Notion 管理層更新 | Notion databases → AVIN manual update | ChatGPT as guide | Notion 規則或資料需要更新 | Notion updated, summary back to GitHub if needed | AVIN 手動操作 |
+| 啟動 MCP 潛力判斷：\<candidate\> | open-source-vault → MCP Potential Checklist | ChatGPT | 工具 / repo / service 可能成為 agent-callable capability 或 MCP candidate | MCP potential rating, risk level, reason, suggested next action | AVIN Review Needed |
+| 啟動 Sandbox Test：\<candidate\> | Practical Trial Lane → Sandbox Plan | ChatGPT | 候選項目需要隔離測試，不能直接 practical trial | Sandbox plan, sample data boundary, stop conditions, AVIN approval checkpoint | Approval Required |
 
 ## F. Current Automation Level
 
