@@ -73,6 +73,8 @@
 ## External Output
 
 - Document Only Review：`open-source-vault/reviews/obra-superpowers-document-only-review.md`
+- Security Checklist Prep：`open-source-vault/security-reviews/obra-superpowers-security-checklist-prep.md`
+- Security Checklist：`open-source-vault/security-reviews/obra-superpowers-security-checklist.md`
 
 ## Comparison Note
 
@@ -82,7 +84,8 @@
 ## Decision
 
 - Watch
-- Document Only Completed
+- Security Checklist Completed
+- Ready for Practical Trial（需滿足 6 個前置條件）
 
 ## Localized Final Version
 
@@ -95,6 +98,8 @@
 ## Lifecycle Status
 
 - Document Only Review Completed
+- Security Checklist Completed（2026-05-19）
+- Practical Trial：Ready（未啟動）
 
 ## Why It Looks Interesting
 

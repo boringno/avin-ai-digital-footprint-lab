@@ -54,6 +54,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-document-only-review-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
+- [obra/superpowers Security Checklist Completed | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-security-checklist-completed.md)
 
 ## 01-learning-notes
 
@@ -170,6 +171,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers Document Only Review](open-source-vault/reviews/obra-superpowers-document-only-review.md)
 - [rohitg00/agentmemory Document Only Review](open-source-vault/reviews/rohitg00-agentmemory-document-only-review.md)
 - [tech-leads-club/agent-skills Document Only Review](open-source-vault/reviews/tech-leads-club-agent-skills-document-only-review.md)
+- [obra/superpowers Security Checklist](open-source-vault/security-reviews/obra-superpowers-security-checklist.md)
 - [Open Source Vault Security Checklist｜開源能力安全檢查表](open-source-vault/security-checklist.md)
 - [obra/superpowers｜Security Checklist Prep](open-source-vault/security-reviews/obra-superpowers-security-checklist-prep.md)
 - [rohitg00/agentmemory｜Security Checklist Prep](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist-prep.md)
