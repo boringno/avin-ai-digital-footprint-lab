@@ -75,6 +75,7 @@
 - Document Only Review：`open-source-vault/reviews/obra-superpowers-document-only-review.md`
 - Security Checklist Prep：`open-source-vault/security-reviews/obra-superpowers-security-checklist-prep.md`
 - Security Checklist：`open-source-vault/security-reviews/obra-superpowers-security-checklist.md`
+- Practical Trial Log：`open-source-vault/practical-trials/obra-superpowers-practical-trial.md`
 
 ## Comparison Note
 
@@ -99,7 +100,7 @@
 
 - Document Only Review Completed
 - Security Checklist Completed（2026-05-19）
-- Practical Trial：Ready（未啟動）
+- Practical Trial：In Progress（Phase 1 完成，Phase 2 待安裝）
 
 ## Why It Looks Interesting
 
