@@ -52,11 +52,10 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [OS Trigger Rules & Command Library v1.1｜GitHub 同步完成紀錄 | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-v1-1-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 - [obra/superpowers Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-document-only-review-completed.md)
+- [obra/superpowers Practical Trial Phase 1 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-practical-trial-phase-1-completed.md)
 - [obra/superpowers Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-security-checklist-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
-- [obra/superpowers Practical Trial Started | 2026-05-19](open-source-vault/practical-trials/obra-superpowers-practical-trial.md)
-- [obra/superpowers Practical Trial Phase 1 Completed | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-practical-trial-phase-1-completed.md)
 
 ## 01-learning-notes
 
