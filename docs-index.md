@@ -51,6 +51,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [OS Trigger Rules & Command Library｜本地 GitHub 同步完成紀錄 | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-local-github-sync-completed.md)
 - [OS Trigger Rules & Command Library v1.1｜GitHub 同步完成紀錄 | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-v1-1-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
+- [rohitg00/agentmemory Document Only Review Completed | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
 
 ## 01-learning-notes
 
@@ -161,6 +162,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [mattpocock/skills](open-source-vault/projects/mattpocock-skills.md)
 - [rohitg00/agentmemory](open-source-vault/projects/rohitg00-agentmemory.md)
 - [mattpocock/skills Document Only Review](open-source-vault/reviews/mattpocock-skills-document-only-review.md)
+- [rohitg00/agentmemory Document Only Review](open-source-vault/reviews/rohitg00-agentmemory-document-only-review.md)
 - [Open Source Vault Security Checklist｜開源能力安全檢查表](open-source-vault/security-checklist.md)
 - [Open Source Vault Workflow｜開源能力治理流程](open-source-vault/workflow.md)
 
