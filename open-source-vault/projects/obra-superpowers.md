@@ -86,7 +86,8 @@
 
 - Watch
 - Security Checklist Completed
-- Ready for Practical Trial（需滿足 6 個前置條件）
+- Practical Trial Completed（Manual Methodology，Phase 2 替代路線）
+- Workflow Experiment Completed：Rule 12 + Task Spec Format Localized into AVIN OS
 
 ## Localized Final Version
 
@@ -100,7 +101,9 @@
 
 - Document Only Review Completed
 - Security Checklist Completed（2026-05-19）
-- Practical Trial：In Progress（Phase 1 完成，Phase 2 待安裝）
+- Practical Trial Phase 1 Completed（2026-05-19，install route blocked）
+- Practical Trial Phase 2 Completed（2026-05-19，Manual Methodology Trial）
+- Workflow Experiment Completed（2026-05-19，Rule 12 + Task Spec Format Localized）
 
 ## Why It Looks Interesting
 

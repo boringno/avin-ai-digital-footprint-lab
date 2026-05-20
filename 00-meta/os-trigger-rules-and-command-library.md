@@ -292,6 +292,44 @@ Approval Required
 
 ---
 
+### Rule 12 — Design Approval Gate
+
+**Input signal:**
+任務規模達到以下任一條件時，agent 在執行前必須先提交設計摘要並等待核准：
+- 需要建立 3 個以上新文件
+- 需要修改現有 Trigger Rule / Command Library
+- 需要制定新 Rule
+- 需要大範圍重構 OS 文件結構
+
+**Route:**
+Task Design Summary → AVIN Review → Explicit Approval → Execution
+
+**Assigned tool:**
+任何 AI agent（Claude Code / Codex / ChatGPT）在執行前自行判斷是否需要觸發。
+
+**Required output（設計摘要格式）:**
+- 任務目標（一句話）
+- 預計建立/修改的文件清單
+- 影響範圍（哪些現有文件或 Rule 受影響）
+- 風險點（如有）
+
+**Forbidden:**
+- 未提交設計摘要前不能開始執行
+- 不能在 AVIN 明確核准前建立文件、commit 或 push
+- 已有口令明確授權的標準流程（Document Only Review、completion log 等）不需要觸發本 Rule
+
+**Review gate:**
+Approval Required — AVIN 明確說「核准」「繼續」「OK」後才能開始執行。
+
+**Not applicable when:**
+- 單一文件建立（常規 completion log、單一 review note）
+- AVIN 的口令已明確指定執行範圍（如「啟動 Document Only Review」）
+- Plan mode 已核准的任務（ExitPlanMode 等同 AVIN 核准）
+
+**來源：** obra/superpowers 方法論 Localize（Design Approval Checkpoint）— Workflow Experiment 2026-05-19
+
+---
+
 ## E. Command Library v1
 
 | Command Phrase | Route To | Assigned Tool | Use When | Required Output | Review Gate |
@@ -308,6 +346,7 @@ Approval Required
 | 啟動 Notion 管理層更新 | Notion databases → AVIN manual update | ChatGPT as guide | Notion 規則或資料需要更新 | Notion updated, summary back to GitHub if needed | AVIN 手動操作 |
 | 啟動 MCP 潛力判斷：\<candidate\> | open-source-vault → MCP Potential Checklist | ChatGPT | 工具 / repo / service 可能成為 agent-callable capability 或 MCP candidate | MCP potential rating, risk level, reason, suggested next action | AVIN Review Needed |
 | 啟動 Sandbox Test：\<candidate\> | Practical Trial Lane → Sandbox Plan | ChatGPT | 候選項目需要隔離測試，不能直接 practical trial | Sandbox plan, sample data boundary, stop conditions, AVIN approval checkpoint | Approval Required |
+| 啟動設計核准：\<任務摘要\> | Task Design Summary → AVIN Review | 任何 AI agent（自行判斷觸發） | 任務規模達 Rule 12 條件時 agent 主動提交設計摘要 | 設計摘要、影響範圍、AVIN 核准確認 | Approval Required |
 
 ## F. Current Automation Level
 
@@ -339,3 +378,30 @@ Approval Required
 - 不讓 Hermes 直接改 Manual OS（Hermes 目前只是 proposal layer）
 - 不把 Notion 當唯一 source of truth（GitHub 也是 evidence layer，兩者需要同步）
 - 不讓口令繞過 AVIN Review Gate（任何標記 Approval Required 的動作都不能跳過）
+
+---
+
+## H. Task Spec Format｜任務交辦規格
+
+當 AVIN 或 agent 交辦任務給 Codex / Claude Code 時，建議使用以下標準規格格式：
+
+```
+File:         [目標文件路徑（完整相對路徑）]
+Output:       [完整預期輸出摘要（標題、核心內容、字數估計）]
+Verification: [如何確認完成（文件存在 ✓、關鍵欄位存在 ✓、docs-index 更新 ✓）]
+```
+
+**範例：**
+
+```
+File:         open-source-vault/projects/example-tool.md
+Output:       project card，包含 Source URL、Risk Level、Decision、Lifecycle Status 等必填欄位，約 300 字
+Verification: 文件存在 ✓ / 所有必填欄位填寫完整 ✓ / docs-index 已新增對應條目 ✓
+```
+
+**用途：**
+- 讓任務交辦的「完成條件」從隱性變成顯性
+- 防止 agent 在未確認範圍前就開始執行
+- 作為 Two-stage Review 的基礎：Stage 1 以 Verification 條件核對 spec compliance
+
+**來源：** obra/superpowers 方法論 Localize（Task Spec Format）— Workflow Experiment 2026-05-19
