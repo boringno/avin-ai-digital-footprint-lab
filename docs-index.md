@@ -58,6 +58,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers Workflow Experiment 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-workflow-experiment-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
+- [Agent Task Spec Template 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-agent-task-spec-template-completed.md)
 
 ## 01-learning-notes
 
@@ -110,6 +111,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Meta Publishing & Feedback Loop (Long-term Architecture)](04-workflows/meta-publishing-feedback-loop.md)
 - [Personal Website Progress Update Spec](04-workflows/personal-website-progress-update-spec.md)
 - [Productization Opportunity Evaluation Test Plan](04-workflows/productization-opportunity-evaluation-test-plan.md)
+- [Agent Task Spec Template｜Claude Code / Codex 任務交辦模板](04-workflows/templates/agent-task-spec-template.md)
 - [Weekly AI Signal Selection Template](04-workflows/templates/weekly-ai-signal-selection-template.md)
 - [Threads MVP 1｜Manual Publish + Auto Threads Insights Sync](04-workflows/threads-mvp-1-manual-publish-auto-insights-sync.md)
 - [Threads MVP 1｜Manual Test Checklist](04-workflows/threads-mvp-1-manual-test-checklist.md)
