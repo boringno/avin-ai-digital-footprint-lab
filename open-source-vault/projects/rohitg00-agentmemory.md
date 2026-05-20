@@ -78,6 +78,7 @@
 
 - Watch
 - Document Only Completed
+- Security Checklist Completed：Risk Level Medium-High，不進入 Practical Trial（目前）
 
 ## Localized Final Version
 
@@ -89,7 +90,12 @@
 
 ## Lifecycle Status
 
-- Document Only Review Completed
+- Document Only Review Completed（2026-05-19）
+- Security Checklist Prep Completed（2026-05-19）
+- Security Checklist Completed（2026-05-19）
+  - Risk Level：Medium-High
+  - Decision：Document Only — 不進入 Practical Trial（目前）
+  - Practical Trial 阻礙：Hooks disable 方法、SQLite 路徑隔離、MCP write scope、memory delete/export
 
 ## Why It Looks Interesting
 
