@@ -55,9 +55,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers Manual Methodology Trial 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-manual-methodology-trial-completed.md)
 - [obra/superpowers Practical Trial Phase 1 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-practical-trial-phase-1-completed.md)
 - [obra/superpowers Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-security-checklist-completed.md)
+- [obra/superpowers Workflow Experiment 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-workflow-experiment-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
-- [obra/superpowers Workflow Experiment 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-workflow-experiment-completed.md)
 
 ## 01-learning-notes
 
