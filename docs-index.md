@@ -58,9 +58,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-security-checklist-completed.md)
 - [obra/superpowers Workflow Experiment 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-workflow-experiment-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
+- [open-source-vault Agent Skills / Memory Review Batch Closure｜2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-memory-batch-closure.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
 - [rohitg00/agentmemory Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-security-checklist-completed.md)
-- [open-source-vault Agent Skills / Memory Batch Closure | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-memory-batch-closure.md)
 
 ## 01-learning-notes
 
@@ -185,8 +185,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers｜Security Checklist](open-source-vault/security-reviews/obra-superpowers-security-checklist.md)
 - [rohitg00/agentmemory｜Security Checklist Prep](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist-prep.md)
 - [rohitg00/agentmemory｜Security Checklist](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist.md)
+- [open-source-vault Agent Skills / Memory Review Closure Note｜2026-05-19](open-source-vault/status/open-source-vault-agent-skills-memory-batch-closure-2026-05-19.md)
 - [Open Source Vault｜現況快照 | 2026-05-19](open-source-vault/status/open-source-vault-current-status-2026-05-19.md)
-- [open-source-vault Agent Skills / Memory Batch Closure | 2026-05-19](open-source-vault/status/open-source-vault-agent-skills-memory-batch-closure-2026-05-19.md)
 - [Open Source Vault Workflow｜開源能力治理流程](open-source-vault/workflow.md)
 
 ## scripts
