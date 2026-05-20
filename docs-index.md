@@ -52,11 +52,11 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [OS Trigger Rules & Command Library v1.1｜GitHub 同步完成紀錄 | 2026-05-18](00-project-log/2026-05-18-os-trigger-command-library-v1-1-completed.md)
 - [Practical Trial Lane Completed｜2026-05-18](00-project-log/2026-05-18-practical-trial-lane-completed.md)
 - [obra/superpowers Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-document-only-review-completed.md)
+- [obra/superpowers Manual Methodology Trial 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-manual-methodology-trial-completed.md)
 - [obra/superpowers Practical Trial Phase 1 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-practical-trial-phase-1-completed.md)
 - [obra/superpowers Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-security-checklist-completed.md)
 - [Open Source Vault Agent Skills Batch Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-open-source-vault-agent-skills-batch-review-completed.md)
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
-- [obra/superpowers Manual Methodology Trial 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-obra-superpowers-manual-methodology-trial-completed.md)
 
 ## 01-learning-notes
 
@@ -163,8 +163,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [GitHub AI Capability Candidate Batch｜2026-05-18](open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md)
 - [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 - [Practical Trial Lane｜開源工具安全試用通道](open-source-vault/practical-trial-lane.md)
+- [obra/superpowers Manual Methodology Trial](open-source-vault/practical-trials/obra-superpowers-manual-methodology-trial.md)
 - [obra/superpowers｜Practical Trial Log](open-source-vault/practical-trials/obra-superpowers-practical-trial.md)
-- [obra/superpowers｜Manual Methodology Trial](open-source-vault/practical-trials/obra-superpowers-manual-methodology-trial.md)
 - [Open Source Vault Project Template｜候選項目模板](open-source-vault/project-template.md)
 - [mattpocock/skills](open-source-vault/projects/mattpocock-skills.md)
 - [obra/superpowers](open-source-vault/projects/obra-superpowers.md)
