@@ -63,7 +63,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
 - [rohitg00/agentmemory Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-security-checklist-completed.md)
 - [2026-05-20 GitHub AI Agent Trend Radar Batch｜Completed](00-project-log/2026-05-20-github-ai-agent-trend-radar-batch-completed.md)
-- [Public Identity & Case Library Phase 1｜Completed](00-project-log/2026-05-21-public-identity-case-library-phase1-completed.md)
+- [Public Identity & Case Library Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-library-phase1-completed.md)
 
 ## 01-learning-notes
 
