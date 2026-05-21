@@ -65,6 +65,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [2026-05-20 GitHub AI Agent Trend Radar Batch｜Completed](00-project-log/2026-05-20-github-ai-agent-trend-radar-batch-completed.md)
 - [Public Identity & Case Candidate Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-candidate-phase1-completed.md)
 
+- [Platform Output Live Audit Completed](00-project-log/2026-05-21-platform-output-live-audit-completed.md)
+
 ## 01-learning-notes
 
 - [Learning Notes](01-learning-notes/README.md)
@@ -154,6 +156,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
 - [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
 - [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
+
+- [Platform Output Live Audit](06-platform-outputs/platform-output-live-audit-2026-05-21.md)
 
 ## Root Documents
 
