@@ -63,9 +63,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [rohitg00/agentmemory Document Only Review 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-document-only-review-completed.md)
 - [rohitg00/agentmemory Security Checklist 完成紀錄 | 2026-05-19](00-project-log/2026-05-19-rohitg00-agentmemory-security-checklist-completed.md)
 - [2026-05-20 GitHub AI Agent Trend Radar Batch｜Completed](00-project-log/2026-05-20-github-ai-agent-trend-radar-batch-completed.md)
-- [Public Identity & Case Candidate Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-candidate-phase1-completed.md)
-
 - [Platform Output Live Audit Completed](00-project-log/2026-05-21-platform-output-live-audit-completed.md)
+- [Public Identity & Case Candidate Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-candidate-phase1-completed.md)
 
 ## 01-learning-notes
 
@@ -155,9 +154,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [個人網站諮詢入口資訊架構草稿](06-platform-outputs/personal-website-consulting-entry-ia-draft.md)
 - [個人網站首頁 Hero 草稿](06-platform-outputs/personal-website-hero-draft.md)
 - [Personal Website Homepage Optimization Checklist](06-platform-outputs/personal-website-homepage-optimization-checklist.md)
-- [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
-
 - [Platform Output Live Audit](06-platform-outputs/platform-output-live-audit-2026-05-21.md)
+- [Resume Bio / Website About Draft](06-platform-outputs/resume-bio-website-about-draft.md)
 
 ## Root Documents
 
