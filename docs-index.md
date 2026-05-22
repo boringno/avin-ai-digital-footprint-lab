@@ -17,6 +17,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
 - [OS Control Panel Reference Research](00-meta/os-control-panel-reference-research.md)
 - [OS Control Panel UI UX Architecture](00-meta/os-control-panel-ui-ux-architecture.md)
+- [Platform Compatibility Layer](00-meta/platform-compatibility-layer.md)
 - [OS Trigger Rules and Command Library｜自動觸發條件庫與口令觸發庫](00-meta/os-trigger-rules-and-command-library.md)
 - [Public Identity Layer｜AVIN 對外身份草案（探索期）](00-meta/public-identity-layer.md)
 - [Self-Ecosystem Analysis & Validation](00-meta/self-ecosystem-analysis-and-validation.md)
