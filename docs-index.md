@@ -180,7 +180,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [GitHub AI Capability Candidate Batch｜2026-05-18](open-source-vault/candidate-batches/2026-05-18-github-ai-capability-candidates.md)
 - [2026-05-20 GitHub AI Agent Trend Radar Batch](open-source-vault/candidate-batches/2026-05-20-github-ai-agent-trend-radar-batch.md)
 - [JudyaiLab/ai-night-shift Comparison Note](open-source-vault/comparison-notes/ai-night-shift-comparison-note.md)
-- [mattpocock/skills vs tech-leads-club/agent-skills Focused Comparison Note](open-source-vault/comparison-notes/mattpocock-skills-vs-tech-leads-club-agent-skills-comparison-note.md)
+- [mattpocock/skills vs tech-leads-club/agent-skills｜Focused Comparison Note](open-source-vault/comparison-notes/mattpocock-skills-vs-tech-leads-club-agent-skills-comparison-note.md)
 - [MCP Potential Checklist｜MCP 潛力檢查表](open-source-vault/mcp-potential-checklist.md)
 - [Practical Trial Lane｜開源工具安全試用通道](open-source-vault/practical-trial-lane.md)
 - [obra/superpowers Manual Methodology Trial](open-source-vault/practical-trials/obra-superpowers-manual-methodology-trial.md)
