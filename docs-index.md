@@ -68,6 +68,8 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Platform Output Live Audit Completed](00-project-log/2026-05-21-platform-output-live-audit-completed.md)
 - [Public Identity & Case Candidate Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-candidate-phase1-completed.md)
 
+- [Guarded Long Task Field Test 01 Completed](00-project-log/2026-05-22-guarded-long-task-field-test-01-completed.md)
+
 ## 01-learning-notes
 
 - [Learning Notes](01-learning-notes/README.md)
