@@ -201,6 +201,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [obra/superpowers｜Security Checklist](open-source-vault/security-reviews/obra-superpowers-security-checklist.md)
 - [rohitg00/agentmemory｜Security Checklist Prep](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist-prep.md)
 - [rohitg00/agentmemory｜Security Checklist](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist.md)
+- [tech-leads-club/agent-skills｜Security Checklist](open-source-vault/security-reviews/tech-leads-club-agent-skills-security-checklist.md)
 - [open-source-vault Agent Skills / Memory Review Closure Note｜2026-05-19](open-source-vault/status/open-source-vault-agent-skills-memory-batch-closure-2026-05-19.md)
 - [Open Source Vault｜現況快照 | 2026-05-19](open-source-vault/status/open-source-vault-current-status-2026-05-19.md)
 - [Open Source Vault Workflow｜開源能力治理流程](open-source-vault/workflow.md)
