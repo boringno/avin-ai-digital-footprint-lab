@@ -12,6 +12,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [Agent Evaluation and Observability Layer｜Agent 評估與觀測層](00-meta/agent-evaluation-and-observability-layer.md)
 - [AI Trend Intake and Architecture Fit｜AI 趨勢 Intake 與架構契合層](00-meta/ai-trend-intake-and-architecture-fit.md)
+- [Codex / Claude Code Handoff Template](00-meta/codex-claude-handoff-template.md)
 - [Guarded Long Task Field Test Findings Note](00-meta/guarded-long-task-field-test-findings.md)
 - [Guarded Long Task Protocol Proposal](00-meta/guarded-long-task-protocol-proposal.md)
 - [Guarded Long Task Validation Summary](00-meta/guarded-long-task-validation-summary.md)
