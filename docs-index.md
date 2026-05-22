@@ -67,7 +67,6 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [2026-05-20 GitHub AI Agent Trend Radar Batch｜Completed](00-project-log/2026-05-20-github-ai-agent-trend-radar-batch-completed.md)
 - [Platform Output Live Audit Completed](00-project-log/2026-05-21-platform-output-live-audit-completed.md)
 - [Public Identity & Case Candidate Phase 1｜Completed｜2026-05-21](00-project-log/2026-05-21-public-identity-case-candidate-phase1-completed.md)
-
 - [Guarded Long Task Field Test 01 Completed](00-project-log/2026-05-22-guarded-long-task-field-test-01-completed.md)
 
 ## 01-learning-notes
