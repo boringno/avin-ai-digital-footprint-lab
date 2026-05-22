@@ -40,6 +40,8 @@ So the relationship should be read as:
 
 This protocol does not replace `Rule 12`.
 
+Its first implementation layer currently lives in the `Guarded Long Task Fields` section of the Agent Task Spec Template. That template block is the current usage layer for translating this proposal into task-level execution boundaries. It should be read as an implementation aid for approved tasks, not as a formal promotion of this proposal into `Rule 13`.
+
 ## 3. Task Modes
 
 ### 3.1 Read-only Long Task

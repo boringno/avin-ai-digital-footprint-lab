@@ -149,6 +149,8 @@ Use this block when the task is expected to continue across multiple approved st
 
 This block does not replace `Rule 12`.
 
+This block is derived from the `Guarded Long Task Protocol Proposal`. Its purpose is to translate long-task guardrails into task-spec fields that can be applied to approved work without treating the proposal itself as a formal rule.
+
 - `Rule 12` governs design first, approval second, execution third.
 - `Guarded Long Task Fields` govern how an already approved task may continue safely.
 - The agent may continue within approved scope.
