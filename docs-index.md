@@ -12,6 +12,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 - [Agent Evaluation and Observability Layer｜Agent 評估與觀測層](00-meta/agent-evaluation-and-observability-layer.md)
 - [AI Trend Intake and Architecture Fit｜AI 趨勢 Intake 與架構契合層](00-meta/ai-trend-intake-and-architecture-fit.md)
+- [Guarded Long Task Protocol Proposal](00-meta/guarded-long-task-protocol-proposal.md)
 - [Internal Project Radar Scan｜本地端專案內部雷達掃描](00-meta/internal-project-radar-scan.md)
 - [Local Project Explained Inventory｜本地端專案人話說明書](00-meta/local-project-explained-inventory.md)
 - [Local Project Inventory｜本地端全域專案盤點](00-meta/local-project-inventory.md)
