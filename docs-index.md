@@ -198,6 +198,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [tech-leads-club/agent-skills｜Document Only Review](open-source-vault/reviews/tech-leads-club-agent-skills-document-only-review.md)
 - [Open Source Vault Security Checklist｜開源能力安全檢查表](open-source-vault/security-checklist.md)
 - [JudyaiLab/ai-night-shift Security Checklist](open-source-vault/security-reviews/ai-night-shift-security-checklist.md)
+- [mattpocock/skills｜Security Checklist](open-source-vault/security-reviews/mattpocock-skills-security-checklist.md)
 - [obra/superpowers｜Security Checklist Prep](open-source-vault/security-reviews/obra-superpowers-security-checklist-prep.md)
 - [obra/superpowers｜Security Checklist](open-source-vault/security-reviews/obra-superpowers-security-checklist.md)
 - [rohitg00/agentmemory｜Security Checklist Prep](open-source-vault/security-reviews/rohitg00-agentmemory-security-checklist-prep.md)
