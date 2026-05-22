@@ -183,6 +183,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [rohitg00/agentmemory](open-source-vault/projects/rohitg00-agentmemory.md)
 - [tech-leads-club/agent-skills](open-source-vault/projects/tech-leads-club-agent-skills.md)
 - [Agent Skills Comparison Note｜mattpocock vs tech-leads-club vs obra](open-source-vault/reviews/agent-skills-comparison-note.md)
+- [JudyaiLab/ai-night-shift Comparison Note](open-source-vault/comparison-notes/ai-night-shift-comparison-note.md)
 - [JudyaiLab/ai-night-shift Intake Review](open-source-vault/reviews/ai-night-shift-intake-review.md)
 - [mattpocock/skills Document Only Review](open-source-vault/reviews/mattpocock-skills-document-only-review.md)
 - [obra/superpowers Document Only Review](open-source-vault/reviews/obra-superpowers-document-only-review.md)
