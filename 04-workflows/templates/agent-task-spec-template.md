@@ -143,6 +143,140 @@ Task 2:
 
 ---
 
+## Guarded Long Task Fields
+
+Use this block when the task is expected to continue across multiple approved steps without asking AVIN to approve every small action.
+
+This block does not replace `Rule 12`.
+
+- `Rule 12` governs design first, approval second, execution third.
+- `Guarded Long Task Fields` govern how an already approved task may continue safely.
+- The agent may continue within approved scope.
+- The agent may not expand scope on its own.
+- If any stop condition is triggered, the agent must stop and report.
+
+### Suggested values
+
+- `Task Mode`
+  - `read_only_long_task`
+  - `documentation_long_task`
+  - `guarded_execution_task`
+- `Platform Compatibility Required`
+  - `yes`
+  - `no`
+  - `not_enough_evidence`
+- `Push Policy`
+  - `approval_required`
+  - `not_applicable`
+- `Rebase / Merge Policy`
+  - `approval_required`
+  - `forbidden`
+  - `not_applicable`
+- `Encoding Safety Check`
+  - `required`
+  - `not_required`
+
+### Template block
+
+```text
+## Guarded Long Task Fields
+
+Task Mode:
+[read_only_long_task / documentation_long_task / guarded_execution_task]
+
+Scope Boundary:
+[approved files, folders, and explicit exclusions]
+
+Allowed Actions:
+- [action]
+- [action]
+
+Forbidden Actions:
+- [action]
+- [action]
+
+Universal Stop Conditions:
+- worktree dirty
+- remote ahead / behind / diverged
+- rebase required
+- merge conflict
+- docs-index.md diff larger than expected
+- docs-index.md contains BOM / Chinese mojibake / encoding pollution
+- unapproved file changes appear
+- unapproved folder creation is required
+- prohibited scope must be touched
+- install / clone / run script becomes necessary
+- API key / secrets become necessary
+- Notion / MCP / Hermes / external API access becomes necessary
+- platform compatibility is unclear
+- task goal drifts outside approved scope
+- wrong repo / New project 2 / parent repo path detected
+- force push / reset / clean / stash would be needed
+- any git action is no longer clearly safe under the original approval
+
+Report Cadence:
+- after safety check
+- after read-only inventory
+- before file edits
+- after file edits
+- after diff review
+- before commit
+- after commit
+- before push
+- immediately when a stop condition appears
+
+Git Safety Rules:
+- never use git add .
+- stage only explicitly approved paths
+- check origin/main...main before push
+- remote ahead means no direct push
+- diverged history means no direct pull
+- rebase or merge requires separate approval
+- force push is forbidden unless AVIN explicitly approves a single use
+
+docs-index Safety Rules:
+- minimal update only
+- no generator rerun unless separately approved
+- no large section reorder
+- check BOM
+- check Chinese mojibake or encoding pollution
+- stop and report if diff exceeds expectation
+
+Platform Compatibility Required:
+[yes / no / not_enough_evidence]
+
+Continue Automatically When:
+- approved scope is unchanged
+- target files remain within approved boundary
+- no universal stop condition is triggered
+- git state remains safe
+- platform compatibility is irrelevant or already understood
+
+Ask AVIN When:
+- a new file outside approved scope is needed
+- a new folder is needed
+- docs-index.md diff becomes unexpectedly large
+- git divergence appears
+- rebase or merge becomes necessary
+- commit is ready
+- push is ready
+- platform compatibility is unclear
+- install / clone / script execution / secrets / external system access becomes necessary
+- the task objective itself appears to be changing
+
+Commit Policy:
+[state whether commit is allowed, and what must be checked first]
+
+Push Policy:
+[approval_required / not_applicable]
+
+Rebase / Merge Policy:
+[approval_required / forbidden / not_applicable]
+
+Encoding Safety Check:
+[required / not_required]
+```
+
 ## Allowed Actions by Mode｜依模式的允許動作
 
 ### Read-only Audit Mode（Claude Code 預設）
