@@ -66,8 +66,8 @@ This matters because the goal was to validate boundary discipline first, not to 
 
 The current system boundary remains intentionally strict:
 
-- `~/.hermes` stays runtime-only
-- `~/.openclaw` stays runtime-only
+- `runtime-private Hermes directory` stays runtime-only
+- `runtime-private OpenClaw directory` stays runtime-only
 - `AgentHome` is the human-inspectable operation layer
 - the public evidence repo remains a reviewed output layer
 
@@ -129,7 +129,7 @@ That is more durable than treating agent tooling as a black-box automation short
 
 This project log was derived from the Level 3 docs-to-sync candidate:
 
-- `/Users/avin/Documents/AgentHome/docs-to-sync/mac-mini-ai-agent-build-safe-trial-progress/`
+- `AgentHome docs-to-sync staging path (private local path redacted)`
 
 The source materials were produced by Codex 5.4 High dry run execution and then reviewed through the AgentHome promotion flow.
 
