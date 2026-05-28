@@ -320,12 +320,21 @@ Check:
 - the configured RSS feed URLs still respond with valid XML
 - duplicate detection did not already skip the item because the same link or title plus source already exists
 
-## Roadmap
+## 目前進度（2026 Q2）
 
-- add the first real AI learning notes
-- convert one real workflow into a portfolio-grade case study
-- add examples for each prompt skill
-- add issue templates for new notes and new workflows
-- connect published GitHub docs back to LinkedIn or other public channels
-- refine the Notion schema after real weekly usage
-- upgrade AI signal summaries from feed excerpts to a local or low-cost model only when the free workflow proves useful
+### 已完成
+- ✅ 系統架構建立（Notion OS + GitHub 證據層 + Website + llms.txt）
+- ✅ GitHub Actions 自動化（Signal Radar / Notion→Issues / docs-index）
+- ✅ Threads Insights API 回收閉環
+- ✅ Hermes Agent 第一階段測試
+- ✅ 網站上線 + AI 可讀入口（llms.txt）
+
+### 進行中
+- 🔄 Case Study 累積（目標：04-case-studies/ 達到 5 篇）
+- 🔄 Signal → Output Loop 建立週輸出節奏
+- 🔄 第一個付費 AI Workflow 診斷案例
+
+### 下一步
+- 垂直市場鎖定
+- llms.txt 動態化（GitHub Action 每次 push 自動更新）
+- Agent Governance 方法論公開化

@@ -2,14 +2,36 @@
 定位：公開建構中的 AI Workflow Explorer
 
 簡介：
-AVIN 正在學習 AI、研究 AI 工具、實測工作流，並把過程整理成 GitHub 文件、LinkedIn 輸出、個人網站與可長期累積的公開數位足跡，讓學習與實測能被搜尋、驗證、展示與持續累積。
+AVIN 正在公開建構 AI Digital Footprint OS，把每天學 AI、
+實測工具、拆解工作流的過程，轉成 GitHub 文件、LinkedIn 輸出、
+個人網站與 llms.txt，形成可被搜尋、驗證、展示與長期累積的公開資產。
+
+解決的問題：
+幫助知識工作者與一人工作室把 AI 學習過程轉成可複用、
+可展示、可被 AI 搜尋引用的公開資產。
+
+已完成的具體實驗：
+- Threads Insights API 回收閉環（手動發布 → URL resolver → Media ID → Insights API → Notion writeback）
+- Hermes Agent smoke test 與 Human Review Gate 設計
+- Notion → GitHub Issues 自動化（GitHub Actions）
+- AI Signal Radar 每日訊號收集（RSS → Notion）
+- Graph Hub 關聯式 OS 設計（Project / Rules / Logs / Pipelines / Assets）
+- docs-index 自動生成（每次 push 更新）
+
+提供的服務：
+- AI Workflow 診斷（一對一，從真實工作場景出發，盤點流程、找出卡點）
+- AI Workflow 案例陪跑（SOP、Checklist、Prompt Template、Case Study）
+
+適合合作的對象：
+知識工作者、顧問型創作者、一人工作室、
+想把 AI 導入真實工作流但不知道從哪裡開始的小型團隊
 
 重要連結：
 - GitHub 公開實驗室：https://github.com/boringno/avin-ai-digital-footprint-lab
-- LinkedIn：https://www.linkedin.com/in/iven-%E9%98%BF%E6%BA%AB-848872190/?skipRedirect=true
+- LinkedIn：https://www.linkedin.com/in/iven-阿溫-848872190/
 - 個人網站首頁：https://boringno.github.io/avin-ai-digital-footprint-lab/
+- Case Studies：https://github.com/boringno/avin-ai-digital-footprint-lab/tree/main/04-case-studies
 - Stage 1 階段日誌：https://github.com/boringno/avin-ai-digital-footprint-lab/blob/main/00-project-log/2026-05-10-ai-digital-footprint-os-stage-1.md
-- Hero Markdown source of truth：https://github.com/boringno/avin-ai-digital-footprint-lab/blob/main/06-platform-outputs/personal-website-hero-draft.md
 
 內容策略：
 - Markdown 是 source of truth
@@ -17,3 +39,4 @@ AVIN 正在學習 AI、研究 AI 工具、實測工作流，並把過程整理�
 - GitHub 是公開證據層
 - LinkedIn 是曝光層
 - 個人網站是入口層
+- llms.txt 是 AI 可讀導讀層
