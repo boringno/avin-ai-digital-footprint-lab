@@ -112,6 +112,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## 04-case-studies
 
+- [Case Study：Hermes Agent + Human Review Gate 設計](04-case-studies/hermes-human-review-gate-design.md)
 - [Threads 內容生產引擎 2.0 → AI 數位足跡引擎 3.0](04-case-studies/threads-engine-2-to-digital-footprint-3.md)
 
 ## 04-workflows
