@@ -10,11 +10,13 @@
     "check": "tsc --noEmit",
     "validate:context": "tsx scripts/validate-context.ts",
     "validate:google-sheets": "tsx scripts/validate-google-sheets.ts",
+    "validate:monitoring": "tsx scripts/validate-monitoring.ts",
     "validate:sample": "tsx scripts/validate-sample.ts",
     "validate:router": "tsx scripts/validate-router.ts",
     "validate:webhook-reliability": "tsx scripts/validate-webhook-reliability.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.63.0",
     "@supabase/supabase-js": "^2.110.0",
     "csv-parse": "^5.5.6",
     "googleapis": "^173.0.0",

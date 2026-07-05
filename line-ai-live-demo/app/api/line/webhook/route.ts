@@ -10,6 +10,7 @@ import {
   type ProcessedWebhookResult,
   type ReplySendResult,
 } from "@/lib/line-webhook";
+import { reportOperationalError } from "@/lib/monitoring";
 import { splitWebhookResultsByDuplicate } from "@/lib/webhook-dedupe";
 import { appendWebhookAuditLog } from "@/lib/webhook-audit-log";
 
@@ -75,6 +76,13 @@ export async function POST(request: Request) {
     );
     if (failedReplyResults.length > 0) {
       requestError = `LINE reply failed for ${failedReplyResults.length} event(s)`;
+      await reportOperationalError({
+        error: new Error(requestError),
+        extra: {
+          failed_reply_count: failedReplyResults.length,
+        },
+        source: "line_webhook_reply",
+      });
       status = 502;
       responseBody = {
         ok: false,
@@ -108,6 +116,15 @@ export async function POST(request: Request) {
       requestError = error instanceof Error ? error.message : "Unexpected webhook error";
       status = 500;
     }
+
+    await reportOperationalError({
+      error,
+      extra: {
+        event_count: eventCount,
+        status,
+      },
+      source: "line_webhook_route",
+    });
 
     responseBody = {
       ok: false,

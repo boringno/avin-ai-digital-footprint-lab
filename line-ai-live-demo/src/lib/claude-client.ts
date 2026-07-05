@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { reportOperationalError } from "@/lib/monitoring";
 
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -107,40 +108,51 @@ export async function generateClaudeReply(message: string, context?: ClaudeReply
     return null;
   }
 
-  const response = await fetch(CLAUDE_API_URL, {
-    method: "POST",
-    headers: {
-      "anthropic-version": ANTHROPIC_VERSION,
-      "content-type": "application/json",
-      "x-api-key": config.anthropicApiKey,
-    },
-    body: JSON.stringify({
-      max_tokens: config.anthropicMaxTokens,
-      messages: [
-        {
-          content: buildUserPrompt(message, context),
-          role: "user",
-        },
-      ],
-      model: config.anthropicModel,
-      system: buildSystemPrompt(),
-      temperature: 0.2,
-    }),
-  });
-
-  const rawText = await response.text();
-  if (!response.ok) {
-    throw new Error(`Claude API error ${response.status}: ${rawText}`);
-  }
-
-  let payload: ClaudeMessageResponse;
   try {
-    payload = JSON.parse(rawText) as ClaudeMessageResponse;
-  } catch {
-    throw new Error("Claude API returned invalid JSON");
-  }
+    const response = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: {
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+        "x-api-key": config.anthropicApiKey,
+      },
+      body: JSON.stringify({
+        max_tokens: config.anthropicMaxTokens,
+        messages: [
+          {
+            content: buildUserPrompt(message, context),
+            role: "user",
+          },
+        ],
+        model: config.anthropicModel,
+        system: buildSystemPrompt(),
+        temperature: 0.2,
+      }),
+    });
 
-  return extractTextFromClaudeResponse(payload);
+    const rawText = await response.text();
+    if (!response.ok) {
+      throw new Error(`Claude API error ${response.status}: ${rawText}`);
+    }
+
+    let payload: ClaudeMessageResponse;
+    try {
+      payload = JSON.parse(rawText) as ClaudeMessageResponse;
+    } catch {
+      throw new Error("Claude API returned invalid JSON");
+    }
+
+    return extractTextFromClaudeResponse(payload);
+  } catch (error) {
+    await reportOperationalError({
+      error,
+      extra: {
+        claude_model: config.anthropicModel,
+      },
+      source: "claude_api",
+    });
+    throw error;
+  }
 }
 
 export function getClaudeReplyInvocationCount() {

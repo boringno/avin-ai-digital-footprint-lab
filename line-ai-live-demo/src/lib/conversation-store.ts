@@ -1,4 +1,5 @@
 import { hasSupabaseServerConfig, getSupabaseServerClient } from "@/lib/supabase-server";
+import { reportOperationalError } from "@/lib/monitoring";
 
 const TABLE_NAME = "conversation_runtime_state";
 const RETENTION_DAYS = 180;
@@ -60,7 +61,15 @@ export async function loadConversationRuntimeState(userId: string) {
     .maybeSingle<ConversationRuntimeStateRow>();
 
   if (error) {
-    throw new Error(`Failed to load conversation runtime state: ${error.message}`);
+    const wrappedError = new Error(`Failed to load conversation runtime state: ${error.message}`);
+    await reportOperationalError({
+      error: wrappedError,
+      extra: {
+        operation: "load_conversation_runtime_state",
+      },
+      source: "supabase_conversation_store",
+    });
+    throw wrappedError;
   }
 
   return data ?? null;
@@ -82,13 +91,29 @@ export async function saveConversationRuntimeState(userId: string, patch: Conver
     const insertRow = buildInsertRow(userId, patchWithRetention);
     const { error } = await supabase.from(TABLE_NAME).insert(insertRow);
     if (error) {
-      throw new Error(`Failed to insert conversation runtime state: ${error.message}`);
+      const wrappedError = new Error(`Failed to insert conversation runtime state: ${error.message}`);
+      await reportOperationalError({
+        error: wrappedError,
+        extra: {
+          operation: "insert_conversation_runtime_state",
+        },
+        source: "supabase_conversation_store",
+      });
+      throw wrappedError;
     }
     return;
   }
 
   const { error } = await supabase.from(TABLE_NAME).update(patchWithRetention).eq("line_user_id", userId);
   if (error) {
-    throw new Error(`Failed to update conversation runtime state: ${error.message}`);
+    const wrappedError = new Error(`Failed to update conversation runtime state: ${error.message}`);
+    await reportOperationalError({
+      error: wrappedError,
+      extra: {
+        operation: "update_conversation_runtime_state",
+      },
+      source: "supabase_conversation_store",
+    });
+    throw wrappedError;
   }
 }

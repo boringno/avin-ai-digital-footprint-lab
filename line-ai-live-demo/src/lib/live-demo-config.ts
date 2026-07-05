@@ -14,6 +14,7 @@ export type RuntimeConfig = {
   googleSheetsSpreadsheetId: string;
   includePending: boolean;
   lineAccessToken: string;
+  lineAlertUserId: string;
   lineChannelSecret: string;
   lineReplyRetryCount: number;
   lineReplyTimeoutMs: number;
@@ -77,6 +78,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     googleSheetsSpreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "",
     includePending: parseBoolean(process.env.LIVE_DEMO_INCLUDE_PENDING, false),
     lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "",
+    lineAlertUserId: process.env.LIVE_DEMO_ALERT_LINE_USER_ID ?? "",
     lineChannelSecret: process.env.LINE_CHANNEL_SECRET ?? "",
     lineReplyRetryCount: parseInteger(process.env.LINE_REPLY_RETRY_COUNT, 1),
     lineReplyTimeoutMs: parseInteger(process.env.LINE_REPLY_TIMEOUT_MS, 8000),
