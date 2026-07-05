@@ -1,0 +1,31 @@
+{
+  "name": "line-ai-live-demo",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "validate:conversation-guard": "tsx scripts/validate-conversation-guard.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "check": "tsc --noEmit",
+    "validate:context": "tsx scripts/validate-context.ts",
+    "validate:google-sheets": "tsx scripts/validate-google-sheets.ts",
+    "validate:sample": "tsx scripts/validate-sample.ts",
+    "validate:router": "tsx scripts/validate-router.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "csv-parse": "^5.5.6",
+    "googleapis": "^173.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
