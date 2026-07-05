@@ -18,6 +18,7 @@ import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
+import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
 type WebhookProcessOptions = {
   includePending: boolean;
@@ -74,6 +75,7 @@ export type ProcessedWebhookResult = {
     replyText: string;
   };
   eventType: string;
+  messageId: string;
   messageText: string;
   replyPayload: null | {
     messages: LineReplyMessage[];
@@ -87,7 +89,9 @@ export type ProcessedWebhookResult = {
 };
 
 export type ReplySendResult = {
+  attempts: number;
   errorMessage?: string;
+  messageId: string;
   ok: boolean;
   replyToken: string;
   responseBody: string;
@@ -358,6 +362,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
         replyText: decision.replyText,
       },
       eventType: event.type ?? "",
+      messageId: event.message?.id ?? "",
       messageText: event.message?.text ?? "",
       replyPayload,
       replyToken,
@@ -375,13 +380,49 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
   };
 }
 
-export async function sendReplyPayloads(results: ProcessedWebhookResult[], accessToken: string) {
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendReplyRequest(replyPayload: NonNullable<ProcessedWebhookResult["replyPayload"]>, accessToken: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://api.line.me/v2/bot/message/reply", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(replyPayload),
+      signal: controller.signal,
+    });
+
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+type SendReplyPayloadOptions = {
+  retryCount: number;
+  timeoutMs: number;
+};
+
+export async function sendReplyPayloads(
+  results: ProcessedWebhookResult[],
+  accessToken: string,
+  options: SendReplyPayloadOptions,
+) {
   const sendResults: ReplySendResult[] = [];
 
   for (const result of results) {
     if (!result.replyPayload) {
       sendResults.push({
+        attempts: 0,
         ok: false,
+        messageId: result.messageId,
         replyToken: result.replyToken,
         responseBody: "No reply payload generated",
         status: 0,
@@ -390,35 +431,82 @@ export async function sendReplyPayloads(results: ProcessedWebhookResult[], acces
       continue;
     }
 
-    try {
-      const response = await fetch("https://api.line.me/v2/bot/message/reply", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(result.replyPayload),
-      });
+    const maxAttempts = Math.max(1, options.retryCount + 1);
+    let finalResult: ReplySendResult | null = null;
 
-      const body = await response.text();
-      sendResults.push({
-        ok: response.ok,
-        replyToken: result.replyToken,
-        responseBody: body,
-        status: response.status,
-        webhookEventId: result.webhookEventId,
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown LINE reply error";
-      sendResults.push({
-        errorMessage,
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await sendReplyRequest(result.replyPayload, accessToken, options.timeoutMs);
+        const body = await response.text();
+        finalResult = {
+          attempts: attempt,
+          ok: response.ok,
+          messageId: result.messageId,
+          replyToken: result.replyToken,
+          responseBody: body,
+          status: response.status,
+          webhookEventId: result.webhookEventId,
+        };
+
+        if (response.ok || attempt === maxAttempts) {
+          break;
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.name === "AbortError"
+              ? `LINE reply timed out after ${options.timeoutMs}ms`
+              : error.message
+            : "Unknown LINE reply error";
+
+        finalResult = {
+          attempts: attempt,
+          errorMessage,
+          ok: false,
+          messageId: result.messageId,
+          replyToken: result.replyToken,
+          responseBody: errorMessage,
+          status: 0,
+          webhookEventId: result.webhookEventId,
+        };
+
+        if (attempt === maxAttempts) {
+          break;
+        }
+      }
+
+      await sleep(250);
+    }
+
+    if (!finalResult) {
+      finalResult = {
+        attempts: maxAttempts,
+        errorMessage: "Unknown LINE reply failure",
         ok: false,
+        messageId: result.messageId,
         replyToken: result.replyToken,
-        responseBody: errorMessage,
+        responseBody: "Unknown LINE reply failure",
         status: 0,
+        webhookEventId: result.webhookEventId,
+      };
+    }
+
+    if (!finalResult.ok) {
+      await appendReplyDeadLetter({
+        attemptedAt: new Date().toISOString(),
+        attempts: finalResult.attempts,
+        decisionType: result.decision.decisionType,
+        errorMessage: finalResult.errorMessage,
+        matchedKey: result.decision.matchedKey,
+        messageId: result.messageId,
+        replyToken: result.replyToken,
+        responseBody: finalResult.responseBody,
+        status: finalResult.status,
         webhookEventId: result.webhookEventId,
       });
     }
+
+    sendResults.push(finalResult);
   }
 
   return sendResults;

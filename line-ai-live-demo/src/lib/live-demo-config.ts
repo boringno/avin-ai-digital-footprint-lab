@@ -15,6 +15,8 @@ export type RuntimeConfig = {
   includePending: boolean;
   lineAccessToken: string;
   lineChannelSecret: string;
+  lineReplyRetryCount: number;
+  lineReplyTimeoutMs: number;
   logDir: string;
   seedDir: string;
   sendReply: boolean;
@@ -76,6 +78,8 @@ export function getRuntimeConfig(): RuntimeConfig {
     includePending: parseBoolean(process.env.LIVE_DEMO_INCLUDE_PENDING, false),
     lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "",
     lineChannelSecret: process.env.LINE_CHANNEL_SECRET ?? "",
+    lineReplyRetryCount: parseInteger(process.env.LINE_REPLY_RETRY_COUNT, 1),
+    lineReplyTimeoutMs: parseInteger(process.env.LINE_REPLY_TIMEOUT_MS, 8000),
     logDir: process.env.LIVE_DEMO_LOG_DIR
       ? path.resolve(appRoot, process.env.LIVE_DEMO_LOG_DIR)
       : getDefaultLogDir(appRoot),
