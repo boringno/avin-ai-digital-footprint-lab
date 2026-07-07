@@ -1,4 +1,11 @@
-import { clinicConfig, findBranchByMessage, findTreatmentByMessage, listActiveBranches, normalizeClinicText } from "@/lib/clinic-config";
+import {
+  clinicConfig,
+  findAnyBranchByMessage,
+  findBranchByMessage,
+  findTreatmentByMessage,
+  listActiveBranches,
+  normalizeClinicText,
+} from "@/lib/clinic-config";
 import type { ConversationContext } from "@/lib/conversation-context";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
@@ -115,7 +122,7 @@ const SERIOUS_COMPLAINT_TERMS = clinicConfig.escalationPolicy.seriousComplaintTe
 const ALL_TREATMENT_TERMS = clinicConfig.treatmentList.flatMap((treatment) => [treatment.name, ...treatment.aliases]);
 
 function normalizeText(text: string) {
-  return text.replace(/\s+/g, "").trim().toLowerCase();
+  return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
 }
 
 function cloneContext(context: ConversationContext | undefined) {
@@ -154,6 +161,7 @@ function isHardBlockedQuestion(message: string) {
 
 export function shouldAllowAiFallbackReply(message: string) {
   return !(
+    Boolean(findAnyBranchByMessage(message)) ||
     isTreatmentLikeMessage(message) ||
     includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive]) ||
     includesAnyTerm(message, PRICE_TERMS) ||
@@ -725,7 +733,34 @@ function getBranchListReply() {
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
   const normalizedMessage = normalizeText(message);
   const resolvedBranch = resolveBranchFromContext(message, context);
+  const anyMatchedBranch = findAnyBranchByMessage(message);
   const branchName = resolvedBranch?.name;
+
+  if (anyMatchedBranch && !anyMatchedBranch.isActive) {
+    const activeBranchNames = listActiveBranches().map((branch) => branch.name).join("、");
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: `inactive_branch:${anyMatchedBranch.name}`,
+      matchedType: "config",
+      replyText: `目前可安排的館別只有 ${activeBranchNames}。${anyMatchedBranch.name} 目前沒有開放接待；如果您方便，我可以直接幫您整理離您較近的館別或預約需求。`,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (resolvedBranch) {
+    const branchAliasLengths = [resolvedBranch.name, resolvedBranch.city, ...resolvedBranch.aliases].map((alias) =>
+      normalizeText(alias).length,
+    );
+    const longestAliasLength = Math.max(...branchAliasLengths);
+
+    if (normalizedMessage.length <= longestAliasLength + 2) {
+      return {
+        decisionType: "clinic_info_reply",
+        matchedKey: `branch_focus:${resolvedBranch.name}`,
+        matchedType: "config",
+        replyText: `目前先以 ${resolvedBranch.name} 為您整理，您想了解地址、營業時間、交通方式，還是想直接預約呢？`,
+      } satisfies Omit<RouterDecision, "nextContext">;
+    }
+  }
 
   if (WHOLE_BRANCH_ONLY_TERMS.some((term) => normalizedMessage === normalizeText(term))) {
     if (!resolvedBranch) {

@@ -34,6 +34,20 @@ const TEST_CASES: TestCase[] = [
     replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
   },
   {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_focus:桃園館",
+    message: "桃園？",
+    replyIncludes: ["桃園館"],
+    replyExcludes: ["台北館", "台南館"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "inactive_branch:台北館",
+    message: "台北？",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "台北館 目前沒有開放接待"],
+    replyExcludes: ["我們目前在高雄、台中、台北有館別", "目前只有高雄館"],
+  },
+  {
     expectedDecisionType: "treatment_intro_reply",
     expectedMatchedKey: "treatment_carousel",
     message: "有哪些熱門療程",

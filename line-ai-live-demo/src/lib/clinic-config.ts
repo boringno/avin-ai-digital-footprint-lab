@@ -373,16 +373,25 @@ export const clinicConfig: ClinicConfig = {
 };
 
 export function normalizeClinicText(text: string) {
-  return text.replace(/\s+/g, "").trim().toLowerCase();
+  return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
 }
 
-export function findBranchByMessage(message: string) {
+function matchBranchByMessage(message: string, includeInactive: boolean) {
   const normalizedMessage = normalizeClinicText(message);
   return clinicConfig.branches.find((branch) =>
+    (includeInactive || branch.isActive) &&
     [branch.name, branch.city, ...branch.aliases].some((alias) =>
       normalizedMessage.includes(normalizeClinicText(alias)),
     ),
   );
+}
+
+export function findBranchByMessage(message: string) {
+  return matchBranchByMessage(message, false);
+}
+
+export function findAnyBranchByMessage(message: string) {
+  return matchBranchByMessage(message, true);
 }
 
 export function findTreatmentByMessage(message: string) {
