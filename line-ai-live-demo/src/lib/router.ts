@@ -439,6 +439,9 @@ function shouldKeepBookingMode(previousContext: ConversationContext | undefined,
 function hasBookingDraftProgress(message: string, context: ConversationContext) {
   const missingFields = getMissingBookingFields(context);
 
+  if (missingFields.includes("treatment") && Boolean(findTreatmentByMessage(message))) {
+    return true;
+  }
   if (missingFields.includes("branch") && Boolean(findBranchByMessage(message))) {
     return true;
   }
@@ -503,13 +506,24 @@ function buildBookingIntakeReply(context: ConversationContext) {
   };
 
   if (missingFields.length === 0) {
-    return `我先幫您整理預約需求：${knownFields.join("，")}。真人客服會在服務時間內協助確認實際可約時段。`;
+    return [
+      "我先幫您整理預約需求。",
+      knownFields.join("，") + "。",
+      "真人客服會在服務時間內協助確認實際可約時段。",
+    ].join("\n");
   }
 
-  const summaryPrefix = knownFields.length > 0 ? `${knownFields.join("，")}。` : "";
+  const summaryLine = knownFields.length > 0 ? `${knownFields.join("，")}。` : "";
   const missingSummary = missingFields.map((field) => missingPrompts[field]).join("、");
 
-  return `可以的，我先幫您整理預約需求。${summaryPrefix}再麻煩您提供 ${missingSummary}，我整理好後續資料，客服會在服務時間內接續協助確認。`;
+  return [
+    "可以的，我先幫您整理預約需求。",
+    summaryLine,
+    `再麻煩您提供 ${missingSummary}，`,
+    "我整理好後續資料，客服會在服務時間內接續協助確認。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildBookingModifyReply(context: ConversationContext) {
@@ -1058,6 +1072,7 @@ export async function routeCustomerMessage({
 }: RouteCustomerMessageInput): Promise<RouterDecision> {
   const trimmedMessage = message.trim();
   const currentTime = now ?? new Date();
+  const previousContext = cloneContext(conversationContext);
   const nextContext = cloneContext(conversationContext);
   nextContext.lastSeenAt = currentTime.toISOString();
 
@@ -1072,7 +1087,7 @@ export async function routeCustomerMessage({
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
 
   const hasBookingFollowup =
-    isBookingConversationIntent(nextContext.lastIntent) && hasBookingDraftProgress(trimmedMessage, nextContext);
+    isBookingConversationIntent(previousContext.lastIntent) && hasBookingDraftProgress(trimmedMessage, previousContext);
 
   if (isCapabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "capability_intro";

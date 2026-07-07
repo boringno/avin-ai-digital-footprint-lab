@@ -224,6 +224,22 @@ const TEST_CASES: TestCase[] = [
   {
     conversationContext: {
       bookingDraft: {
+        branch: "桃園館",
+        timeSlots: ["這週五 13:00", "下周二 16:00", "下下禮拜 15:00"],
+      },
+      introSent: false,
+      lastIntent: "booking_intake",
+      userId: "validate-booking-treatment-followup",
+    },
+    expectedDecisionType: "booking_intake_reply",
+    expectedMatchedKey: "booking_intake",
+    message: "肉毒",
+    replyIncludes: ["可以的，我先幫您整理預約需求。", "想了解的療程先記為 肉毒", "館別先記為 桃園館", "是否第一次到診", "聯絡電話"],
+    replyExcludes: ["肉毒通常會拿來討論"],
+  },
+  {
+    conversationContext: {
+      bookingDraft: {
         branch: "高雄館",
         name: "Ivan",
         phone: "0912345678",
