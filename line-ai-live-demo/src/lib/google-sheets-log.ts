@@ -3,6 +3,7 @@ import { google, sheets_v4 } from "googleapis";
 import { findBranchByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import type { ProcessedWebhookResult, ReplySendResult } from "@/lib/line-webhook";
+import { reportOperationalError } from "@/lib/monitoring";
 
 const RAW_MESSAGES_SHEET = "raw_messages";
 const HANDOFF_QUEUE_SHEET = "handoff_queue";
@@ -10,6 +11,11 @@ const CONVERSATION_SUMMARY_SHEET = "conversation_summary";
 const BOOKING_SIGNAL_SHEET = "booking_signal_analysis";
 const BOOKING_LEADS_SHEET = "booking_leads";
 const DAILY_AGGREGATE_SHEET = "daily_aggregate";
+const GOOGLE_SHEETS_RETRY_DELAYS_MS = [1000, 2000, 4000] as const;
+const BOOKING_LEADS_SYSTEM_SEGMENTS = [
+  { endColumn: "F", endIndex: 6, startColumn: "A", startIndex: 0 },
+  { endColumn: "P", endIndex: 16, startColumn: "H", startIndex: 7 },
+] as const;
 
 const SHEET_HEADERS: Record<string, string[]> = {
   [RAW_MESSAGES_SHEET]: [
@@ -145,6 +151,10 @@ type SyncInput = {
   results: ProcessedWebhookResult[];
 };
 
+type GoogleSheetsSyncWithRetryResult = GoogleSheetsSyncResult & {
+  attempts: number;
+};
+
 type ResultAnalytics = {
   becameBookingIntent: boolean;
   branchTag: string;
@@ -160,6 +170,10 @@ type ResultAnalytics = {
 
 function toBooleanText(value: boolean) {
   return value ? "true" : "false";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getConversationId(result: ProcessedWebhookResult) {
@@ -479,6 +493,25 @@ async function appendRows(sheets: sheets_v4.Sheets, spreadsheetId: string, sheet
   return rows.length;
 }
 
+async function updateRowSegment(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  sheetName: string,
+  rowIndex: number,
+  startColumn: string,
+  endColumn: string,
+  values: string[],
+) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!${startColumn}${rowIndex}:${endColumn}${rowIndex}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [values],
+    },
+  });
+}
+
 async function getExistingConversationTurnCounts(sheets: sheets_v4.Sheets, spreadsheetId: string) {
   const rows = await getSheetRows(sheets, spreadsheetId, `${RAW_MESSAGES_SHEET}!A2:S`);
   const turnCounts = new Map<string, number>();
@@ -775,7 +808,7 @@ async function upsertBookingLeads(
       input.loggedAt,
       String(analytics?.conversationTurnIndex ?? currentRow[4] ?? "1"),
       leadStage,
-      nextBookingStatus,
+      existingRowIndex ? existingBookingStatus : "",
       toBooleanText(needsHandoff(result)),
       result.bookingDraft.name || currentRow[8] || "",
       result.bookingDraft.phone || currentRow[9] || "",
@@ -785,7 +818,7 @@ async function upsertBookingLeads(
       formatFirstVisit(result.bookingDraft.isFirstVisit) || currentRow[13] || "",
       normalizeCellText(result.messageText),
       normalizeCellText(result.decision.replyText),
-      input.requestError ? `latest_request_error=${input.requestError}` : currentRow[16] || "",
+      existingRowIndex ? currentRow[16] || "" : "",
     ]);
   }
 
@@ -793,14 +826,17 @@ async function upsertBookingLeads(
   for (const [conversationId, rowValues] of latestByConversation.entries()) {
     const existingRowIndex = rowIndexByConversationId.get(conversationId);
     if (existingRowIndex) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${BOOKING_LEADS_SHEET}!A${existingRowIndex}:Q${existingRowIndex}`,
-        valueInputOption: "RAW",
-        requestBody: {
-          values: [rowValues],
-        },
-      });
+      for (const segment of BOOKING_LEADS_SYSTEM_SEGMENTS) {
+        await updateRowSegment(
+          sheets,
+          spreadsheetId,
+          BOOKING_LEADS_SHEET,
+          existingRowIndex,
+          segment.startColumn,
+          segment.endColumn,
+          rowValues.slice(segment.startIndex, segment.endIndex),
+        );
+      }
     } else {
       await sheets.spreadsheets.values.append({
         spreadsheetId,
@@ -1047,4 +1083,60 @@ export async function syncWebhookResultsToGoogleSheets(input: SyncInput): Promis
       updatedDailyAggregates: 0,
     };
   }
+}
+
+function buildGoogleSheetsFailureExtra(input: SyncInput, attempts: number, finalResult: GoogleSheetsSyncResult) {
+  return {
+    attempts,
+    conversation_ids: input.results.map((result) => result.sourceUserId || result.webhookEventId),
+    duplicate_event_ids: input.duplicateEventIds,
+    error_message: finalResult.errorMessage || "Unknown Google Sheets sync error",
+    logged_at: input.loggedAt,
+    payload_summary: input.results.map((result) => ({
+      conversation_status: result.conversationStatus,
+      decision_type: result.decision.decisionType,
+      line_user_id: result.sourceUserId,
+      matched_key: result.decision.matchedKey,
+      message_id: result.messageId,
+      webhook_event_id: result.webhookEventId,
+    })),
+  };
+}
+
+export async function syncWebhookResultsToGoogleSheetsWithRetry(
+  input: SyncInput,
+): Promise<GoogleSheetsSyncWithRetryResult> {
+  let finalResult = await syncWebhookResultsToGoogleSheets(input);
+  let attempts = 1;
+
+  if (finalResult.ok || finalResult.skipped) {
+    return {
+      ...finalResult,
+      attempts,
+    };
+  }
+
+  for (const delayMs of GOOGLE_SHEETS_RETRY_DELAYS_MS) {
+    await sleep(delayMs);
+    attempts += 1;
+    finalResult = await syncWebhookResultsToGoogleSheets(input);
+
+    if (finalResult.ok || finalResult.skipped) {
+      return {
+        ...finalResult,
+        attempts,
+      };
+    }
+  }
+
+  await reportOperationalError({
+    error: new Error(finalResult.errorMessage || "Google Sheets sync failed after retries"),
+    extra: buildGoogleSheetsFailureExtra(input, attempts, finalResult),
+    source: "google_sheets_sync",
+  });
+
+  return {
+    ...finalResult,
+    attempts,
+  };
 }

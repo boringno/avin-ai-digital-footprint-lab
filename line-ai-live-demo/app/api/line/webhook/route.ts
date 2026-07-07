@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
-import { syncWebhookResultsToGoogleSheets } from "@/lib/google-sheets-log";
+import { syncWebhookResultsToGoogleSheetsWithRetry } from "@/lib/google-sheets-log";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import {
   InvalidWebhookPayloadError,
@@ -24,6 +24,51 @@ class WebhookRequestError extends Error {
     this.name = "WebhookRequestError";
     this.status = status;
   }
+}
+
+function scheduleWebhookPostProcessing(input: {
+  duplicateEventIds: string[];
+  eventCount: number;
+  loggedAt: string;
+  rawBody: string;
+  replyResults: ReplySendResult[];
+  requestError?: string;
+  results: ProcessedWebhookResult[];
+  sendReply: boolean;
+  signatureVerified: boolean | "skipped";
+}) {
+  after(async () => {
+    const googleSheetsSync = await syncWebhookResultsToGoogleSheetsWithRetry({
+      duplicateEventIds: input.duplicateEventIds,
+      loggedAt: input.loggedAt,
+      replyResults: input.replyResults,
+      requestError: input.requestError,
+      results: input.results,
+    });
+
+    try {
+      await appendWebhookAuditLog({
+        eventCount: input.eventCount,
+        duplicateEventIds: input.duplicateEventIds,
+        googleSheetsSync,
+        loggedAt: input.loggedAt,
+        rawBody: input.rawBody,
+        replyResults: input.replyResults,
+        requestError: input.requestError,
+        results: input.results,
+        sendReply: input.sendReply,
+        signatureVerified: input.signatureVerified,
+      });
+    } catch (error) {
+      await reportOperationalError({
+        error,
+        extra: {
+          event_count: input.eventCount,
+        },
+        source: "line_webhook_audit_log",
+      });
+    }
+  });
 }
 
 export async function POST(request: Request) {
@@ -138,18 +183,9 @@ export async function POST(request: Request) {
     };
   }
 
-  const googleSheetsSync = await syncWebhookResultsToGoogleSheets({
+  scheduleWebhookPostProcessing({
     duplicateEventIds,
-    loggedAt,
-    replyResults,
-    requestError,
-    results,
-  });
-
-  await appendWebhookAuditLog({
     eventCount,
-    duplicateEventIds,
-    googleSheetsSync,
     loggedAt,
     rawBody,
     replyResults,
