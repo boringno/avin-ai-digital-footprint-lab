@@ -263,13 +263,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     conversationState = nextState;
   }
 
-  const canHumanizeReply =
-    !routedDecision.replyMessages &&
-    routedDecision.decisionType !== "fallback_reply" &&
-    routedDecision.decisionType !== "handoff_pending" &&
-    routedDecision.decisionType !== "treatment_intro_reply" &&
-    routedDecision.decisionType !== "medical_guidance_reply" &&
-    routedDecision.decisionType !== "pricing_auto_reply";
+  // Keep structured and factual replies deterministic. These flows often contain
+  // exact branch names, booking fields, or approved clinic copy that should not
+  // be rephrased by the LLM.
+  const canHumanizeReply = false;
 
   if (canHumanizeReply) {
     const humanizedReply = await maybeHumanizeReply({
