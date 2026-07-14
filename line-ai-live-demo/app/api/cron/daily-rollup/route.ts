@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await runDailyRollup();
+    const result = await runDailyRollup({ retentionApplyRequested: config.retentionSweepMode === "apply" });
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     await reportOperationalError({ alert: true, error, source: "daily_reporting_rollup" });

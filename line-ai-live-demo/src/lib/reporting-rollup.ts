@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 
 import { INTENT_CLASSIFIER_VERSION } from "@/lib/intent-classify";
+import { reportOperationalError } from "@/lib/monitoring";
 import { getPreviousTaipeiDate, getTaipeiDateRange, isTaipeiNight } from "@/lib/reporting-time";
+import { runRetentionSweep, type RetentionSweepResult } from "@/lib/retention-sweep";
 import { redactQuestionForAnalytics } from "@/lib/security-redaction";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
@@ -31,9 +33,12 @@ export type DailyRollupResult = {
   faqMissCandidates: number;
   metricDate: string;
   metrics: Record<string, unknown>;
+  retention: RetentionSweepResult;
 };
 
-export async function runDailyRollup(input: { dryRun?: boolean; metricDate?: string; tenantId?: string } = {}): Promise<DailyRollupResult> {
+export async function runDailyRollup(
+  input: { dryRun?: boolean; metricDate?: string; retentionApplyRequested?: boolean; tenantId?: string } = {},
+): Promise<DailyRollupResult> {
   if (!hasSupabaseServerConfig()) {
     throw new Error("Supabase server config is incomplete");
   }
@@ -65,7 +70,31 @@ export async function runDailyRollup(input: { dryRun?: boolean; metricDate?: str
     await rebuildMonthlyMetrics(metricDate, tenantId);
   }
 
-  return { dryRun: Boolean(input.dryRun), faqMissCandidates: faqMissCandidates.length, metricDate, metrics };
+  const retention = await runRetentionSweepStep(tenantId, input);
+
+  return { dryRun: Boolean(input.dryRun), faqMissCandidates: faqMissCandidates.length, metricDate, metrics, retention };
+}
+
+async function runRetentionSweepStep(
+  tenantId: string,
+  input: { dryRun?: boolean; retentionApplyRequested?: boolean },
+): Promise<RetentionSweepResult> {
+  const applyRequested = !input.dryRun && Boolean(input.retentionApplyRequested);
+  try {
+    return await runRetentionSweep({ applyRequested, tenantId });
+  } catch (error) {
+    await reportOperationalError({ alert: true, error, extra: { step: "retention_sweep", tenant_id: tenantId }, source: "daily_reporting_rollup" });
+    return {
+      mode: "dry_run",
+      tables: {
+        booking_leads_db: { appliedCount: 0, errorSummary: "retention sweep step failed", plannedCount: 0, scanned: 0 },
+        conversation_messages: { appliedCount: 0, errorSummary: "retention sweep step failed", plannedCount: 0, scanned: 0 },
+        conversation_runtime_state: { appliedCount: 0, errorSummary: "retention sweep step failed", plannedCount: 0, scanned: 0 },
+        conversations_display_name: { appliedCount: 0, errorSummary: "retention sweep step failed", plannedCount: 0, scanned: 0 },
+      },
+      tenantId,
+    };
+  }
 }
 
 async function loadRows<T>(

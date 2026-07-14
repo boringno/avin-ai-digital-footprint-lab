@@ -24,7 +24,9 @@
     "validate:operational-privacy": "tsx scripts/validate-operational-privacy.ts",
     "init:client-data": "tsx scripts/init-client-data.ts",
     "validate:webhook-reliability": "tsx scripts/validate-webhook-reliability.ts",
-    "validate:content-versioning": "tsx scripts/validate-content-versioning.ts"
+    "validate:content-versioning": "tsx scripts/validate-content-versioning.ts",
+    "validate:retention-sweep": "tsx scripts/validate-retention-sweep.ts",
+    "validate:admin-login-protection": "tsx scripts/validate-admin-login-protection.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

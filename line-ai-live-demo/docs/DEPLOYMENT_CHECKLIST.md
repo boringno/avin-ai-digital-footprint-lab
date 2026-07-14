@@ -10,6 +10,7 @@
 - [ ] `npm run validate:router`、`npm run validate:conversation-guard`、`npm run validate:intent-classify` 通過。
 - [ ] `npm run validate:admin-reports`、`npm run validate:reporting-privacy`、`npm run validate:reporting-time` 通過。
 - [ ] 若部署內容管理，`npm run validate:content-versioning` 通過，且 `20260715_content_versions_v1.sql` 已在客戶 Supabase SQL Editor 成功執行。
+- [ ] `npm run validate:retention-sweep` 通過，且 `20260716_retention_sweep_r1.sql` 已在客戶 Supabase SQL Editor 成功執行。
 - [ ] `npm run check` 與 `npm run build` 通過。
 
 ## Production 環境設定
@@ -22,6 +23,7 @@
 - [ ] `LIVE_DEMO_SKIP_SIGNATURE_VERIFY=false`。
 - [ ] `CRON_SECRET` 是每客戶獨立、至少 32 字元的隨機值。
 - [ ] `BOOTSTRAP_OWNER_EMAIL` 是客戶指定的後台 owner。
+- [ ] `RETENTION_SWEEP_MODE` 保持未設定（dry-run，只計數不刪除、不寫 audit_logs）。dry-run 先跑至少一週，owner 核可 dry-run 報數後，才可設為 `apply` 並 redeploy 開真刪。
 - [ ] 已 redeploy Production。
 - [ ] 以安全的部署環境執行 `npm run init:client-data -- --check-production-env`，只確認值是否存在，不輸出任何值。
 

@@ -27,6 +27,7 @@ export type RuntimeConfig = {
   openAiApiKey: string;
   openAiMaxTokens: number;
   openAiModel: string;
+  retentionSweepMode: string;
   sentryAuthToken: string;
   sentryDsn: string;
   sentryEnvironment: string;
@@ -112,6 +113,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiApiKey: process.env.OPENAI_API_KEY ?? "",
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
+    retentionSweepMode: process.env.RETENTION_SWEEP_MODE ?? "",
     sentryAuthToken: process.env.SENTRY_AUTH_TOKEN ?? "",
     sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN ?? "",
     sentryEnvironment: process.env.SENTRY_ENVIRONMENT ?? process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",
