@@ -23,7 +23,8 @@
     "validate:tenant-scope": "tsx scripts/validate-tenant-scope.ts",
     "validate:operational-privacy": "tsx scripts/validate-operational-privacy.ts",
     "init:client-data": "tsx scripts/init-client-data.ts",
-    "validate:webhook-reliability": "tsx scripts/validate-webhook-reliability.ts"
+    "validate:webhook-reliability": "tsx scripts/validate-webhook-reliability.ts",
+    "validate:content-versioning": "tsx scripts/validate-content-versioning.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

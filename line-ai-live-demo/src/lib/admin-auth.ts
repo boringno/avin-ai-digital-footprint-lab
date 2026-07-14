@@ -134,3 +134,15 @@ export function canViewOperationalDebug(role: StaffRole) {
 export function canReviewFaqMiss(role: StaffRole) {
   return role === "owner" || role === "manager";
 }
+
+export function canViewContent(role: StaffRole) {
+  return role === "owner" || role === "manager" || role === "maintainer";
+}
+
+export function canEditContent(role: StaffRole) {
+  return role === "owner" || role === "manager";
+}
+
+export function canReviewContent(role: StaffRole) {
+  return role === "owner" || role === "manager";
+}

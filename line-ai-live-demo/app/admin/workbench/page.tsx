@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { canReviewFaqMiss, canUseWorkbench, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { canReviewFaqMiss, canUseWorkbench, canViewContent, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
 import { staffRoleLabels } from "@/lib/admin-display-maps";
 import { loadWorkbenchData } from "@/lib/admin-workbench-data";
 
@@ -40,6 +40,7 @@ export default async function AdminWorkbenchPage() {
           <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
             {canViewReports(staff.role) ? <a href="/admin/reports" style={pillStyle}>月報</a> : null}
             {canReviewFaqMiss(staff.role) ? <a href="/admin/faq-candidates" style={pillStyle}>問題補強</a> : null}
+            {canViewContent(staff.role) ? <a href="/admin/content" style={pillStyle}>內容管理</a> : null}
             {staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer" ? (
               <a href="/admin/team" style={pillStyle}>
                 團隊管理

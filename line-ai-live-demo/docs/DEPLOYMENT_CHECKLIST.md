@@ -9,6 +9,7 @@
 - [ ] `npm run init:client-data` 通過。
 - [ ] `npm run validate:router`、`npm run validate:conversation-guard`、`npm run validate:intent-classify` 通過。
 - [ ] `npm run validate:admin-reports`、`npm run validate:reporting-privacy`、`npm run validate:reporting-time` 通過。
+- [ ] 若部署內容管理，`npm run validate:content-versioning` 通過，且 `20260715_content_versions_v1.sql` 已在客戶 Supabase SQL Editor 成功執行。
 - [ ] `npm run check` 與 `npm run build` 通過。
 
 ## Production 環境設定
@@ -36,6 +37,7 @@
 - [ ] owner、manager、agent、analyst、maintainer 各實測一次頁面與 API 權限。
 - [ ] analyst 只能看報表，報表沒有電話、原始訊息或完整 LINE user ID。
 - [ ] 手機 375px 實測 reports、workbench、leads；鍵盤彈出時 sticky 操作列不遮住輸入或送出按鈕。
+- [ ] owner／manager 建立 FAQ 與活動草稿、送審、發布、停用各走一次；確認舊版本仍保留在歷史中，且內容發布尚未切換 LINE runtime。
 
 ## 報表、通知與交接
 
