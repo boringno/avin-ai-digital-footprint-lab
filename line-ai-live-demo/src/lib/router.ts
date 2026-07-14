@@ -1,21 +1,27 @@
-import {
+﻿import {
   clinicConfig,
+  findConcernByMessage,
   findAnyBranchByMessage,
   findBranchByMessage,
+  findTreatmentByKey,
   findTreatmentByMessage,
   listActiveBranches,
   normalizeClinicText,
+  type BranchConfig,
 } from "@/lib/clinic-config";
 import type { ConversationContext } from "@/lib/conversation-context";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { getHumanSupportStatus } from "@/lib/human-support";
+import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
   isTreatmentCarouselRequest,
+  type LineImageMessage,
   type LineReplyMessage,
+  type LineTextMessage,
 } from "@/lib/treatment-carousel";
 
 type DecisionType =
@@ -56,6 +62,7 @@ export type RouterDecision = {
   nextContext: ConversationContext;
   replyMessages?: LineReplyMessage[];
   replyText: string;
+  suppressAiFooter?: boolean;
 };
 
 const CAPABILITY_TERMS = [
@@ -76,16 +83,17 @@ const ADDRESS_TERMS = ["地址", "在哪", "位置", "哪裡", "怎麼去"];
 const APPOINTMENT_TERMS = ["預約", "想約", "安排時間", "安排療程", "諮詢", "可約", "想做"];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
 const BOOKING_MODIFY_TERMS = ["改約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
-const BRANCH_LIST_TERMS = ["幾間", "館別", "管別", "分館", "分店", "據點", "門市"];
+const BRANCH_LIST_TERMS = ["幾間", "館別", "管別", "分館", "分店", "據點", "門市", "各館", "全部館別", "所有館別"];
 const BUSINESS_HOUR_TERMS = ["營業時間", "營業到幾點", "幾點關", "幾點開", "上班時間", "服務時間"];
 const FIRST_VISIT_TERMS = ["第一次", "初診", "要準備什麼", "需要準備什麼"];
 const NEAREST_BRANCH_TERMS = ["最近", "哪一間", "哪間", "離我最近"];
 const PAYMENT_TERMS = ["付款", "刷卡", "轉帳", "匯款", "現金", "信用卡"];
 const PHONE_TERMS = ["電話", "聯絡方式", "專線"];
 const PRICE_TERMS = ["價格", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價"];
+const PROMOTION_INTENT_TERMS = clinicConfig.pricePolicy.inquiryAliases;
+const PRICE_OR_PROMOTION_TERMS = Array.from(new Set([...PRICE_TERMS, ...PROMOTION_INTENT_TERMS]));
 const SUPPORT_HOURS_TERMS = ["真人客服", "客服時間", "客服幾點", "有人嗎"];
 const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
-const WHOLE_BRANCH_ONLY_TERMS = ["高雄館", "台中館", "桃園館", "林口館", "台南館", "台北館", "高雄", "台中", "桃園", "林口", "台南", "台北"];
 const EFFECT_GUARANTEE_TERMS = ["保證有效", "一定有效", "保證改善", "一定會改善", "保證有感", "一定有感", "效果保證"];
 const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
 const TREATMENT_DISCOVERY_TERMS = [
@@ -108,6 +116,15 @@ const TREATMENT_DISCOVERY_TERMS = [
 
 const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
 const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表"];
+const BRANCH_QUERY_HINT_TERMS = ["館", "分館", "分店", "據點", "門市", "地址", "在哪", "哪裡", "最近", "有嗎", "有沒有"];
+const STRUCTURED_BOOKING_FIELD_LABELS = {
+  branch: ["館別", "管別"],
+  isFirstVisit: ["初診", "複診", "是否第一次到診", "第一次到診"],
+  name: ["稱呼", "姓名"],
+  phone: ["電話", "手機", "聯絡電話"],
+  timeSlots: ["時段", "時間", "方便時段"],
+  treatment: ["療程", "項目"],
+} satisfies Record<BookingFieldKey, string[]>;
 
 const PREGNANCY_TERMS = {
   breastfeeding: ["哺乳", "餵奶", "親餵", "母乳"],
@@ -125,18 +142,32 @@ function normalizeText(text: string) {
   return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
 }
 
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripPromotionDateWording(text: string) {
+  return text
+    .replace(/依館別、日期與現場評估調整/g, "依館別與現場評估調整")
+    .replace(/依館別、檔期與現場評估調整/g, "依館別與現場評估調整")
+    .replace(/依館別與日期調整/g, "依館別調整")
+    .replace(/依檔期調整/g, "依現場狀況調整")
+    .trim();
+}
+
 function cloneContext(context: ConversationContext | undefined) {
   const baseContext = context ?? createEmptyConversationContext("");
+  const bookingDraft = baseContext.bookingDraft ?? createEmptyConversationContext("").bookingDraft;
   return {
     ...baseContext,
     bookingDraft: {
-      branch: baseContext.bookingDraft.branch,
-      isFirstVisit: baseContext.bookingDraft.isFirstVisit,
-      name: baseContext.bookingDraft.name,
-      phone: baseContext.bookingDraft.phone,
-      requestedTimeSlots: [...(baseContext.bookingDraft.requestedTimeSlots ?? [])],
-      timeSlots: [...baseContext.bookingDraft.timeSlots],
-      treatment: baseContext.bookingDraft.treatment,
+      branch: bookingDraft.branch,
+      isFirstVisit: bookingDraft.isFirstVisit,
+      name: bookingDraft.name,
+      phone: bookingDraft.phone,
+      requestedTimeSlots: Array.isArray(bookingDraft.requestedTimeSlots) ? [...bookingDraft.requestedTimeSlots] : [],
+      timeSlots: Array.isArray(bookingDraft.timeSlots) ? [...bookingDraft.timeSlots] : [],
+      treatment: bookingDraft.treatment,
     },
   };
 }
@@ -162,9 +193,10 @@ function isHardBlockedQuestion(message: string) {
 export function shouldAllowAiFallbackReply(message: string) {
   return !(
     Boolean(findAnyBranchByMessage(message)) ||
+    Boolean(extractUnknownBranchLikeTerm(message)) ||
     isTreatmentLikeMessage(message) ||
     includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive]) ||
-    includesAnyTerm(message, PRICE_TERMS) ||
+    includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS) ||
     includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
     isHardBlockedQuestion(message)
   );
@@ -227,18 +259,208 @@ function campaignIsActive(campaign: PricingCampaign, today: Date) {
   return startDate.getTime() <= today.getTime() && today.getTime() <= endDate.getTime();
 }
 
-function matchPricing(message: string, pricingCampaigns: PricingCampaign[], includePending: boolean, today: Date) {
-  const normalizedMessage = normalizeText(message);
+function isPromotionIntent(message: string) {
+  return includesAnyTerm(message, PROMOTION_INTENT_TERMS);
+}
 
+function getActivePricingCampaigns(pricingCampaigns: PricingCampaign[], includePending: boolean, today: Date) {
   return pricingCampaigns
     .filter((campaign) => isSeedRowUsable(campaign.is_active, campaign.approval_status, includePending))
-    .filter((campaign) => campaignIsActive(campaign, today))
-    .sort((left, right) => right.treatment_name.length - left.treatment_name.length)
-    .find((campaign) => {
-      const treatment = normalizeText(campaign.treatment_name);
-      const campaignName = normalizeText(campaign.campaign_name);
-      return normalizedMessage.includes(treatment) || (campaignName && normalizedMessage.includes(campaignName));
+    .filter((campaign) => campaignIsActive(campaign, today));
+}
+
+function findTreatmentConfigByName(name: string) {
+  const normalizedTarget = normalizeText(name);
+  return (
+    clinicConfig.treatmentList.find(
+      (treatment) =>
+        normalizeText(treatment.name) === normalizedTarget ||
+        treatment.aliases.some((alias) => normalizeText(alias) === normalizedTarget),
+    ) ?? null
+  );
+}
+
+function getCampaignSearchTerms(campaign: PricingCampaign) {
+  const terms = new Set<string>();
+  terms.add(campaign.treatment_name);
+  terms.add(campaign.campaign_name);
+  terms.add(campaign.branch_scope);
+  campaign.campaign_aliases
+    .split(/[|,，、\n]/)
+    .map((alias) => alias.trim())
+    .filter(Boolean)
+    .forEach((alias) => terms.add(alias));
+
+  const matchedTreatment = findTreatmentConfigByName(campaign.treatment_name);
+  if (matchedTreatment) {
+    terms.add(matchedTreatment.name);
+    matchedTreatment.aliases.forEach((alias) => terms.add(alias));
+  }
+
+  return [...terms].map((term) => normalizeText(term)).filter(Boolean);
+}
+
+function getCampaignImageUrls(campaign: PricingCampaign) {
+  return campaign.asset_urls
+    .split(/[|,，、\n]/)
+    .map((url) => url.trim())
+    .filter(Boolean);
+}
+
+function getPromotionOverviewGroups(pricingCampaigns: PricingCampaign[]) {
+  const groups = new Map<
+    string,
+    {
+      campaignName: string;
+      imageUrls: string[];
+      priceTexts: string[];
+      treatmentNames: string[];
+    }
+  >();
+
+  for (const campaign of pricingCampaigns) {
+    const imageUrls = getCampaignImageUrls(campaign);
+    const groupKey = `${campaign.campaign_name}__${imageUrls.join("|")}`;
+    const existing = groups.get(groupKey);
+
+    if (existing) {
+      if (!existing.treatmentNames.includes(campaign.treatment_name)) {
+        existing.treatmentNames.push(campaign.treatment_name);
+      }
+      if (campaign.price_text.trim() && !existing.priceTexts.includes(campaign.price_text.trim())) {
+        existing.priceTexts.push(campaign.price_text.trim());
+      }
+      continue;
+    }
+
+    groups.set(groupKey, {
+      campaignName: campaign.campaign_name,
+      imageUrls,
+      priceTexts: campaign.price_text.trim() ? [campaign.price_text.trim()] : [],
+      treatmentNames: [campaign.treatment_name],
     });
+  }
+
+  return [...groups.values()];
+}
+
+function getContextualPricingTerms(message: string, context: ConversationContext) {
+  const terms = new Set<string>();
+  const matchedTreatment = findTreatmentByMessage(message);
+  if (matchedTreatment) {
+    terms.add(matchedTreatment.name);
+    matchedTreatment.aliases.forEach((alias) => terms.add(alias));
+  }
+
+  const bookingTreatments = context.bookingDraft.treatment
+    ?.split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean) ?? [];
+
+  [
+    ...bookingTreatments,
+    context.lastReferencedTreatment,
+  ]
+    .filter((term): term is string => Boolean(term))
+    .forEach((term) => {
+      terms.add(term);
+      const matchedConfig = findTreatmentConfigByName(term);
+      if (matchedConfig) {
+        terms.add(matchedConfig.name);
+        matchedConfig.aliases.forEach((alias) => terms.add(alias));
+      }
+    });
+
+  return [...terms].map((term) => normalizeText(term)).filter(Boolean);
+}
+
+function matchPricing(
+  message: string,
+  context: ConversationContext,
+  pricingCampaigns: PricingCampaign[],
+  includePending: boolean,
+  today: Date,
+) {
+  const normalizedMessage = normalizeText(message);
+  const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
+
+  const explicitMatch = [...activeCampaigns]
+    .sort((left, right) => right.treatment_name.length - left.treatment_name.length)
+    .find((campaign) => getCampaignSearchTerms(campaign).some((term) => normalizedMessage.includes(term)));
+
+  if (explicitMatch) {
+    return explicitMatch;
+  }
+
+  const contextualTerms = getContextualPricingTerms(message, context);
+  if (contextualTerms.length === 0) {
+    return null;
+  }
+
+  return activeCampaigns.find((campaign) =>
+    getCampaignSearchTerms(campaign).some((term) => contextualTerms.includes(term)),
+  );
+}
+
+function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
+  const lines = getPromotionOverviewGroups(pricingCampaigns)
+    .slice(0, 5)
+    .map((group) => {
+      const treatmentLabel =
+        group.treatmentNames.length <= 4
+          ? group.treatmentNames.join("、")
+          : `${group.treatmentNames.slice(0, 4).join("、")}等`;
+      const priceLabel = group.priceTexts.length > 0 ? `｜${group.priceTexts.join(" / ")}` : "";
+      return `${treatmentLabel}${priceLabel}`;
+    });
+
+  return `${clinicConfig.pricePolicy.overviewPrefix}\n${lines.join("\n")}\n實際活動內容仍會依館別與現場評估調整；如果您想確認適用條件，我也可以再幫您整理給真人客服確認。`;
+}
+
+function buildPromotionImageMessages(pricingCampaigns: PricingCampaign[]) {
+  const imageUrls = [...new Set(pricingCampaigns.flatMap(getCampaignImageUrls))].slice(0, 3);
+  return imageUrls.map((url) => ({
+    type: "image",
+    originalContentUrl: url,
+    previewImageUrl: url,
+  } satisfies LineImageMessage));
+}
+
+function buildPromotionReplyMessages(pricingCampaigns: PricingCampaign[], replyText: string) {
+  const imageMessages = buildPromotionImageMessages(pricingCampaigns);
+  if (imageMessages.length === 0) {
+    return undefined;
+  }
+
+  return [
+    ...imageMessages,
+    {
+      type: "text",
+      text: replyText,
+    } satisfies LineTextMessage,
+  ] satisfies LineReplyMessage[];
+}
+
+function buildPromotionCarouselCards(pricingCampaigns: PricingCampaign[]) {
+  const cards: PromotionCarouselCard[] = [];
+
+  for (const campaign of pricingCampaigns) {
+      const primaryImageUrl = getCampaignImageUrls(campaign)[0];
+      if (!primaryImageUrl) {
+        continue;
+      }
+
+      cards.push({
+        ctaLabel: "我想了解",
+        ctaText: `我想了解${campaign.treatment_name}活動`,
+        imageUrl: primaryImageUrl,
+        priceText: campaign.price_text.trim() || undefined,
+        subtitle: campaign.campaign_name.trim() || undefined,
+        title: campaign.treatment_name.trim(),
+      });
+  }
+
+  return cards;
 }
 
 function findBranchByName(name: string | undefined) {
@@ -285,12 +507,36 @@ function extractPhone(message: string) {
   return match?.[0];
 }
 
+function hasStructuredFieldLabel(message: string, labels: string[]) {
+  const pattern = new RegExp(`(?:^|\\n)\\s*(?:${labels.map(escapeRegExp).join("|")})\\s*[：:]`, "u");
+  return pattern.test(message);
+}
+
+function extractStructuredFieldValue(message: string, labels: string[]) {
+  const pattern = new RegExp(`(?:^|\\n)\\s*(?:${labels.map(escapeRegExp).join("|")})\\s*[：:]\\s*([^\\n]+)`, "u");
+  const value = message.match(pattern)?.[1]?.trim();
+  return value || undefined;
+}
+
+function hasStructuredBookingForm(message: string) {
+  const matchedFieldCount = (Object.keys(STRUCTURED_BOOKING_FIELD_LABELS) as BookingFieldKey[]).filter((key) =>
+    hasStructuredFieldLabel(message, STRUCTURED_BOOKING_FIELD_LABELS[key]),
+  ).length;
+
+  return matchedFieldCount >= 2;
+}
+
 function extractName(message: string) {
   const match = message.match(/(?:我叫|我是|稱呼我|名字是)\s*([^\s，。,！!？?\n]+)/);
   return match?.[1];
 }
 
 function extractBookingName(message: string) {
+  const structuredValue = extractStructuredFieldValue(message, STRUCTURED_BOOKING_FIELD_LABELS.name);
+  if (structuredValue) {
+    return structuredValue;
+  }
+
   const explicitMatch = message.match(/(?:我叫|名字是|稱呼我)\s*([A-Za-z0-9\u4e00-\u9fff_-]{1,20})/);
   if (explicitMatch?.[1]) {
     return explicitMatch[1];
@@ -311,6 +557,16 @@ function extractBookingName(message: string) {
 }
 
 function extractFirstVisit(message: string) {
+  const structuredValue = extractStructuredFieldValue(message, STRUCTURED_BOOKING_FIELD_LABELS.isFirstVisit);
+  if (structuredValue) {
+    if (includesAnyTerm(structuredValue, ["初診", "第一次", "首次", "是", "yes"])) {
+      return "yes" as const;
+    }
+    if (includesAnyTerm(structuredValue, ["複診", "回診", "不是第一次", "否", "no"])) {
+      return "no" as const;
+    }
+  }
+
   if (includesAnyTerm(message, ["初診", "第一次", "首次"])) {
     return "yes" as const;
   }
@@ -344,6 +600,21 @@ function extractTimeSlots(message: string) {
 function extractBookingProgressTimeSlots(message: string) {
   const timePattern =
     /(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}:\d{2}|上午|下午|晚上|中午|今天|明天|後天|週[一二三四五六日天]|星期[一二三四五六日天])/;
+  const structuredValue = extractStructuredFieldValue(message, STRUCTURED_BOOKING_FIELD_LABELS.timeSlots);
+
+  if (structuredValue) {
+    const structuredChunks = structuredValue
+      .split(/[，,、；;]+/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
+    const structuredTimeLikeChunks = structuredChunks.filter((chunk) => timePattern.test(chunk));
+
+    if (structuredTimeLikeChunks.length > 0) {
+      return Array.from(new Set(structuredTimeLikeChunks)).slice(0, 3);
+    }
+
+    return [structuredValue];
+  }
 
   const chunks = message
     .split(/[，,、；;\n]+/)
@@ -352,15 +623,28 @@ function extractBookingProgressTimeSlots(message: string) {
 
   const timeLikeChunks = chunks.filter((chunk) => timePattern.test(chunk));
 
-  if (timeLikeChunks.length >= 2) {
+  if (timeLikeChunks.length > 0) {
     return Array.from(new Set(timeLikeChunks)).slice(0, 3);
   }
 
-  if (timePattern.test(message)) {
-    return [message.trim()];
+  return [];
+}
+
+function mergeBookingTreatment(existingTreatment: string | undefined, nextTreatment: string) {
+  if (!existingTreatment) {
+    return nextTreatment;
   }
 
-  return [];
+  const items = existingTreatment
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (items.includes(nextTreatment)) {
+    return existingTreatment;
+  }
+
+  return [...items, nextTreatment].join("、");
 }
 
 function updateBookingDraft(message: string, context: ConversationContext) {
@@ -375,7 +659,7 @@ function updateBookingDraft(message: string, context: ConversationContext) {
     context.bookingDraft.branch = branch.name;
   }
   if (treatment) {
-    context.bookingDraft.treatment = treatment.name;
+    context.bookingDraft.treatment = mergeBookingTreatment(context.bookingDraft.treatment, treatment.name);
   }
   if (phone) {
     context.bookingDraft.phone = phone;
@@ -437,15 +721,70 @@ function getMissingBookingFields(context: ConversationContext): BookingFieldKey[
 }
 
 function shouldKeepBookingMode(previousContext: ConversationContext | undefined, nextContext: ConversationContext) {
+  return isBookingConversationIntent(previousContext?.lastIntent) && hasBookingDraftValue(nextContext);
+}
+
+function isFreeTextBookingInfoQuestion(message: string) {
   return (
-    isBookingConversationIntent(previousContext?.lastIntent) &&
-    hasBookingDraftValue(nextContext) &&
-    getMissingBookingFields(nextContext).length > 0
+    includesAnyTerm(message, ADDRESS_TERMS) ||
+    includesAnyTerm(message, TREATMENT_DISCOVERY_TERMS) ||
+    includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS)
   );
+}
+
+function hasFreeTextBookingSignal(message: string) {
+  if (isFreeTextBookingInfoQuestion(message)) {
+    return false;
+  }
+
+  return Boolean(findBranchByMessage(message)) || Boolean(findTreatmentByMessage(message));
+}
+
+function isBookingFollowupMessage(message: string, previousContext: ConversationContext | undefined) {
+  if (!previousContext) {
+    return false;
+  }
+
+  const structuredBookingForm = hasStructuredBookingForm(message);
+  if (isBookingConversationIntent(previousContext.lastIntent)) {
+    return hasBookingDraftProgress(message, previousContext) || structuredBookingForm;
+  }
+
+  if (previousContext.lastIntent === "human_request") {
+    return (
+      structuredBookingForm ||
+      (hasBookingDraftValue(previousContext) && hasBookingDraftProgress(message, previousContext)) ||
+      hasFreeTextBookingSignal(message)
+    );
+  }
+
+  return false;
 }
 
 function hasBookingDraftProgress(message: string, context: ConversationContext) {
   const missingFields = getMissingBookingFields(context);
+  const normalizedMessage = normalizeText(message);
+  const matchedTreatment = findTreatmentByMessage(message);
+  const looksLikeTreatmentQuestion =
+    Boolean(matchedTreatment) &&
+    /[？?]/.test(message) &&
+    ["什麼", "有嗎", "牌子", "品牌", "介紹", "功效", "效果", "適合"].some((term) => normalizedMessage.includes(normalizeText(term)));
+
+  if (isBookingModifyRequest(message) || isBookingCancelRequest(message)) {
+    return true;
+  }
+
+  if (hasBookingDraftValue(context)) {
+    if (Boolean(findBranchByMessage(message))) {
+      return true;
+    }
+    if (Boolean(matchedTreatment) && !looksLikeTreatmentQuestion) {
+      return true;
+    }
+    if (extractBookingProgressTimeSlots(message).length > 0) {
+      return true;
+    }
+  }
 
   if (missingFields.includes("treatment") && Boolean(findTreatmentByMessage(message))) {
     return true;
@@ -552,6 +891,90 @@ function buildBookingCancelReply(context: ConversationContext) {
   }
 
   return `可以的，我先幫您整理取消預約需求。${knownFields.join("，")}。客服會在服務時間內接續協助確認取消；如果您其實是想改約，也可以直接告訴我新的館別或時段。`;
+}
+
+function pickReplyVariant(seed: string, variants: string[]) {
+  if (variants.length === 0) {
+    return "";
+  }
+
+  return variants[Math.abs(seed.length) % variants.length];
+}
+
+function buildBookingIntakeReplyV2(context: ConversationContext) {
+  const knownFields = formatBookingKnownFields(context);
+  const missingFields = getMissingBookingFields(context);
+  const missingPrompts: Record<BookingFieldKey, string> = {
+    branch: "想去的館別",
+    isFirstVisit: "是否第一次到診",
+    name: "稱呼",
+    phone: "聯絡電話",
+    timeSlots: "3 個方便時段",
+    treatment: "想了解的療程",
+  };
+  const seed = `${knownFields.join("|")}|${missingFields.join("|")}`;
+
+  if (missingFields.length === 0) {
+    return [
+      pickReplyVariant(seed, [
+        "可以的，我先幫您把預約資料整理好了。",
+        "收到，我先幫您把預約需求整合如下。",
+        "好，我這邊先幫您把預約重點整理完成。",
+      ]),
+      `${knownFields.join("，")}。`,
+      "客服會在服務時間內接續協助確認可安排的時段。",
+    ].join("\n");
+  }
+
+  return [
+    pickReplyVariant(seed, [
+      "可以的，我先幫您整理預約需求。",
+      "收到，我先幫您把預約重點記下來。",
+      "好，我先幫您整理目前的預約資訊。",
+      "沒問題，我先幫您把預約內容統整一下。",
+    ]),
+    knownFields.length > 0 ? `${knownFields.join("，")}。` : "",
+    `再麻煩您補一下 ${missingFields.map((field) => missingPrompts[field]).join("、")}。`,
+    pickReplyVariant(seed + "closing", [
+      "您補齊後，我就能一起整理給客服接續確認。",
+      "補齊這些資訊後，客服就能更快接續安排。",
+      "整理完整後，客服會在服務時間內接續協助您。",
+    ]),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildBookingModifyReplyV2(context: ConversationContext) {
+  const knownFields = formatBookingKnownFields(context);
+
+  if (knownFields.length === 0) {
+    return "可以的，我先幫您整理改約需求。再麻煩您告訴我想調整的館別、時段或療程，我會一起整理給客服確認。";
+  }
+
+  return [
+    pickReplyVariant(knownFields.join("|"), [
+      "可以的，我先幫您整理改約需求。",
+      "收到，我先幫您把修改後的預約內容記下來。",
+      "好，我先幫您更新目前的預約資訊。",
+    ]),
+    `${knownFields.join("，")}。`,
+    "如果館別、時段或想了解的療程還要再調整，也可以直接一起告訴我，客服會在服務時間內接續確認。",
+  ].join("\n");
+}
+
+function buildBookingCancelReplyV2(context: ConversationContext) {
+  const knownFields = formatBookingKnownFields(context);
+
+  if (knownFields.length === 0) {
+    return "可以的，我先幫您整理取消預約需求。您可以直接告訴我原本的館別、時段或想取消的療程，我會一起整理給客服確認。";
+  }
+
+  return [
+    "可以的，我先幫您整理取消預約需求。",
+    `${knownFields.join("，")}。`,
+    "客服會在服務時間內接續協助確認取消；如果您其實是想改約，也可以直接告訴我新的館別或時段。",
+  ].join("\n");
 }
 
 function isBookingCancelRequest(message: string) {
@@ -672,6 +1095,12 @@ function resolveBranchFromContext(message: string, context: ConversationContext)
   return null;
 }
 
+function isBareBranchReference(normalizedMessage: string, branch: BranchConfig) {
+  return [branch.name, branch.city, ...branch.aliases].some(
+    (term) => normalizedMessage === normalizeText(term),
+  );
+}
+
 function formatBranchAddress(branchName: string) {
   const branch = findBranchByName(branchName);
   if (!branch) {
@@ -720,6 +1149,52 @@ function formatTransport(branchName: string) {
   return `${branch.name}交通可先參考：${branch.transportationNote}`;
 }
 
+function buildBranchFocusReply(branchName: string) {
+  const branch = findBranchByName(branchName);
+  if (!branch) {
+    return getBranchListReply();
+  }
+
+  const addressText = branch.hasCompleteAddress
+    ? `${branch.name}地址是${branch.address}。`
+    : `目前系統裡 ${branch.name} 的完整地址資料還沒有補齊。`;
+
+  return `${addressText}\n如果您想一起看營業時間、交通方式，或直接安排預約，也可以直接告訴我。`;
+}
+
+function formatConcernRecommendedTreatments(concernKey: string) {
+  const concern = clinicConfig.concernList.find((item) => item.key === concernKey);
+  if (!concern) {
+    return [];
+  }
+
+  return concern.recommendedTreatmentKeys
+    .map((treatmentKey) => findTreatmentByKey(treatmentKey))
+    .filter((treatment): treatment is NonNullable<typeof treatment> => Boolean(treatment))
+    .map((treatment) => treatment.name);
+}
+
+function getConcernReply(message: string) {
+  const matchedConcern = findConcernByMessage(message);
+  if (!matchedConcern) {
+    return null;
+  }
+
+  const matchedKeyword =
+    matchedConcern.keywords.find((keyword) => normalizeText(message).includes(normalizeText(keyword))) ?? matchedConcern.keywords[0];
+  const recommendedTreatments = formatConcernRecommendedTreatments(matchedConcern.key);
+  if (recommendedTreatments.length === 0) {
+    return null;
+  }
+
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `concern:${matchedConcern.key}`,
+    matchedType: "guided_reply",
+    replyText: `如果您想改善 ${matchedKeyword}，${matchedConcern.summary} 以院內目前可先評估的方向，常見會先從 ${recommendedTreatments.join("、")} 這幾類療程討論；實際仍要依您的部位條件、膚況與醫師評估為主。`,
+  } satisfies Omit<RouterDecision, "nextContext">;
+}
+
 function getBranchListReply() {
   const branches = listActiveBranches();
   const branchNames = branches.map((branch) => branch.name).join("、");
@@ -730,11 +1205,42 @@ function getBranchListReply() {
   return `目前可先為您整理的館別有 \n${branchNames}。\n${summary}`;
 }
 
+function extractUnknownBranchLikeTerm(message: string) {
+  if (findAnyBranchByMessage(message)) {
+    return null;
+  }
+
+  if (includesAnyTerm(message, BRANCH_LIST_TERMS)) {
+    return null;
+  }
+
+  if (!includesAnyTerm(message, BRANCH_QUERY_HINT_TERMS)) {
+    return null;
+  }
+
+  const explicitBranchCandidate = message.match(/([\u4e00-\u9fffA-Za-z0-9]{1,8}館)/u)?.[1];
+  if (explicitBranchCandidate) {
+    return explicitBranchCandidate;
+  }
+
+  const addressLocationCandidate = message.match(/([\u4e00-\u9fffA-Za-z0-9]{1,8})地址/u)?.[1];
+  if (addressLocationCandidate && !["各館", "全部", "所有", "你們", "我們"].includes(addressLocationCandidate)) {
+    return addressLocationCandidate;
+  }
+
+  return null;
+}
+
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
+  if (hasStructuredBookingForm(message)) {
+    return null;
+  }
+
   const normalizedMessage = normalizeText(message);
   const resolvedBranch = resolveBranchFromContext(message, context);
   const anyMatchedBranch = findAnyBranchByMessage(message);
   const branchName = resolvedBranch?.name;
+  const unknownBranchLikeTerm = extractUnknownBranchLikeTerm(message);
 
   if (anyMatchedBranch && !anyMatchedBranch.isActive) {
     const activeBranchNames = listActiveBranches().map((branch) => branch.name).join("、");
@@ -746,32 +1252,34 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (resolvedBranch) {
-    const branchAliasLengths = [resolvedBranch.name, resolvedBranch.city, ...resolvedBranch.aliases].map((alias) =>
-      normalizeText(alias).length,
-    );
-    const longestAliasLength = Math.max(...branchAliasLengths);
-
-    if (normalizedMessage.length <= longestAliasLength + 2) {
-      return {
-        decisionType: "clinic_info_reply",
-        matchedKey: `branch_focus:${resolvedBranch.name}`,
-        matchedType: "config",
-        replyText: `目前先以 ${resolvedBranch.name} 為您整理，您想了解地址、營業時間、交通方式，還是想直接預約呢？`,
-      } satisfies Omit<RouterDecision, "nextContext">;
-    }
+  if (unknownBranchLikeTerm) {
+    const activeBranchNames = listActiveBranches().map((branch) => branch.name).join("、");
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: `unsupported_branch_query:${unknownBranchLikeTerm}`,
+      matchedType: "guided_reply",
+      replyText: `目前可安排的館別只有 ${activeBranchNames}。${unknownBranchLikeTerm} 目前沒有開放接待；如果您願意，我可以先幫您整理較近館別、地址資訊或預約需求。`,
+    } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (WHOLE_BRANCH_ONLY_TERMS.some((term) => normalizedMessage === normalizeText(term))) {
-    if (!resolvedBranch) {
-      return null;
-    }
-
+  if (resolvedBranch && isBareBranchReference(normalizedMessage, resolvedBranch)) {
     return {
       decisionType: "clinic_info_reply",
       matchedKey: `branch_focus:${resolvedBranch.name}`,
       matchedType: "config",
-      replyText: `目前先以 ${resolvedBranch.name} 為您整理，您想了解地址、營業時間、交通方式，還是想直接預約呢？`,
+      replyText: buildBranchFocusReply(resolvedBranch.name),
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (
+    includesAnyTerm(message, ADDRESS_TERMS) &&
+    (includesAnyTerm(message, BRANCH_LIST_TERMS) || includesAnyTerm(message, ["全部", "所有", "各館"]))
+  ) {
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: "branch_list",
+      matchedType: "config",
+      replyText: getBranchListReply(),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -820,7 +1328,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, NEAREST_BRANCH_TERMS)) {
+  if (includesAnyTerm(message, NEAREST_BRANCH_TERMS) && !isPromotionIntent(message)) {
     if (resolvedBranch) {
       const addressReply = resolvedBranch.hasCompleteAddress
         ? `地址是${resolvedBranch.address}。`
@@ -852,6 +1360,15 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
       matchedKey: `branch_address:${branchName}`,
       matchedType: "config",
       replyText,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (includesAnyTerm(message, ADDRESS_TERMS) && !branchName) {
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: "branch_list",
+      matchedType: "guided_reply",
+      replyText: `${getBranchListReply()}\n如果您想比對哪一館離您比較近，也可以直接告訴我您所在的城市。`,
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -893,6 +1410,22 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
       matchedType: "config",
       replyText: `${formatBranchAddress(resolvedBranch.name)}如果您之後要問最近分館、地址或預約，我都可以直接接著幫您整理。`,
     } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (resolvedBranch) {
+    const branchAliasLengths = [resolvedBranch.name, resolvedBranch.city, ...resolvedBranch.aliases].map((alias) =>
+      normalizeText(alias).length,
+    );
+    const longestAliasLength = Math.max(...branchAliasLengths);
+
+    if (normalizedMessage.length <= longestAliasLength + 2) {
+      return {
+        decisionType: "clinic_info_reply",
+        matchedKey: `branch_focus:${resolvedBranch.name}`,
+        matchedType: "config",
+        replyText: buildBranchFocusReply(resolvedBranch.name),
+      } satisfies Omit<RouterDecision, "nextContext">;
+    }
   }
 
   return null;
@@ -962,11 +1495,16 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
 }
 
 function buildPricingReply(campaign: PricingCampaign) {
-  const fallbackSuffix = campaign.fallback_message.trim()
-    ? ` ${campaign.fallback_message.trim()}`
+  const normalizedFallbackMessage = stripPromotionDateWording(campaign.fallback_message.trim());
+  const fallbackSuffix = normalizedFallbackMessage
+    ? ` ${normalizedFallbackMessage}`
     : "";
+  const campaignLabel = `${campaign.treatment_name} 目前可參考`;
+  const detailLabel = campaign.price_text.trim()
+    ? `：${campaign.price_text}。`
+    : "；詳細內容可直接參考活動圖片。";
 
-  return `${campaign.treatment_name} 目前可參考「${campaign.campaign_name}」：${campaign.price_text}。${fallbackSuffix}`.trim();
+  return `${campaignLabel}${detailLabel}${fallbackSuffix}`.trim();
 }
 
 function getPricingReply(
@@ -976,24 +1514,41 @@ function getPricingReply(
   includePending: boolean,
   today: Date,
 ) {
-  if (!includesAnyTerm(message, PRICE_TERMS)) {
+  if (!includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS)) {
     return null;
   }
 
-  const matchedPricing = matchPricing(message, pricingCampaigns, includePending, today);
+  const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
+  const matchedPricing = matchPricing(message, context, pricingCampaigns, includePending, today);
   if (matchedPricing) {
+    const replyText = buildPricingReply(matchedPricing);
     return {
       decisionType: "pricing_auto_reply",
       matchedKey: matchedPricing.treatment_name,
       matchedType: "pricing_campaign",
       nextContext: context,
-      replyText: buildPricingReply(matchedPricing),
+      replyMessages: buildPromotionReplyMessages([matchedPricing], replyText),
+      replyText,
+    } satisfies RouterDecision;
+  }
+
+  if (isPromotionIntent(message) && activeCampaigns.length > 0) {
+    const replyText = buildPromotionOverviewReply(activeCampaigns);
+    const carouselCards = buildPromotionCarouselCards(activeCampaigns);
+    return {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "promotion_overview",
+      matchedType: "pricing_campaign",
+      nextContext: context,
+      replyMessages: carouselCards.length > 0 ? [buildPromotionCarouselMessage(carouselCards, "目前活動優惠")] : undefined,
+      replyText,
+      suppressAiFooter: carouselCards.length > 0,
     } satisfies RouterDecision;
   }
 
   return {
     decisionType: "pricing_auto_reply",
-    matchedKey: "pricing_followup",
+    matchedKey: isPromotionIntent(message) ? "promotion_followup" : "pricing_followup",
     matchedType: "guided_reply",
     nextContext: context,
     replyText: clinicConfig.pricePolicy.fallbackSummary,
@@ -1009,7 +1564,7 @@ function buildHandoffPendingReply(extraGuidance: string | null, now: Date) {
   return extraGuidance ? `${extraGuidance} ${baseReply}` : baseReply;
 }
 
-function getHandoffPendingReply(message: string, now: Date) {
+function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountLookup = false) {
   if (includesAnyTerm(message, POST_PROCEDURE_TERMS)) {
     return {
       decisionType: "handoff_pending",
@@ -1064,26 +1619,13 @@ function getHandoffPendingReply(message: string, now: Date) {
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, CUSTOMER_ACCOUNT_TERMS)) {
+  if (!skipCustomerAccountLookup && includesAnyTerm(message, CUSTOMER_ACCOUNT_TERMS)) {
     return {
       decisionType: "handoff_pending",
       matchedKey: "customer_account_lookup",
       matchedType: "handoff_rule",
       replyText: buildHandoffPendingReply("這類涉及個人資料或既有紀錄查詢，我先幫您記下需求。", now),
     } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  return null;
-}
-
-function getPreTreatmentSafetyReply(message: string, now: Date) {
-  if (
-    includesAnyTerm(message, POST_PROCEDURE_TERMS) ||
-    includesAnyTerm(message, PERSONALIZED_CONSULT_TERMS) ||
-    includesAnyTerm(message, EFFECT_GUARANTEE_TERMS) ||
-    includesAnyTerm(message, PRICE_COMMITMENT_TERMS)
-  ) {
-    return getHandoffPendingReply(message, now);
   }
 
   return null;
@@ -1118,11 +1660,20 @@ export async function routeCustomerMessage({
     };
   }
 
+  // Safety and human handoff rules always take precedence over booking follow-up.
+  const hasStructuredBookingMessage = hasStructuredBookingForm(trimmedMessage);
+  const priorityHandoffReply = getHandoffPendingReply(trimmedMessage, currentTime, hasStructuredBookingMessage);
+  if (priorityHandoffReply) {
+    nextContext.lastIntent = priorityHandoffReply.matchedKey;
+    return {
+      ...priorityHandoffReply,
+      nextContext,
+    };
+  }
+
   const seedData = await loadSeedData();
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
-
-  const hasBookingFollowup =
-    isBookingConversationIntent(previousContext.lastIntent) && hasBookingDraftProgress(trimmedMessage, previousContext);
+  const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext);
 
   if (isCapabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "capability_intro";
@@ -1132,20 +1683,24 @@ export async function routeCustomerMessage({
     };
   }
 
-  if (hasBookingFollowup) {
+  if (hasBookingFollowup || hasStructuredBookingMessage) {
     updateBookingDraft(trimmedMessage, nextContext);
     const bookingIntent: "booking_intake" | "booking_modify_request" | "booking_cancel_request" =
-      isBookingConversationIntent(conversationContext?.lastIntent)
-        ? (conversationContext?.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
-        : "booking_intake";
+      isBookingCancelRequest(trimmedMessage)
+        ? "booking_cancel_request"
+        : isBookingModifyRequest(trimmedMessage)
+          ? "booking_modify_request"
+          : isBookingConversationIntent(conversationContext?.lastIntent)
+            ? (conversationContext?.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
+            : "booking_intake";
     nextContext.lastIntent = bookingIntent;
 
     const replyText =
       bookingIntent === "booking_modify_request"
-        ? buildBookingModifyReply(nextContext)
+        ? buildBookingModifyReplyV2(nextContext)
         : bookingIntent === "booking_cancel_request"
-          ? buildBookingCancelReply(nextContext)
-          : buildBookingIntakeReply(nextContext);
+          ? buildBookingCancelReplyV2(nextContext)
+          : buildBookingIntakeReplyV2(nextContext);
 
     return {
       decisionType: "booking_intake_reply",
@@ -1164,7 +1719,7 @@ export async function routeCustomerMessage({
       matchedKey: "booking_cancel_request",
       matchedType: "guided_reply",
       nextContext,
-      replyText: buildBookingCancelReply(nextContext),
+      replyText: buildBookingCancelReplyV2(nextContext),
     };
   }
 
@@ -1176,7 +1731,7 @@ export async function routeCustomerMessage({
       matchedKey: "booking_modify_request",
       matchedType: "guided_reply",
       nextContext,
-      replyText: buildBookingModifyReply(nextContext),
+      replyText: buildBookingModifyReplyV2(nextContext),
     };
   }
 
@@ -1232,11 +1787,13 @@ export async function routeCustomerMessage({
     };
   }
 
-  const preTreatmentSafetyReply = getPreTreatmentSafetyReply(trimmedMessage, currentTime);
-  if (preTreatmentSafetyReply) {
-    nextContext.lastIntent = preTreatmentSafetyReply.matchedKey;
+  const concernReply = getConcernReply(trimmedMessage);
+  if (concernReply) {
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+      ? "booking_intake"
+      : concernReply.matchedKey;
     return {
-      ...preTreatmentSafetyReply,
+      ...concernReply,
       nextContext,
     };
   }
@@ -1264,7 +1821,7 @@ export async function routeCustomerMessage({
       matchedKey: "booking_intake",
       matchedType: "guided_reply",
       nextContext,
-      replyText: buildBookingIntakeReply(nextContext),
+      replyText: buildBookingIntakeReplyV2(nextContext),
     };
   }
 
@@ -1302,15 +1859,6 @@ export async function routeCustomerMessage({
       matchedType: "faq_entry",
       nextContext,
       replyText: matchedFaq.answer_text,
-    };
-  }
-
-  const handoffPendingReply = getHandoffPendingReply(trimmedMessage, currentTime);
-  if (handoffPendingReply) {
-    nextContext.lastIntent = handoffPendingReply.matchedKey;
-    return {
-      ...handoffPendingReply,
-      nextContext,
     };
   }
 

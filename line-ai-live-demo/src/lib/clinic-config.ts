@@ -29,6 +29,13 @@ export type TreatmentConfig = {
   name: string;
 };
 
+export type ConcernConfig = {
+  key: string;
+  keywords: string[];
+  recommendedTreatmentKeys: string[];
+  summary: string;
+};
+
 export type ClinicConfig = {
   aiName: string;
   appointmentPolicy: {
@@ -60,7 +67,10 @@ export type ClinicConfig = {
   };
   pricePolicy: {
     fallbackSummary: string;
+    inquiryAliases: string[];
+    overviewPrefix: string;
   };
+  concernList: ConcernConfig[];
   treatmentList: TreatmentConfig[];
 };
 
@@ -180,7 +190,7 @@ export const clinicConfig: ClinicConfig = {
     humanRequestTerms: ["真人", "真人客服", "人工", "專人", "客服本人"],
     personalizedConsultTerms: ["我適合", "我適不適合", "推薦哪個", "哪個適合我", "幫我判斷", "效果一定", "保證效果"],
     postProcedureAlertTerms: ["很腫", "發炎", "疼痛", "發燒", "流膿", "冒血", "紅腫", "不舒服", "異常", "副作用"],
-    seriousComplaintTerms: ["客訴", "投訴", "申訴", "不爽", "生氣", "退費", "求償"],
+    seriousComplaintTerms: ["客訴", "投訴", "申訴", "不爽", "生氣", "退費", "退款", "求償", "服務很差"],
   },
   firstVisitPreparation: {
     summary:
@@ -200,7 +210,67 @@ export const clinicConfig: ClinicConfig = {
   pricePolicy: {
     fallbackSummary:
       "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
+    inquiryAliases: [
+      "活動",
+      "活動療程",
+      "現在活動",
+      "現在活動有哪些",
+      "目前活動",
+      "目前活動有哪些",
+      "近期活動",
+      "最近活動",
+      "優惠",
+      "優惠有哪些",
+      "有什麼優惠",
+      "優惠方案",
+      "優惠活動",
+      "方案",
+      "體驗價",
+      "折扣",
+      "現在有什麼優惠",
+      "最近有什麼活動",
+      "現在有什麼活動",
+    ],
+    overviewPrefix: "目前可先參考的近期活動如下",
   },
+  concernList: [
+    {
+      key: "jawline_looseness",
+      keywords: ["嘴邊肉", "下顎線", "輪廓線", "雙下巴", "下巴線條", "臉部鬆弛"],
+      recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
+      summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
+    },
+    {
+      key: "nasolabial_fold",
+      keywords: ["法令紋", "木偶紋", "嘴角紋"],
+      recommendedTreatmentKeys: ["filler", "counterclockwise", "tenthermage"],
+      summary: "這類通常會先看是凹陷支撐不足、整體鬆弛，還是兩者一起影響。",
+    },
+    {
+      key: "pores_texture",
+      keywords: ["毛孔", "膚質", "粗糙", "粉刺", "出油", "皮膚粗糙"],
+      recommendedTreatmentKeys: ["pico", "hydrafacial", "hydrafacial_elite", "skin_booster", "fisbo"],
+      summary: "這類通常會先往膚質整理、清潔保養與整體細緻度方向評估。",
+    },
+    {
+      key: "acne_scar",
+      keywords: ["痘疤", "痘坑", "凹疤"],
+      recommendedTreatmentKeys: ["pico", "pico_honeycomb_tip", "skin_booster"],
+      summary: "這類通常會先看痘疤深淺、膚況穩定度與是否需要搭配分段治療。",
+    },
+    {
+      key: "dullness_brightening",
+      keywords: ["暗沉", "提亮", "膚色不均", "氣色差", "美白"],
+      recommendedTreatmentKeys: ["pico", "skin_booster", "hydrafacial", "hydrafacial_elite"],
+      summary: "這類通常會先往亮白、膚色均勻與整體膚況整理方向評估。",
+    },
+    {
+      key: "general_looseness",
+      keywords: ["鬆弛", "下垂", "拉提", "緊實", "老化"],
+      recommendedTreatmentKeys: ["tenthermage", "ultherapy", "qplus", "onda_pro"],
+      summary: "這類通常會先往拉提、緊實與輪廓支撐方向評估。",
+    },
+  ],
   treatmentList: withApprovedContent([
     {
       aliases: ["onda", "onda pro", "超微波"],
@@ -412,6 +482,18 @@ export function findTreatmentByMessage(message: string) {
       }
       return right.treatment.name.length - left.treatment.name.length;
     })[0]?.treatment;
+}
+
+export function findTreatmentByKey(key: string) {
+  return clinicConfig.treatmentList.find((treatment) => treatment.key === key) ?? null;
+}
+
+export function findConcernByMessage(message: string) {
+  const normalizedMessage = normalizeClinicText(message);
+
+  return clinicConfig.concernList.find((concern) =>
+    concern.keywords.some((keyword) => normalizedMessage.includes(normalizeClinicText(keyword))),
+  );
 }
 
 export function listActiveBranches() {

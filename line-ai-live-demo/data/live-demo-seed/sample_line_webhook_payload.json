@@ -1,0 +1,62 @@
+{
+  "destination": "Udeadbeefdeadbeefdeadbeefdeadbeef",
+  "events": [
+    {
+      "type": "message",
+      "message": {
+        "type": "text",
+        "id": "100001",
+        "text": "請問付款方式有哪幾種呢"
+      },
+      "webhookEventId": "evt-001",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "timestamp": 1780000000000,
+      "source": {
+        "type": "user",
+        "userId": "U11111111111111111111111111111111"
+      },
+      "replyToken": "reply-token-001",
+      "mode": "active"
+    },
+    {
+      "type": "message",
+      "message": {
+        "type": "text",
+        "id": "100002",
+        "text": "請問onda pro價格"
+      },
+      "webhookEventId": "evt-002",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "timestamp": 1780000001000,
+      "source": {
+        "type": "user",
+        "userId": "U22222222222222222222222222222222"
+      },
+      "replyToken": "reply-token-002",
+      "mode": "active"
+    },
+    {
+      "type": "message",
+      "message": {
+        "type": "text",
+        "id": "100003",
+        "text": "我懷孕可以做嗎"
+      },
+      "webhookEventId": "evt-003",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "timestamp": 1780000002000,
+      "source": {
+        "type": "user",
+        "userId": "U33333333333333333333333333333333"
+      },
+      "replyToken": "reply-token-003",
+      "mode": "active"
+    }
+  ]
+}

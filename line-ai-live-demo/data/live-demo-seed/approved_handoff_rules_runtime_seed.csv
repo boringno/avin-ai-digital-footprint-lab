@@ -1,0 +1,7 @@
+"id","trigger_type","pattern","handoff_message","priority","is_active","approval_status","reviewed_at","notes"
+"","dynamic_pricing","價格|價位|費用|報價|優惠|活動價|體驗價","目前活動內容可能依日期或館別調整，實際價格與方案請由真人客服為您確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"
+"","booking_or_schedule","預約|時段|時間|可以預約|安排|明天|下星期","預約時段與館別安排需要由真人客服協助確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"
+"","doctor_schedule","醫師|門診","醫師門診與現場安排需要由真人客服協助確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"
+"","personalized_consult","適合|推薦|哪個療程|評估|我的狀況","此問題涉及個人狀況與療程評估，建議由診所真人客服協助您進一步確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"
+"","medical_risk","副作用|風險|術後|腫|失敗|感染|懷孕|蟹足腫","此問題涉及個人狀況與專業評估，建議由診所真人客服協助您進一步確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"
+"","customer_account_lookup","課程|課卡|會員|剩餘堂數|轉館","此問題需要查詢您的客戶資料與館別資訊，請由真人客服協助確認，我先幫您轉交。","high","true","approved","2026-06-22","generic_runtime_rule"

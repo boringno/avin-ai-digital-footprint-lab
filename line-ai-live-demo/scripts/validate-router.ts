@@ -5,6 +5,7 @@ type TestCase = {
   conversationContext?: ConversationContext;
   expectedDecisionType: string;
   expectedMatchedKey: string;
+  expectedReplyMessageCount?: number;
   message: string;
   replyExcludes?: string[];
   replyIncludes?: string[];
@@ -35,6 +36,13 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_list",
+    message: "方便給我各館的地址嗎？我參考看看我哪裡比較近",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "高雄市左營區博愛三路101號"],
+    replyExcludes: ["台北", "新竹"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
     expectedMatchedKey: "branch_focus:桃園館",
     message: "桃園？",
     replyIncludes: ["桃園館"],
@@ -42,10 +50,44 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_address:桃園館",
+    message: "桃園地址？",
+    replyIncludes: ["桃園館地址是桃園市中正路1247號2樓。"],
+    replyExcludes: ["您想了解地址、營業時間、交通方式"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_focus:桃園館",
+    message: "桃園館！？",
+    replyIncludes: ["桃園館地址是桃園市中正路1247號2樓。", "營業時間", "交通方式"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
     expectedMatchedKey: "inactive_branch:台北館",
     message: "台北？",
     replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "台北館 目前沒有開放接待"],
     replyExcludes: ["我們目前在高雄、台中、台北有館別", "目前只有高雄館"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "unsupported_branch_query:新竹館",
+    message: "新竹館呢？",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "新竹館 目前沒有開放接待"],
+    replyExcludes: ["新竹館我們有的", "台北館離桃園也滿近的"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "unsupported_branch_query:信義館",
+    message: "信義館有嗎？",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "信義館 目前沒有開放接待"],
+    replyExcludes: ["南京館", "板橋館", "新竹館我們有的"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "unsupported_branch_query:新竹",
+    message: "新竹地址",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館", "新竹 目前沒有開放接待"],
+    replyExcludes: ["順風診所新竹館", "新竹市東區"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
@@ -87,9 +129,45 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "pricing_auto_reply",
-    expectedMatchedKey: "pricing_followup",
+    expectedMatchedKey: "皮秒雷射+日式光纖",
+    expectedReplyMessageCount: 2,
     message: "皮秒多少錢？",
-    replyIncludes: ["價格會依療程部位", "客服上班後再協助確認目前方案"],
+    replyIncludes: ["皮秒雷射+日式光纖", "2499"],
+  },
+  {
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "現在活動有哪些",
+    replyIncludes: ["目前可先參考的近期活動如下", "VIO私密除毛", "皮秒雷射+日式光纖", "十蓓電波200發"],
+  },
+  {
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "優惠有哪些",
+    replyIncludes: ["目前可先參考的近期活動如下", "VIO私密除毛", "皮秒雷射+日式光纖", "十蓓電波200發"],
+  },
+  {
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "最近有什麼活動",
+    replyIncludes: ["目前可先參考的近期活動如下", "VIO私密除毛", "皮秒雷射+日式光纖", "十蓓電波200發"],
+  },
+  {
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "十蓓電波200發",
+    expectedReplyMessageCount: 2,
+    message: "十蓓電波活動是什麼",
+    replyIncludes: ["十蓓電波", "9999"],
+  },
+  {
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "鳳凰電波活動是什麼",
+    replyIncludes: ["目前可先參考的近期活動如下", "十蓓電波200發"],
   },
   {
     expectedDecisionType: "handoff_pending",
@@ -248,7 +326,7 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "booking_intake_reply",
     expectedMatchedKey: "booking_intake",
     message: "肉毒",
-    replyIncludes: ["可以的，我先幫您整理預約需求。", "想了解的療程先記為 肉毒", "館別先記為 桃園館", "是否第一次到診", "聯絡電話"],
+    replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 桃園館", "這週五 13:00", "聯絡電話"],
     replyExcludes: ["肉毒通常會拿來討論"],
   },
   {
@@ -285,7 +363,7 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "booking_intake_reply",
     expectedMatchedKey: "booking_modify_request",
     message: "改成 7/8 下午或 7/9 晚上",
-    replyIncludes: ["改約需求", "7/8 下午或 7/9 晚上"],
+    replyIncludes: ["更新目前的預約資訊", "希望改成的時段先記為 改成 7/8 下午或 7/9 晚上"],
   },
   {
     conversationContext: {
@@ -305,7 +383,202 @@ const TEST_CASES: TestCase[] = [
     message: "我要取消預約",
     replyIncludes: ["取消預約需求", "高雄館", "Ivan"],
   },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_focus:桃園館",
+    message: "桃園館呢",
+    replyIncludes: ["桃園館", "1247"],
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "concern:jawline_looseness",
+    message: "我想改善嘴邊肉",
+    replyIncludes: ["嘴邊肉", "ONDA", "醫師評估"],
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "concern:pores_texture",
+    message: "我想改善膚質",
+    replyIncludes: ["膚質", "醫師評估"],
+  },
+  {
+    conversationContext: {
+      bookingDraft: {
+        branch: "桃園館",
+        isFirstVisit: "yes",
+        name: "Ivan",
+        phone: "0912345678",
+        timeSlots: ["這週五 13:00", "下周二 16:00", "下下禮拜 15:00"],
+        treatment: "肉毒",
+      },
+      introSent: false,
+      lastIntent: "booking_intake",
+      userId: "validate-booking-branch-change",
+    },
+    expectedDecisionType: "booking_intake_reply",
+    expectedMatchedKey: "booking_intake",
+    message: "我想改高雄館",
+    replyIncludes: ["高雄館", "0912345678"],
+  },
+  {
+    conversationContext: {
+      bookingDraft: {
+        branch: "高雄館",
+        isFirstVisit: "yes",
+        name: "Ivan",
+        phone: "0912345678",
+        timeSlots: ["7/5 13:30"],
+        treatment: "十蓓電波",
+      },
+      introSent: false,
+      lastIntent: "booking_intake",
+      userId: "validate-booking-add-treatment",
+    },
+    expectedDecisionType: "booking_intake_reply",
+    expectedMatchedKey: "booking_intake",
+    message: "那我還想打肉毒小臉",
+    replyIncludes: ["十蓓電波", "肉毒"],
+  },
 ];
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+      treatment: "肉毒",
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-booking-form",
+  },
+  expectedDecisionType: "booking_intake_reply",
+  expectedMatchedKey: "booking_intake",
+  message: "療程：肉毒\n館別：高雄館\n時段：07/18 15:00\n稱呼：IVAN\n電話：0981234567",
+  replyExcludes: ["目前可先為您整理的館別有"],
+  replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 高雄館", "稱呼先記為 IVAN", "聯絡電話先記為 0981234567"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-freetext-booking",
+  },
+  expectedDecisionType: "booking_intake_reply",
+  expectedMatchedKey: "booking_intake",
+  message: "我想打肉毒，高雄館，IVAN，0981234567，07/18下午3点",
+  replyExcludes: ["目前可先為您整理的館別有", "肉毒通常會拿來討論"],
+  replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 高雄館", "聯絡電話先記為 0981234567"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-freetext-partial",
+  },
+  expectedDecisionType: "booking_intake_reply",
+  expectedMatchedKey: "booking_intake",
+  message: "高雄館 肉毒",
+  replyExcludes: ["目前可先為您整理的館別有", "肉毒通常會拿來討論"],
+  replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 高雄館", "聯絡電話"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-price-question",
+  },
+  expectedDecisionType: "pricing_auto_reply",
+  expectedMatchedKey: "肉毒除皺",
+  message: "肉毒多少錢？",
+  replyExcludes: ["聯絡電話", "想了解的療程先記為"],
+  replyIncludes: ["肉毒除皺", "999"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-complaint-priority",
+  },
+  expectedDecisionType: "handoff_pending",
+  expectedMatchedKey: "serious_complaint",
+  message: "肉毒服務很差我要求退款",
+  replyExcludes: ["方便時段", "聯絡電話"],
+  replyIncludes: ["真人客服"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-safety-priority",
+  },
+  expectedDecisionType: "handoff_pending",
+  expectedMatchedKey: "human_request",
+  message: "肉毒出了問題，我要真人客服",
+  replyExcludes: ["方便時段", "聯絡電話"],
+  replyIncludes: ["真人客服"],
+});
+
+TEST_CASES.push({
+  expectedDecisionType: "clinic_info_reply",
+  expectedMatchedKey: "branch_address:高雄館",
+  message: "高雄館在哪",
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-freetext-clinic-info",
+  },
+  expectedDecisionType: "clinic_info_reply",
+  expectedMatchedKey: "branch_address:高雄館",
+  message: "高雄館在哪",
+});
+
+TEST_CASES.push({
+  expectedDecisionType: "treatment_intro_reply",
+  expectedMatchedKey: "treatment_intro:botox",
+  message: "肉毒是什麼",
+  replyExcludes: ["聯絡電話先記為"],
+});
+
+TEST_CASES.push({
+  conversationContext: {
+    bookingDraft: {
+      timeSlots: [],
+    },
+    introSent: false,
+    lastIntent: "human_request",
+    userId: "validate-human-handoff-freetext-treatment-info",
+  },
+  expectedDecisionType: "treatment_intro_reply",
+  expectedMatchedKey: "treatment_intro:botox",
+  message: "肉毒是什麼",
+  replyExcludes: ["聯絡電話先記為"],
+});
 
 async function main() {
   const results = [];
@@ -324,6 +597,9 @@ async function main() {
       passed:
         result.decisionType === testCase.expectedDecisionType &&
         result.matchedKey === testCase.expectedMatchedKey &&
+        (typeof testCase.expectedReplyMessageCount === "number"
+          ? (result.replyMessages?.length ?? 0) === testCase.expectedReplyMessageCount
+          : true) &&
         (testCase.replyIncludes ? testCase.replyIncludes.every((fragment) => result.replyText.includes(fragment)) : true) &&
         (testCase.replyExcludes ? testCase.replyExcludes.every((fragment) => !result.replyText.includes(fragment)) : true),
       result,

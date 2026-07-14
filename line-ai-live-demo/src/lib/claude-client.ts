@@ -1,3 +1,4 @@
+import { clinicConfig } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 
@@ -13,9 +14,20 @@ type ClaudeTextBlock = {
 
 type ClaudeMessageResponse = {
   content?: ClaudeTextBlock[];
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
 };
 
-type ClaudeReplyContext = {
+export type GeneratedClaudeReply = {
+  model: string;
+  text: string;
+  tokensIn: number;
+  tokensOut: number;
+};
+
+export type ClaudeReplyContext = {
   bookingBranch?: string;
   bookingTreatment?: string;
   lastIntent?: string;
@@ -29,7 +41,7 @@ let claudeReplyInvocationCount = 0;
 
 function buildSystemPrompt() {
   return [
-    "你是順風診所的 LINE 夜間 AI 客服。",
+    `你是${clinicConfig.clinicName}的 LINE 夜間 AI 客服。`,
     "你只能協助一般安全訊息的自然回覆，不負責自由生成療程介紹。",
     "若訊息涉及療程介紹、個人適合度、術後異常、療效保證或價格承諾，你不能自行延伸回答，也不能補出白名單外的醫療描述。",
     "你的核心目標不是把問題丟給真人客服，而是先接住客人、先回答低風險問題、先整理需求，再把需要人工判斷的部分留給客服上班後接續。",
@@ -101,7 +113,7 @@ function extractTextFromClaudeResponse(payload: ClaudeMessageResponse) {
   return text || DEFAULT_AI_REPLY;
 }
 
-export async function generateClaudeReply(message: string, context?: ClaudeReplyContext) {
+export async function generateClaudeReply(message: string, context?: ClaudeReplyContext): Promise<GeneratedClaudeReply | null> {
   claudeReplyInvocationCount += 1;
   const config = getRuntimeConfig();
   if (!config.claudeApiEnabled || !config.anthropicApiKey) {
@@ -142,7 +154,12 @@ export async function generateClaudeReply(message: string, context?: ClaudeReply
       throw new Error("Claude API returned invalid JSON");
     }
 
-    return extractTextFromClaudeResponse(payload);
+    return {
+      model: config.anthropicModel,
+      text: extractTextFromClaudeResponse(payload),
+      tokensIn: payload.usage?.input_tokens ?? 0,
+      tokensOut: payload.usage?.output_tokens ?? 0,
+    };
   } catch (error) {
     await reportOperationalError({
       error,

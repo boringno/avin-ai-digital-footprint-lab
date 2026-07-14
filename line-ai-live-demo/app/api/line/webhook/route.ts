@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { syncWebhookResultsToAdminDb } from "@/lib/admin-webhook-sync";
 import { syncWebhookResultsToGoogleSheetsWithRetry } from "@/lib/google-sheets-log";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import {
@@ -15,6 +16,28 @@ import { splitWebhookResultsByDuplicate } from "@/lib/webhook-dedupe";
 import { appendWebhookAuditLog } from "@/lib/webhook-audit-log";
 
 export const runtime = "nodejs";
+
+function buildWebhookResponse(input: {
+  duplicateEventIds: string[];
+  eventCount: number;
+  failedReplyCount?: number;
+  ok: boolean;
+  requestError?: string;
+  sendReply: boolean;
+  signatureVerified: boolean | "skipped";
+  status: number;
+}) {
+  return {
+    ok: input.ok,
+    error: input.requestError,
+    event_count: input.eventCount,
+    duplicate_event_count: input.duplicateEventIds.length,
+    failed_reply_count: input.failedReplyCount ?? 0,
+    send_reply: input.sendReply,
+    signature_verified: input.signatureVerified,
+    status: input.status,
+  };
+}
 
 class WebhookRequestError extends Error {
   status: number;
@@ -38,6 +61,12 @@ function scheduleWebhookPostProcessing(input: {
   signatureVerified: boolean | "skipped";
 }) {
   after(async () => {
+    await syncWebhookResultsToAdminDb({
+      loggedAt: input.loggedAt,
+      replyResults: input.replyResults,
+      results: input.results,
+    });
+
     const googleSheetsSync = await syncWebhookResultsToGoogleSheetsWithRetry({
       duplicateEventIds: input.duplicateEventIds,
       loggedAt: input.loggedAt,
@@ -129,26 +158,25 @@ export async function POST(request: Request) {
         source: "line_webhook_reply",
       });
       status = 502;
-      responseBody = {
+      responseBody = buildWebhookResponse({
+        duplicateEventIds,
+        eventCount,
+        failedReplyCount: failedReplyResults.length,
         ok: false,
-        error: requestError,
-        event_count: eventCount,
-        duplicate_event_ids: duplicateEventIds,
-        reply_results: replyResults,
-        results,
-        send_reply: config.sendReply,
-        signature_verified: signatureVerified,
-      };
+        requestError,
+        sendReply: config.sendReply,
+        signatureVerified,
+        status,
+      });
     } else {
-      responseBody = {
+      responseBody = buildWebhookResponse({
+        duplicateEventIds,
+        eventCount,
         ok: true,
-        event_count: eventCount,
-        duplicate_event_ids: duplicateEventIds,
-        reply_results: replyResults,
-        results,
-        send_reply: config.sendReply,
-        signature_verified: signatureVerified,
-      };
+        sendReply: config.sendReply,
+        signatureVerified,
+        status,
+      });
     }
   } catch (error) {
     if (error instanceof WebhookRequestError) {
@@ -171,16 +199,16 @@ export async function POST(request: Request) {
       source: "line_webhook_route",
     });
 
-    responseBody = {
+    responseBody = buildWebhookResponse({
+      duplicateEventIds,
+      eventCount,
+      failedReplyCount: replyResults.filter((replyResult) => !replyResult.ok).length,
       ok: false,
-      error: requestError,
-      event_count: eventCount,
-      duplicate_event_ids: duplicateEventIds,
-      reply_results: replyResults,
-      results,
-      send_reply: config.sendReply,
-      signature_verified: signatureVerified,
-    };
+      requestError,
+      sendReply: config.sendReply,
+      signatureVerified,
+      status,
+    });
   }
 
   scheduleWebhookPostProcessing({

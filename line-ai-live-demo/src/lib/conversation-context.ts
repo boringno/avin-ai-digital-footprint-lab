@@ -57,31 +57,35 @@ export async function loadConversationContext(userId: string) {
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    const row = await loadConversationRuntimeState(userId);
-    const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
-    const bookingDraftJson =
-      ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
+    try {
+      const row = await loadConversationRuntimeState(userId);
+      const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
+      const bookingDraftJson =
+        ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
 
-    return {
-      ...createEmptyConversationContext(userId),
-      ...contextJson,
-      bookingDraft: {
-        ...createEmptyBookingDraft(),
-        ...(contextJson.bookingDraft ?? {}),
-        ...bookingDraftJson,
-        requestedTimeSlots: Array.isArray(bookingDraftJson.requestedTimeSlots)
-          ? bookingDraftJson.requestedTimeSlots
-          : Array.isArray(contextJson.bookingDraft?.requestedTimeSlots)
-            ? contextJson.bookingDraft?.requestedTimeSlots ?? []
-            : [],
-        timeSlots: Array.isArray(bookingDraftJson.timeSlots)
-          ? bookingDraftJson.timeSlots
-          : Array.isArray(contextJson.bookingDraft?.timeSlots)
-            ? contextJson.bookingDraft?.timeSlots ?? []
-            : [],
-      },
-      userId,
-    };
+      return {
+        ...createEmptyConversationContext(userId),
+        ...contextJson,
+        bookingDraft: {
+          ...createEmptyBookingDraft(),
+          ...(contextJson.bookingDraft ?? {}),
+          ...bookingDraftJson,
+          requestedTimeSlots: Array.isArray(bookingDraftJson.requestedTimeSlots)
+            ? bookingDraftJson.requestedTimeSlots
+            : Array.isArray(contextJson.bookingDraft?.requestedTimeSlots)
+              ? contextJson.bookingDraft?.requestedTimeSlots ?? []
+              : [],
+          timeSlots: Array.isArray(bookingDraftJson.timeSlots)
+            ? bookingDraftJson.timeSlots
+            : Array.isArray(contextJson.bookingDraft?.timeSlots)
+              ? contextJson.bookingDraft?.timeSlots ?? []
+              : [],
+        },
+        userId,
+      };
+    } catch {
+      // Fallback to local file persistence until Supabase schema is ready.
+    }
   }
 
   const filePath = buildContextFilePath(userId);
@@ -118,11 +122,15 @@ export async function saveConversationContext(context: ConversationContext) {
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    await saveConversationRuntimeState(context.userId, {
-      booking_draft_json: context.bookingDraft as unknown as Record<string, unknown>,
-      context_json: context as unknown as Record<string, unknown>,
-    });
-    return;
+    try {
+      await saveConversationRuntimeState(context.userId, {
+        booking_draft_json: context.bookingDraft as unknown as Record<string, unknown>,
+        context_json: context as unknown as Record<string, unknown>,
+      });
+      return;
+    } catch {
+      // Fallback to local file persistence until Supabase schema is ready.
+    }
   }
 
   const directory = getConversationContextDir();

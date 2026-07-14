@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
-import { generateClaudeReply, getClaudeReplyInvocationCount } from "@/lib/claude-client";
+import { generateAiReply } from "@/lib/ai-reply-client";
+import { getClaudeReplyInvocationCount } from "@/lib/claude-client";
 import { clinicConfig } from "@/lib/clinic-config";
 import { createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
 import {
@@ -38,6 +39,9 @@ type LineWebhookPayload = {
 };
 
 type ClassifiedDecision = {
+  aiModel?: string;
+  aiTokensIn?: number;
+  aiTokensOut?: number;
   conversationState: ConversationState;
   decisionType: string;
   matchedKey: string;
@@ -45,6 +49,7 @@ type ClassifiedDecision = {
   nextContext: ConversationContext;
   replyMessages?: LineReplyMessage[];
   replyText: string;
+  suppressAiFooter?: boolean;
   shouldIntroduce: boolean;
   usedAiHumanizer: boolean;
   usedAiReplyGenerator: boolean;
@@ -58,6 +63,9 @@ export class InvalidWebhookPayloadError extends Error {
 }
 
 export type ProcessedWebhookResult = {
+  aiModel?: string;
+  aiTokensIn?: number;
+  aiTokensOut?: number;
   bookingDraft: {
     branch?: string;
     isFirstVisit?: "no" | "unknown" | "yes";
@@ -102,6 +110,9 @@ export type ReplySendResult = {
 const NON_TEXT_REPLY = "目前我先支援文字訊息，如果方便的話，請直接用文字告訴我想了解的內容，我先幫您整理。";
 const INTRO_TEXT = `您好，我是${clinicConfig.aiName}，先幫您處理線上常見問題與預約整理。`;
 
+const AI_INTRO_TEXT = `您好，我是 AI 客服${clinicConfig.aiName}，先協助您處理常見問題與預約整理。`;
+const AI_REPLY_FOOTER = `以上為 AI 客服${clinicConfig.aiName}初步回覆。`;
+
 export function verifyLineSignature(rawBody: string, channelSecret: string, signature: string) {
   const digest = crypto.createHmac("sha256", channelSecret).update(rawBody).digest("base64");
   const expected = Buffer.from(digest);
@@ -112,10 +123,29 @@ export function verifyLineSignature(rawBody: string, channelSecret: string, sign
   return crypto.timingSafeEqual(expected, provided);
 }
 
-function buildReplyPayload(replyToken: string, replyText: string, shouldIntroduce: boolean, replyMessages?: LineReplyMessage[]) {
-  const finalText = shouldIntroduce && !replyText.includes(clinicConfig.aiName) ? `${INTRO_TEXT}\n\n${replyText}` : replyText;
+function appendAiFooter(text: string) {
+  if (!text.trim()) {
+    return text;
+  }
+
+  return text.includes("AI 客服") ? text : `${text}\n\n${AI_REPLY_FOOTER}`;
+}
+
+function buildReplyPayload(
+  replyToken: string,
+  replyText: string,
+  shouldIntroduce: boolean,
+  replyMessages?: LineReplyMessage[],
+  suppressAiFooter = false,
+) {
+  const introducedText = shouldIntroduce && !replyText.includes("AI 客服") ? `${AI_INTRO_TEXT}\n\n${replyText}` : replyText;
+  const finalText = appendAiFooter(introducedText);
   const messages = replyMessages?.length
-    ? formatReplyMessages(replyMessages)
+    ? [
+        ...(shouldIntroduce && !suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_INTRO_TEXT) } satisfies LineTextMessage] : []),
+        ...formatReplyMessages(replyMessages),
+        ...(!suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_REPLY_FOOTER) } satisfies LineTextMessage] : []),
+      ]
     : [{ type: "text", text: formatReplyText(finalText) } satisfies LineTextMessage];
 
   return {
@@ -234,6 +264,9 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   });
 
   let replyText = routedDecision.replyText;
+  let aiModel: string | undefined;
+  let aiTokensIn: number | undefined;
+  let aiTokensOut: number | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
 
@@ -282,7 +315,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       usedAiHumanizer = true;
     }
   } else if (routedDecision.decisionType === "fallback_reply" && shouldAllowAiFallbackReply(event.message.text ?? "")) {
-    const aiReply = await generateClaudeReply(event.message.text ?? "", {
+    const aiReply = await generateAiReply(event.message.text ?? "", {
       bookingBranch: routedDecision.nextContext.bookingDraft.branch,
       bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
       lastIntent: routedDecision.nextContext.lastIntent,
@@ -292,7 +325,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       preferredBranch: routedDecision.nextContext.preferredBranch,
     });
     if (aiReply) {
-      replyText = aiReply;
+      replyText = aiReply.text;
+      aiModel = aiReply.model;
+      aiTokensIn = aiReply.tokensIn;
+      aiTokensOut = aiReply.tokensOut;
       usedAiReplyGenerator = true;
     }
   }
@@ -314,16 +350,20 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   }
 
   return {
+    aiModel,
+    aiTokensIn,
+    aiTokensOut,
     conversationState: {
       ...conversationState,
       updatedAt: currentIso,
     },
     decisionType: usedAiReplyGenerator ? "ai_auto_reply" : routedDecision.decisionType,
-    matchedKey: usedAiReplyGenerator ? "claude_general_answer" : routedDecision.matchedKey,
+      matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
     matchedType: usedAiReplyGenerator ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     replyMessages: usedAiReplyGenerator || usedAiHumanizer ? undefined : routedDecision.replyMessages,
     replyText,
+    suppressAiFooter: routedDecision.suppressAiFooter,
     shouldIntroduce: !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
@@ -337,11 +377,14 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
   for (const event of payload.events ?? []) {
     const decision = await classifyEvent(event, options.includePending);
     const replyToken = event.replyToken ?? "";
-    const replyPayload = replyToken && decision.replyText
-      ? buildReplyPayload(replyToken, decision.replyText, decision.shouldIntroduce, decision.replyMessages)
+    const replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
+      ? buildReplyPayload(replyToken, decision.replyText, decision.shouldIntroduce, decision.replyMessages, decision.suppressAiFooter)
       : null;
 
     results.push({
+      aiModel: decision.aiModel,
+      aiTokensIn: decision.aiTokensIn,
+      aiTokensOut: decision.aiTokensOut,
       bookingDraft: {
         branch: decision.nextContext.bookingDraft.branch,
         isFirstVisit: decision.nextContext.bookingDraft.isFirstVisit,
@@ -496,7 +539,6 @@ export async function sendReplyPayloads(
         errorMessage: finalResult.errorMessage,
         matchedKey: result.decision.matchedKey,
         messageId: result.messageId,
-        replyToken: result.replyToken,
         responseBody: finalResult.responseBody,
         status: finalResult.status,
         webhookEventId: result.webhookEventId,

@@ -1,0 +1,27 @@
+export const bookingStatusLabels = {
+  new: "新進線",
+  contacted: "已聯繫",
+  booked: "已預約",
+  arrived: "已到店",
+  won: "成交",
+  lost: "流失",
+} as const;
+
+export const leadStageLabels = {
+  new_inquiry: "新進線",
+  interested: "有興趣",
+  booking_intent: "想預約",
+  handoff_pending: "待接手",
+  human_followup: "真人追蹤",
+  closed: "已結案",
+} as const;
+
+export const handoffTaskStatusLabels = {
+  open: "待接手",
+  taken: "處理中",
+  resolved: "已完成",
+} as const;
+
+export type BookingStatusKey = keyof typeof bookingStatusLabels;
+export type LeadStageKey = keyof typeof leadStageLabels;
+export type HandoffTaskStatusKey = keyof typeof handoffTaskStatusLabels;

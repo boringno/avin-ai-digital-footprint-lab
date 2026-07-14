@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { clinicConfig } from "@/lib/clinic-config";
-import { isSupabaseConversationStoreEnabled, loadConversationRuntimeState, saveConversationRuntimeState } from "@/lib/conversation-store";
+import {
+  DEFAULT_TENANT_ID,
+  isSupabaseConversationStoreEnabled,
+  loadConversationRuntimeState,
+  saveConversationRuntimeState,
+} from "@/lib/conversation-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 
 export type ConversationStatus = "ai_active" | "handoff_pending" | "human_active" | "ai_paused" | "closed";
@@ -43,8 +48,11 @@ function getConversationStateDir() {
   return path.join(logDir, "conversation-states");
 }
 
-function buildConversationStatePath(userId: string) {
-  return path.join(getConversationStateDir(), `${encodeURIComponent(userId || "anonymous")}.json`);
+function buildConversationStatePath(userId: string, tenantId: string) {
+  const stateId = tenantId === DEFAULT_TENANT_ID
+    ? userId || "anonymous"
+    : `${tenantId}__${userId || "anonymous"}`;
+  return path.join(getConversationStateDir(), `${encodeURIComponent(stateId)}.json`);
 }
 
 function nowIso() {
@@ -71,22 +79,26 @@ export function createEmptyConversationState(userId: string): ConversationState 
   };
 }
 
-export async function loadConversationState(userId: string) {
+export async function loadConversationState(userId: string, tenantId: string = DEFAULT_TENANT_ID) {
   if (!userId) {
     return createEmptyConversationState("");
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    const row = await loadConversationRuntimeState(userId);
-    const parsed = (row?.state_json ?? {}) as Partial<ConversationState>;
-    return {
-      ...createEmptyConversationState(userId),
-      ...parsed,
-      userId,
-    };
+    try {
+      const row = await loadConversationRuntimeState(userId, tenantId);
+      const parsed = (row?.state_json ?? {}) as Partial<ConversationState>;
+      return {
+        ...createEmptyConversationState(userId),
+        ...parsed,
+        userId,
+      };
+    } catch {
+      // Fallback to local file persistence until Supabase schema is ready.
+    }
   }
 
-  const filePath = buildConversationStatePath(userId);
+  const filePath = buildConversationStatePath(userId, tenantId);
 
   try {
     const content = await fs.readFile(filePath, "utf8");
@@ -105,21 +117,25 @@ export async function loadConversationState(userId: string) {
   }
 }
 
-export async function saveConversationState(state: ConversationState) {
+export async function saveConversationState(state: ConversationState, tenantId: string = DEFAULT_TENANT_ID) {
   if (!state.userId) {
     return;
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    await saveConversationRuntimeState(state.userId, {
-      state_json: state as unknown as Record<string, unknown>,
-    });
-    return;
+    try {
+      await saveConversationRuntimeState(state.userId, {
+        state_json: state as unknown as Record<string, unknown>,
+      }, tenantId);
+      return;
+    } catch {
+      // Fallback to local file persistence until Supabase schema is ready.
+    }
   }
 
   const directory = getConversationStateDir();
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(buildConversationStatePath(state.userId), JSON.stringify(state, null, 2), "utf8");
+  await fs.writeFile(buildConversationStatePath(state.userId, tenantId), JSON.stringify(state, null, 2), "utf8");
 }
 
 function addMinutes(iso: string, minutes: number) {
