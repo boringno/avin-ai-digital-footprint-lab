@@ -644,7 +644,7 @@ function getCapabilityReply() {
     matchedKey: "capability_intro",
     matchedType: "guided_reply",
     replyText:
-      "您好，我是順風醫美的 AI 客服順順，主要先協助您處理館別資訊、付款方式、預約前整理、療程第一層介紹、孕期與哺乳期的保守原則，以及預約需求蒐集；真的需要真人判斷的部分，我也會先幫您整理重點。",
+      `您好，我是${clinicConfig.clinicName}的 AI 客服${clinicConfig.aiName}，主要先協助您處理館別資訊、付款方式、預約前整理、療程第一層介紹、孕期與哺乳期的保守原則，以及預約需求蒐集；真的需要真人判斷的部分，我也會先幫您整理重點。`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
