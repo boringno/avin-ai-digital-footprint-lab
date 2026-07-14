@@ -283,6 +283,11 @@ const TEST_CASES: TestCase[] = [
     message: "我適合做哪個療程？",
   },
   {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "customer_account_lookup",
+    message: "我要查詢我的會員紀錄",
+  },
+  {
     conversationContext: {
       bookingDraft: {
         branch: "高雄館",

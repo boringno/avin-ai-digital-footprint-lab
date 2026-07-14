@@ -89,6 +89,7 @@ export function WorkbenchClient({
   const [messageText, setMessageText] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isCompact, setIsCompact] = useState(false);
+  const [isPageVisible, setIsPageVisible] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [controlAction, setControlAction] = useState<"" | "mark_human_active" | "resume_ai">("");
   const [leadActionId, setLeadActionId] = useState("");
@@ -102,6 +103,13 @@ export function WorkbenchClient({
     apply();
     mediaQuery.addEventListener("change", apply);
     return () => mediaQuery.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    const syncVisibility = () => setIsPageVisible(document.visibilityState === "visible");
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
   }, []);
 
   async function refresh(conversationId = selectedConversationId) {
@@ -122,6 +130,14 @@ export function WorkbenchClient({
   }
 
   useEffect(() => {
+    if (!isPageVisible) {
+      return;
+    }
+
+    if (!controlAction && !leadActionId) {
+      void refresh(selectedConversationId);
+    }
+
     const timer = window.setInterval(() => {
       if (controlAction || leadActionId) {
         return;
@@ -129,7 +145,7 @@ export function WorkbenchClient({
       void refresh(selectedConversationId);
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [controlAction, leadActionId, selectedConversationId]);
+  }, [controlAction, isPageVisible, leadActionId, selectedConversationId]);
 
   function selectConversation(conversationId: string) {
     if (controlAction || isPending) {

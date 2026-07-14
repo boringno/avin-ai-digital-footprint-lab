@@ -1662,7 +1662,12 @@ export async function routeCustomerMessage({
 
   // Safety and human handoff rules always take precedence over booking follow-up.
   const hasStructuredBookingMessage = hasStructuredBookingForm(trimmedMessage);
-  const priorityHandoffReply = getHandoffPendingReply(trimmedMessage, currentTime, hasStructuredBookingMessage);
+  const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext);
+  const priorityHandoffReply = getHandoffPendingReply(
+    trimmedMessage,
+    currentTime,
+    hasStructuredBookingMessage || hasBookingFollowup,
+  );
   if (priorityHandoffReply) {
     nextContext.lastIntent = priorityHandoffReply.matchedKey;
     return {
@@ -1673,7 +1678,6 @@ export async function routeCustomerMessage({
 
   const seedData = await loadSeedData();
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
-  const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext);
 
   if (isCapabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "capability_intro";
