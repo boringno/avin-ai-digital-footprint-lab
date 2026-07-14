@@ -54,6 +54,13 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL("/admin/forbidden", request.url), { status: 303 });
   }
 
+  // Login telemetry is operational only; a failed timestamp update must not block access.
+  await supabase
+    .from("staff_users")
+    .update({ last_login_at: new Date().toISOString() })
+    .eq("id", staff.id)
+    .eq("tenant_id", staff.tenantId);
+
   const landingPath = staff.role === "analyst" && canViewReports(staff.role) ? "/admin/reports" : "/admin/workbench";
   const response = NextResponse.redirect(new URL(landingPath, request.url), { status: 303 });
   response.cookies.set(ADMIN_ACCESS_COOKIE, data.session.access_token, {

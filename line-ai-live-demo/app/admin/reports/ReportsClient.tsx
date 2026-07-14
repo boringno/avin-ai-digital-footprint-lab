@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
 import type { AdminStaffUser } from "@/lib/admin-auth";
+import { staffRoleLabels } from "@/lib/admin-display-maps";
 import type { AdminReportsData, ReportDailyMetric } from "@/lib/admin-reports-data";
 
 const intentLabels: Record<string, string> = {
@@ -432,7 +433,7 @@ function deltaText(current: number, previous: number, label: string) {
 }
 
 function roleLabel(role: AdminStaffUser["role"]) {
-  return { agent: "客服", analyst: "行銷／報表", maintainer: "維護", manager: "主管", owner: "擁有者" }[role];
+  return staffRoleLabels[role];
 }
 
 function topIntentsFromDistribution(intentDistribution: ReportDailyMetric["intentDistribution"]) {

@@ -1,3 +1,13 @@
+import type { StaffRole } from "@/lib/admin-auth";
+
+export const staffRoleLabels: Record<StaffRole, string> = {
+  agent: "第一線客服",
+  analyst: "報表分析員",
+  maintainer: "系統維護人員",
+  manager: "客服主管",
+  owner: "診所管理者",
+};
+
 export const bookingStatusLabels = {
   new: "新進線",
   contacted: "已聯繫",

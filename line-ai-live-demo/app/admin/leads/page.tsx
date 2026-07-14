@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { canEditLeads, canReviewFaqMiss, canViewLeads, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { staffRoleLabels } from "@/lib/admin-display-maps";
 import { loadAdminLeadsData } from "@/lib/admin-leads-data";
 
 import { LeadsClient } from "./LeadsClient";
@@ -33,7 +34,7 @@ export default async function AdminLeadsPage() {
             <p style={{ color: "#5e7a72", fontSize: 14, margin: 0 }}>預約管理</p>
             <h1 style={{ margin: "4px 0 0" }}>預約線索看板</h1>
             <p style={{ color: "#66756f", fontSize: 14, margin: "6px 0 0" }}>
-              登入：{staff.displayName} · {staff.role}
+              登入：{staff.displayName} · {staffRoleLabels[staff.role]}
             </p>
           </div>
           <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>

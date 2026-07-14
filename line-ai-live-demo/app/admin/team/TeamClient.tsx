@@ -3,14 +3,7 @@
 import { FormEvent, useState } from "react";
 
 import type { TeamMember } from "@/lib/admin-team-data";
-
-const roleLabels = {
-  agent: "第一線客服",
-  analyst: "行銷／報表查看",
-  maintainer: "系統維護",
-  manager: "客服主管",
-  owner: "診所管理者",
-} as const;
+import { staffRoleLabels } from "@/lib/admin-display-maps";
 
 type ClientManagedRole = "agent" | "analyst" | "manager";
 
@@ -154,7 +147,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
                     </span>
                   </div>
                   <span style={{ color: "#516660", fontSize: 14 }}>{member.email || "尚未取得 Email"}</span>
-                  <span style={{ color: "#516660", fontSize: 14 }}>角色：{roleLabels[member.role]}</span>
+                  <span style={{ color: "#516660", fontSize: 14 }}>角色：{staffRoleLabels[member.role]}</span>
                   <span style={{ color: "#516660", fontSize: 13 }}>最近邀請：{formatDate(member.lastInvitedAt ?? member.invitedAt)}</span>
                   {canEdit ? (
                     <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
