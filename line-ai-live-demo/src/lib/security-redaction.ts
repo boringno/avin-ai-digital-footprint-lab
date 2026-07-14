@@ -120,8 +120,7 @@ export function redactQuestionForAnalytics(value: string, maxLength = 240) {
     .replace(
       /(?:LINE|line|\u6211\u7684\s*(?:LINE|line)?\s*(?:ID|id)|(?:LINE|line)?\s*(?:ID|id)|\u52a0(?:\u6211|\u4f60))\s*(?:(?:\u5e33\u865f)|ID|id|\u662f|\u70ba|[:\uFF1A])*\s*[@#]?[A-Za-z][A-Za-z0-9._-]{3,}/g,
       "[masked-line-id]",
-    )
-    .replace(/(?:LINE\s*(?:ID|id)?\s*[:：]?\s*)[A-Za-z0-9._-]{4,}/g, "[masked-line-id]");
+    );
 
   return sanitizeTextPreview(masked, maxLength);
 }

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 import { ADMIN_ACCESS_COOKIE, ADMIN_REFRESH_COOKIE, canViewReports, getAdminStaffFromAccessToken } from "@/lib/admin-auth";
+import { buildAdminLoginRateLimitKeys, isAdminLoginRateLimited, recordAdminLoginFailure } from "@/lib/admin-login-protection";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { reportOperationalError } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
 
@@ -33,6 +35,15 @@ export async function POST(request: Request) {
     return NextResponse.redirect(buildLoginRedirect(request, "missing_credentials"), { status: 303 });
   }
 
+  const rateLimitKeys = buildAdminLoginRateLimitKeys(email, request);
+  try {
+    if (await isAdminLoginRateLimited(rateLimitKeys)) {
+      return NextResponse.redirect(buildLoginRedirect(request, "too_many_attempts"), { status: 303 });
+    }
+  } catch (error) {
+    await reportOperationalError({ alert: true, error, source: "admin_login_rate_limit_check" });
+  }
+
   const config = getRuntimeConfig();
   if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
     return NextResponse.redirect(buildLoginRedirect(request, "supabase_not_configured"), { status: 303 });
@@ -46,7 +57,13 @@ export async function POST(request: Request) {
   });
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.session?.access_token) {
-    return NextResponse.redirect(buildLoginRedirect(request, "invalid_credentials"), { status: 303 });
+    try {
+      const isNowBlocked = await recordAdminLoginFailure(rateLimitKeys);
+      return NextResponse.redirect(buildLoginRedirect(request, isNowBlocked ? "too_many_attempts" : "invalid_credentials"), { status: 303 });
+    } catch (recordError) {
+      await reportOperationalError({ alert: true, error: recordError, source: "admin_login_rate_limit_record" });
+      return NextResponse.redirect(buildLoginRedirect(request, "invalid_credentials"), { status: 303 });
+    }
   }
 
   const staff = await getAdminStaffFromAccessToken(data.session.access_token);

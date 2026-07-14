@@ -352,6 +352,7 @@ export function WorkbenchClient({
               {data.leadSummaries.length === 0 ? <EmptyState text="目前沒有需要追蹤的預約線索。" /> : null}
               {data.leadSummaries.map((lead) => (
                 <LeadSummaryCard
+                  controlAction={controlAction}
                   isBusy={leadActionId === lead.id}
                   isCompact={isCompact}
                   key={lead.id}
@@ -631,6 +632,7 @@ function ConversationCard({
 }
 
 function LeadSummaryCard({
+  controlAction,
   isBusy,
   isCompact,
   lead,
@@ -638,6 +640,7 @@ function LeadSummaryCard({
   onContacted,
   onOpenConversation,
 }: {
+  controlAction: "" | "mark_human_active" | "resume_ai";
   isBusy: boolean;
   isCompact: boolean;
   lead: WorkbenchLeadSummary;
@@ -674,13 +677,13 @@ function LeadSummaryCard({
       </div>
 
       <div style={{ display: "flex", flexDirection: isCompact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
-        <button disabled={isBusy} onClick={onOpenConversation} style={secondaryButtonStyle} type="button">
+        <button disabled={isBusy || Boolean(controlAction)} onClick={onOpenConversation} style={secondaryButtonStyle} type="button">
           查看對話
         </button>
-        <button disabled={isBusy || lead.bookingStatus === "contacted"} onClick={onContacted} style={secondaryButtonStyle} type="button">
+        <button disabled={isBusy || Boolean(controlAction) || lead.bookingStatus === "contacted"} onClick={onContacted} style={secondaryButtonStyle} type="button">
           {isBusy ? "處理中..." : "標記已聯繫"}
         </button>
-        <button disabled={isBusy || lead.bookingStatus === "booked"} onClick={onBooked} style={primaryButtonStyle} type="button">
+        <button disabled={isBusy || Boolean(controlAction) || lead.bookingStatus === "booked"} onClick={onBooked} style={primaryButtonStyle} type="button">
           {isBusy ? "處理中..." : "確認預約"}
         </button>
       </div>

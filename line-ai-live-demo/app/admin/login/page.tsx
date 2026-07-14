@@ -12,6 +12,8 @@ function getErrorMessage(error?: string) {
       return "請輸入 Email 與密碼。";
     case "supabase_not_configured":
       return "Supabase 後台環境變數尚未設定完整。";
+    case "too_many_attempts":
+      return "登入嘗試次數過多，請 15 分鐘後再試。";
     default:
       return "";
   }
