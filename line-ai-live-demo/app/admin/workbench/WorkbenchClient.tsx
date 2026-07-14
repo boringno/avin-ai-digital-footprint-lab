@@ -96,6 +96,7 @@ export function WorkbenchClient({
   const [isPending, startTransition] = useTransition();
   const composerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const wasPageVisibleRef = useRef(true);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
@@ -130,14 +131,17 @@ export function WorkbenchClient({
   }
 
   useEffect(() => {
+    const resumedFromBackground = isPageVisible && !wasPageVisibleRef.current;
+    wasPageVisibleRef.current = isPageVisible;
+    if (resumedFromBackground && !controlAction && !leadActionId) {
+      void refresh(selectedConversationId);
+    }
+  }, [controlAction, isPageVisible, leadActionId, selectedConversationId]);
+
+  useEffect(() => {
     if (!isPageVisible) {
       return;
     }
-
-    if (!controlAction && !leadActionId) {
-      void refresh(selectedConversationId);
-    }
-
     const timer = window.setInterval(() => {
       if (controlAction || leadActionId) {
         return;
