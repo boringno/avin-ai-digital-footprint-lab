@@ -423,7 +423,7 @@ export function WorkbenchClient({
                     <SmallLine label="療程" value={detail.bookingLead.interestedTreatments.join("、") || "-"} />
                     <SmallLine label="館別" value={detail.bookingLead.preferredBranch || "-"} />
                     <SmallLine label="時段" value={detail.bookingLead.preferredTimeSlots.join("、") || "-"} />
-                    <SmallLine label="稱呼" value={detail.bookingLead.customerName || "-"} />
+                    <SmallLine label="姓名" value={detail.bookingLead.customerName || "-"} />
                     <SmallLine
                       label="電話"
                       value={

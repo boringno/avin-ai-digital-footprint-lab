@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/daily-rollup",
       "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/handoff-digest-weekday",
+      "schedule": "0 12 * * 1-5"
+    },
+    {
+      "path": "/api/cron/handoff-digest-weekend",
+      "schedule": "0 8 * * 0,6"
     }
   ]
 }

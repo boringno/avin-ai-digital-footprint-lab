@@ -37,10 +37,11 @@ export default async function AdminWorkbenchPage() {
               登入：{staff.displayName} · {staffRoleLabels[staff.role]}
             </p>
           </div>
-          <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ alignItems: "center", display: "flex", flexBasis: "100%", flexWrap: "wrap", gap: 8, justifyContent: "flex-end", minWidth: 0 }}>
             {canViewReports(staff.role) ? <a href="/admin/reports" style={pillStyle}>月報</a> : null}
             {canReviewFaqMiss(staff.role) ? <a href="/admin/faq-candidates" style={pillStyle}>問題補強</a> : null}
             {canViewContent(staff.role) ? <a href="/admin/content" style={pillStyle}>內容管理</a> : null}
+            {canViewContent(staff.role) ? <a href="/admin/schedules" style={pillStyle}>門診班表</a> : null}
             {staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer" ? (
               <a href="/admin/team" style={pillStyle}>
                 團隊管理

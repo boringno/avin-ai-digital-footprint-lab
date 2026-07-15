@@ -1,4 +1,5 @@
 import type { ConversationContext } from "../src/lib/conversation-context";
+import { resolvePublishedScheduleForValidation } from "../src/lib/doctor-schedule";
 import { routeCustomerMessage } from "../src/lib/router";
 
 type TestCase = {
@@ -93,6 +94,18 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "treatment_intro_reply",
     expectedMatchedKey: "treatment_carousel",
     message: "有哪些熱門療程",
+    replyIncludes: ["熱門療程"],
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_carousel",
+    message: "我想了解有什麼療程",
+    replyIncludes: ["熱門療程"],
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_carousel",
+    message: "有什麼療程",
     replyIncludes: ["熱門療程"],
   },
   {
@@ -402,6 +415,13 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "concern:dynamic_wrinkles",
+    message: "我想解決魚尾紋",
+    replyIncludes: ["魚尾紋", "肉毒", "動態紋路", "醫師現場評估"],
+    replyExcludes: ["我可以先幫您整理館別資訊"],
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
     expectedMatchedKey: "concern:pores_texture",
     message: "我想改善膚質",
     replyIncludes: ["膚質", "醫師評估"],
@@ -460,7 +480,7 @@ TEST_CASES.push({
   expectedMatchedKey: "booking_intake",
   message: "療程：肉毒\n館別：高雄館\n時段：07/18 15:00\n稱呼：IVAN\n電話：0981234567",
   replyExcludes: ["目前可先為您整理的館別有"],
-  replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 高雄館", "稱呼先記為 IVAN", "聯絡電話先記為 0981234567"],
+  replyIncludes: ["想了解的療程先記為 肉毒", "館別先記為 高雄館", "姓名先記為 IVAN", "聯絡電話先記為 0981234567"],
 });
 
 TEST_CASES.push({
@@ -550,6 +570,21 @@ TEST_CASES.push({
 });
 
 TEST_CASES.push({
+  expectedDecisionType: "booking_intake_reply",
+  expectedMatchedKey: "booking_intake",
+  message: "我想預約謝醫師",
+  replyExcludes: ["門診時間如下"],
+  replyIncludes: ["方便時段"],
+});
+
+TEST_CASES.push({
+  expectedDecisionType: "medical_guidance_reply",
+  expectedMatchedKey: "pregnancy_caution",
+  message: "我懷孕了，想知道王醫師本週看診時間",
+  replyExcludes: ["門診時間如下", "以下為目前公告的"],
+});
+
+TEST_CASES.push({
   conversationContext: {
     bookingDraft: {
       timeSlots: [],
@@ -585,6 +620,36 @@ TEST_CASES.push({
   replyExcludes: ["聯絡電話先記為"],
 });
 
+function validateScheduleMonthReplies() {
+  const assets = ["高雄館", "台中館", "桃園館", "林口館"].map((branch) => ({
+    branch,
+    original_content_url: `https://example.com/${encodeURIComponent(branch)}-original.jpg`,
+    preview_image_url: `https://example.com/${encodeURIComponent(branch)}-preview.jpg`,
+  }));
+  const rows = [
+    { branch: "高雄館", doctor_name: "陳醫師", schedule_date: "2026-07-18", status: "available", time_slot: "13:00-18:00" },
+    { branch: "台中館", doctor_name: "王醫師", schedule_date: "2026-07-18", status: "available", time_slot: "13:00-18:00" },
+    { branch: "桃園館", doctor_name: "林醫師", schedule_date: "2026-07-18", status: "available", time_slot: "13:00-18:00" },
+    { branch: "林口館", doctor_name: "謝醫師", schedule_date: "2026-07-18", status: "available", time_slot: "13:00-18:00" },
+  ];
+  const cases = [
+    { expectedKey: "doctor_schedule_image:高雄館:2026-07", message: "請傳高雄館本月門診表", sendsImage: true },
+    { expectedKey: "doctor_schedule_image:台中館:2026-07", message: "台中館醫師班表", sendsImage: true },
+    { expectedKey: "doctor_schedule_image:桃園館:2026-07", message: "桃園館診次表", sendsImage: true },
+    { expectedKey: "doctor_schedule_found:謝醫師:2026-07", message: "林口館謝醫師哪天看診", sendsImage: false },
+  ];
+  return cases.flatMap((testCase) => [true, false].map((published) => {
+    const result = resolvePublishedScheduleForValidation({ assets, message: testCase.message, published, rows, sourceMonth: "2026-07" });
+    return {
+      expectedKey: published ? testCase.expectedKey : "doctor_schedule_unpublished:2026-07",
+      kind: published ? "schedule-published" : "schedule-unpublished",
+      message: testCase.message,
+      passed: result.matchedKey === (published ? testCase.expectedKey : "doctor_schedule_unpublished:2026-07") && (result.replyMessages?.length ?? 0) === (published && testCase.sendsImage ? 1 : 0),
+      result,
+    };
+  }));
+}
+
 async function main() {
   const results = [];
 
@@ -611,9 +676,11 @@ async function main() {
     });
   }
 
-  console.log(JSON.stringify(results, null, 2));
+  const scheduleResults = validateScheduleMonthReplies();
 
-  if (results.some((result) => !result.passed)) {
+  console.log(JSON.stringify({ router: results, scheduleMonth: scheduleResults }, null, 2));
+
+  if (results.some((result) => !result.passed) || scheduleResults.some((result) => !result.passed)) {
     process.exitCode = 1;
   }
 }

@@ -32,6 +32,7 @@ export type TreatmentConfig = {
 export type ConcernConfig = {
   key: string;
   keywords: string[];
+  informationalReply?: string;
   recommendedTreatmentKeys: string[];
   summary: string;
 };
@@ -234,6 +235,14 @@ export const clinicConfig: ClinicConfig = {
     overviewPrefix: "目前可先參考的近期活動如下",
   },
   concernList: [
+    {
+      key: "dynamic_wrinkles",
+      keywords: ["魚尾紋", "動態紋", "表情紋"],
+      informationalReply:
+      "魚尾紋常見和表情活動形成的動態紋路有關。肉毒常見用於動態紋路的改善與評估，包含魚尾紋這類表情紋；實際施作部位、劑量與是否適合，仍要由醫師現場評估。",
+      recommendedTreatmentKeys: ["botox"],
+      summary: "這類通常會先從表情肌活動與動態紋路方向了解。",
+    },
     {
       key: "jawline_looseness",
       keywords: ["嘴邊肉", "下顎線", "輪廓線", "雙下巴", "下巴線條", "臉部鬆弛"],

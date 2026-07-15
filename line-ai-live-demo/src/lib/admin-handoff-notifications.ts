@@ -4,9 +4,18 @@ import { reportOperationalError } from "@/lib/monitoring";
 
 export type HandoffNotificationInput = {
   conversationId: string;
-  customerMessage: string;
-  lineUserId: string;
   reason: string;
+};
+
+const handoffReasonLabels: Record<string, string> = {
+  customer_account_lookup: "客戶資料查詢",
+  effect_guarantee_request: "療效保證問題",
+  human_request: "客人要求真人協助",
+  personalized_consult: "個人適合度問題",
+  post_procedure_issue: "術後狀況需確認",
+  price_commitment_request: "價格承諾問題",
+  serious_complaint: "客訴／退款問題",
+  unsupported_treatment_or_unapproved_content: "需人工確認療程問題",
 };
 
 export async function notifyAdminHandoffCreated(input: HandoffNotificationInput) {
@@ -85,19 +94,20 @@ export async function notifyAdminHandoffCreated(input: HandoffNotificationInput)
   }
 }
 
-function buildHandoffNotificationText(input: HandoffNotificationInput, appBaseUrl: string) {
-  const link = `${appBaseUrl.replace(/\/$/, "")}/admin/workbench?conversation_id=${encodeURIComponent(input.conversationId)}`;
-  const customerPreview = input.customerMessage.trim().slice(0, 120) || "-";
+export function getHandoffNotificationReasonLabel(reason: string) {
+  if (reason.startsWith("treatment_brand_missing:")) {
+    return "需人工確認療程品牌問題";
+  }
+  return handoffReasonLabels[reason] ?? "需真人客服確認";
+}
+
+export function buildHandoffNotificationText(input: HandoffNotificationInput, appBaseUrl: string) {
+  const link = `${appBaseUrl.replace(/\/$/, "")}/admin/workbench`;
 
   return [
     "有新的真人接手任務",
-    `原因：${input.reason}`,
-    `LINE：${shortLineUserId(input.lineUserId)}`,
-    `客人訊息：${customerPreview}`,
+    `原因：${getHandoffNotificationReasonLabel(input.reason)}`,
+    "請登入客服工作台查看並接續處理。",
     `工作台：${link}`,
   ].join("\n");
-}
-
-function shortLineUserId(lineUserId: string) {
-  return lineUserId.length > 8 ? `${lineUserId.slice(0, 6)}...${lineUserId.slice(-4)}` : lineUserId;
 }

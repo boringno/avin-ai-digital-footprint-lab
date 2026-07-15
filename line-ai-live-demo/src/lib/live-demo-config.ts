@@ -13,6 +13,11 @@ export type RuntimeConfig = {
   claudeApiEnabled: boolean;
   cronSecret: string;
   debugToken: string;
+  handoffDigestFrom: string;
+  handoffDigestKaohsiungTo: string;
+  handoffDigestLinkouTo: string;
+  handoffDigestTaichungTo: string;
+  handoffDigestTaoyuanTo: string;
   googleSheetsEnabled: boolean;
   googleSheetsPrivateKey: string;
   googleSheetsServiceAccountEmail: string;
@@ -28,6 +33,7 @@ export type RuntimeConfig = {
   openAiMaxTokens: number;
   openAiModel: string;
   retentionSweepMode: string;
+  resendApiKey: string;
   sentryAuthToken: string;
   sentryDsn: string;
   sentryEnvironment: string;
@@ -97,6 +103,11 @@ export function getRuntimeConfig(): RuntimeConfig {
     claudeApiEnabled: parseBoolean(process.env.CLAUDE_API_ENABLED, false),
     cronSecret: process.env.CRON_SECRET ?? "",
     debugToken: process.env.LIVE_DEMO_DEBUG_TOKEN ?? "",
+    handoffDigestFrom: process.env.HANDOFF_DIGEST_FROM ?? "",
+    handoffDigestKaohsiungTo: process.env.HANDOFF_DIGEST_KAOHSIUNG_TO ?? "",
+    handoffDigestLinkouTo: process.env.HANDOFF_DIGEST_LINKOU_TO ?? "",
+    handoffDigestTaichungTo: process.env.HANDOFF_DIGEST_TAICHUNG_TO ?? "",
+    handoffDigestTaoyuanTo: process.env.HANDOFF_DIGEST_TAOYUAN_TO ?? "",
     googleSheetsEnabled: parseBoolean(process.env.GOOGLE_SHEETS_ENABLED, false),
     googleSheetsPrivateKey: (process.env.GOOGLE_SHEETS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
     googleSheetsServiceAccountEmail: process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL ?? "",
@@ -114,6 +125,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
     retentionSweepMode: process.env.RETENTION_SWEEP_MODE ?? "",
+    resendApiKey: process.env.RESEND_API_KEY ?? "",
     sentryAuthToken: process.env.SENTRY_AUTH_TOKEN ?? "",
     sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN ?? "",
     sentryEnvironment: process.env.SENTRY_ENVIRONMENT ?? process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",

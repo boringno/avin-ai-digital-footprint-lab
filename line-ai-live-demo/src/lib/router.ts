@@ -115,7 +115,7 @@ const TREATMENT_DISCOVERY_TERMS = [
 ];
 
 const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
-const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表"];
+const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表", "診次"];
 const BRANCH_QUERY_HINT_TERMS = ["館", "分館", "分店", "據點", "門市", "地址", "在哪", "哪裡", "最近", "有嗎", "有沒有"];
 const STRUCTURED_BOOKING_FIELD_LABELS = {
   branch: ["館別", "管別"],
@@ -830,7 +830,7 @@ function formatBookingKnownFields(context: ConversationContext) {
     parts.push("目前先記為非初診");
   }
   if (context.bookingDraft.name) {
-    parts.push(`稱呼先記為 ${context.bookingDraft.name}`);
+    parts.push(`姓名先記為 ${context.bookingDraft.name}`);
   }
   if (context.bookingDraft.phone) {
     parts.push(`聯絡電話先記為 ${context.bookingDraft.phone}`);
@@ -846,7 +846,7 @@ function buildBookingIntakeReply(context: ConversationContext) {
   const missingPrompts: Record<BookingFieldKey, string> = {
     branch: "想去的館別",
     isFirstVisit: "是否第一次到診",
-    name: "稱呼",
+    name: "姓名",
     phone: "聯絡電話",
     timeSlots: "3 個方便時段",
     treatment: "想了解的療程",
@@ -877,7 +877,7 @@ function buildBookingModifyReply(context: ConversationContext) {
   const knownFields = formatBookingKnownFields(context);
 
   if (knownFields.length === 0) {
-    return "可以的，我先幫您整理改約需求。再麻煩您提供原本預約的館別、稱呼、聯絡電話，以及想改成的日期或時段，我整理後請客服接續協助確認。";
+    return "可以的，我先幫您整理改約需求。再麻煩您提供原本預約的館別、姓名、聯絡電話，以及想改成的日期或時段，我整理後請客服接續協助確認。";
   }
 
   return `可以的，我先幫您整理改約需求。${knownFields.join("，")}。如果您還想調整館別、療程或新的方便時段，也可以直接一起告訴我，客服會在服務時間內接續協助確認。`;
@@ -887,7 +887,7 @@ function buildBookingCancelReply(context: ConversationContext) {
   const knownFields = formatBookingKnownFields(context);
 
   if (knownFields.length === 0) {
-    return "可以的，我先幫您整理取消預約需求。再麻煩您提供原本預約的館別、稱呼、聯絡電話，以及原本預約時段，我整理後請客服接續協助確認。";
+    return "可以的，我先幫您整理取消預約需求。再麻煩您提供原本預約的館別、姓名、聯絡電話，以及原本預約時段，我整理後請客服接續協助確認。";
   }
 
   return `可以的，我先幫您整理取消預約需求。${knownFields.join("，")}。客服會在服務時間內接續協助確認取消；如果您其實是想改約，也可以直接告訴我新的館別或時段。`;
@@ -907,7 +907,7 @@ function buildBookingIntakeReplyV2(context: ConversationContext) {
   const missingPrompts: Record<BookingFieldKey, string> = {
     branch: "想去的館別",
     isFirstVisit: "是否第一次到診",
-    name: "稱呼",
+    name: "姓名",
     phone: "聯絡電話",
     timeSlots: "3 個方便時段",
     treatment: "想了解的療程",
@@ -1185,6 +1185,15 @@ function getConcernReply(message: string) {
   const recommendedTreatments = formatConcernRecommendedTreatments(matchedConcern.key);
   if (recommendedTreatments.length === 0) {
     return null;
+  }
+
+  if (matchedConcern.informationalReply) {
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `concern:${matchedConcern.key}`,
+      matchedType: "guided_reply",
+      replyText: matchedConcern.informationalReply,
+    } satisfies Omit<RouterDecision, "nextContext">;
   }
 
   return {
@@ -1739,6 +1748,20 @@ export async function routeCustomerMessage({
     };
   }
 
+  // An appointment request remains an intake flow even when it names a doctor.
+  // The monthly image is reference material, never an appointment confirmation.
+  if (includesAnyTerm(trimmedMessage, APPOINTMENT_TERMS)) {
+    updateBookingDraft(trimmedMessage, nextContext);
+    nextContext.lastIntent = "booking_intake";
+    return {
+      decisionType: "booking_intake_reply",
+      matchedKey: "booking_intake",
+      matchedType: "guided_reply",
+      nextContext,
+      replyText: buildBookingIntakeReplyV2(nextContext),
+    };
+  }
+
   const basicInfoReply = getClinicBasicInfoReply(trimmedMessage, nextContext);
   if (basicInfoReply) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
@@ -1762,19 +1785,6 @@ export async function routeCustomerMessage({
     };
   }
 
-  if (includesAnyTerm(trimmedMessage, DOCTOR_SCHEDULE_TERMS)) {
-    const doctorScheduleDecision = await resolveDoctorScheduleDecision({
-      fallbackReply: buildHandoffPendingReply("醫師門診與班表仍需依現場安排確認。", currentTime),
-      message: trimmedMessage,
-      today: currentTime,
-    });
-    nextContext.lastIntent = doctorScheduleDecision.matchedKey;
-    return {
-      ...doctorScheduleDecision,
-      nextContext,
-    };
-  }
-
   const pregnancyReply = getPregnancyGuidanceReply(
     trimmedMessage,
     matchedTreatment?.name ?? nextContext.lastReferencedTreatment,
@@ -1787,6 +1797,19 @@ export async function routeCustomerMessage({
       : pregnancyReply.matchedKey;
     return {
       ...pregnancyReply,
+      nextContext,
+    };
+  }
+
+  if (includesAnyTerm(trimmedMessage, DOCTOR_SCHEDULE_TERMS)) {
+    const doctorScheduleDecision = await resolveDoctorScheduleDecision({
+      fallbackReply: buildHandoffPendingReply("醫師門診與班表仍需依現場安排確認。", currentTime),
+      message: trimmedMessage,
+      today: currentTime,
+    });
+    nextContext.lastIntent = doctorScheduleDecision.matchedKey;
+    return {
+      ...doctorScheduleDecision,
       nextContext,
     };
   }
@@ -1814,19 +1837,6 @@ export async function routeCustomerMessage({
       ? "booking_intake"
       : pricingReply.matchedKey;
     return pricingReply;
-  }
-
-  const hasBookingIntent = includesAnyTerm(trimmedMessage, APPOINTMENT_TERMS);
-  if (hasBookingIntent) {
-    updateBookingDraft(trimmedMessage, nextContext);
-    nextContext.lastIntent = "booking_intake";
-    return {
-      decisionType: "booking_intake_reply",
-      matchedKey: "booking_intake",
-      matchedType: "guided_reply",
-      nextContext,
-      replyText: buildBookingIntakeReplyV2(nextContext),
-    };
   }
 
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);

@@ -159,6 +159,7 @@ export function ContentClient({
           </div>
           <div style={headerActionsStyle}>
             <a href="/admin/reports" style={pillLinkStyle}>月報</a>
+            <a href="/admin/schedules" style={pillLinkStyle}>門診班表</a>
             {canUseWorkbench ? <a href="/admin/workbench" style={pillLinkStyle}>客服工作台</a> : null}
             <button disabled={Boolean(busyId)} onClick={() => void refresh()} style={pillButtonStyle} type="button">重新整理</button>
             <form action="/api/admin/auth/logout" method="post"><button style={pillButtonStyle} type="submit">登出</button></form>

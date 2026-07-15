@@ -126,7 +126,10 @@ type TreatmentCarouselCard = {
 const TREATMENT_CAROUSEL_TRIGGER_TERMS = [
   "熱門療程",
   "活動療程",
+  "有什麼療程",
   "有哪些療程",
+  "想了解療程",
+  "可以做什麼療程",
   "推薦療程",
   "療程介紹",
   "療程列表",

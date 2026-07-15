@@ -260,6 +260,7 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   }
 
   const { error } = await supabase.from("handoff_tasks").insert({
+    branch: emptyToNull(result.bookingDraft.branch),
     conversation_id: conversationId,
     reason: result.decision.matchedKey || "unknown",
     status: "open",
@@ -272,8 +273,6 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
 
   await notifyAdminHandoffCreated({
     conversationId,
-    customerMessage: result.messageText,
-    lineUserId: result.sourceUserId,
     reason: result.decision.matchedKey || "unknown",
   });
 }

@@ -27,6 +27,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingDigestTest, setIsSendingDigestTest] = useState(false);
   const [busyMemberId, setBusyMemberId] = useState("");
 
   async function parseResponse(response: Response) {
@@ -95,6 +96,23 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
     }
   }
 
+  async function sendHandoffDigestTest() {
+    if (isSendingDigestTest) return;
+
+    setError("");
+    setNotice("");
+    setIsSendingDigestTest(true);
+    try {
+      const response = await fetch("/api/admin/notifications/handoff-digest-test", { method: "POST" });
+      await parseResponse(response);
+      setNotice("高雄館通知測試信已寄出，請查看指定信箱。測試信不含客人資料。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "通知測試失敗，請稍後再試。");
+    } finally {
+      setIsSendingDigestTest(false);
+    }
+  }
+
   return (
     <main style={{ background: "#f6faf8", minHeight: "100vh", padding: "20px 12px 80px" }}>
       <div style={{ margin: "0 auto", maxWidth: 980 }}>
@@ -114,20 +132,29 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
         {notice ? <p style={noticeStyle}>{notice}</p> : null}
 
         {canManage ? (
-          <section style={panelStyle}>
-            <h2 style={{ marginTop: 0 }}>邀請診所人員</h2>
-            <p style={{ color: "#66756f", marginTop: 0 }}>可邀請客服主管、第一線客服或行銷／報表查看人員。系統維護與診所管理者由平台端管理。</p>
-            <form onSubmit={submitInvite} style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-              <input aria-label="顯示名稱" onChange={(event) => setDisplayName(event.target.value)} placeholder="姓名或顯示名稱" required value={displayName} style={inputStyle} />
-              <input aria-label="電子郵件" onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required type="email" value={email} style={inputStyle} />
-              <select aria-label="角色" onChange={(event) => setRole(event.target.value as ClientManagedRole)} value={role} style={inputStyle}>
-                <option value="manager">客服主管</option>
-                <option value="agent">第一線客服</option>
-                <option value="analyst">行銷／報表查看</option>
-              </select>
-              <button disabled={isSubmitting} type="submit" style={primaryButtonStyle}>{isSubmitting ? "寄送中..." : "寄送邀請"}</button>
-            </form>
-          </section>
+          <>
+            <section style={panelStyle}>
+              <h2 style={{ marginTop: 0 }}>邀請診所人員</h2>
+              <p style={{ color: "#66756f", marginTop: 0 }}>可邀請客服主管、第一線客服或行銷／報表查看人員。系統維護與診所管理者由平台端管理。</p>
+              <form onSubmit={submitInvite} style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <input aria-label="顯示名稱" onChange={(event) => setDisplayName(event.target.value)} placeholder="姓名或顯示名稱" required value={displayName} style={inputStyle} />
+                <input aria-label="電子郵件" onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required type="email" value={email} style={inputStyle} />
+                <select aria-label="角色" onChange={(event) => setRole(event.target.value as ClientManagedRole)} value={role} style={inputStyle}>
+                  <option value="manager">客服主管</option>
+                  <option value="agent">第一線客服</option>
+                  <option value="analyst">行銷／報表查看</option>
+                </select>
+                <button disabled={isSubmitting} type="submit" style={primaryButtonStyle}>{isSubmitting ? "寄送中..." : "寄送邀請"}</button>
+              </form>
+            </section>
+            <section style={panelStyle}>
+              <h2 style={{ marginTop: 0 }}>真人接手通知測試</h2>
+              <p style={{ color: "#66756f", marginTop: 0 }}>目前只測試高雄館指定信箱。測試信與正式摘要都不包含客人姓名、電話、LINE ID 或對話內容。</p>
+              <button disabled={isSendingDigestTest} onClick={sendHandoffDigestTest} style={secondaryButtonStyle} type="button">
+                {isSendingDigestTest ? "寄送中..." : "寄送高雄館測試信"}
+              </button>
+            </section>
+          </>
         ) : (
           <p style={noticeStyle}>只有診所管理者可以邀請、停用或調整人員權限。</p>
         )}
