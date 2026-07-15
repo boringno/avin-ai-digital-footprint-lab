@@ -34,14 +34,14 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
           padding: 28,
         }}
       >
-        <p style={{ color: "#4a6a62", fontSize: 14, margin: 0 }}>LINE AI Admin</p>
+        <p style={{ color: "#4a6a62", fontSize: 14, margin: 0 }}>LINE AI 客服後台</p>
         <h1 style={{ fontSize: 28, margin: "8px 0 20px" }}>客服後台登入</h1>
         {errorMessage ? (
           <p style={{ background: "#fff2f0", borderRadius: 12, color: "#9f1d1d", padding: 12 }}>{errorMessage}</p>
         ) : null}
         <form action="/api/admin/auth/login" method="post" style={{ display: "grid", gap: 14 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>Email</span>
+            <span>電子郵件</span>
             <input name="email" required type="email" style={{ border: "1px solid #b9cbc5", borderRadius: 10, fontSize: 16, padding: 12 }} />
           </label>
           <label style={{ display: "grid", gap: 6 }}>

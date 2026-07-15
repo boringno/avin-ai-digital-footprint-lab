@@ -16,8 +16,8 @@ export default async function HomePage() {
           boxShadow: "0 16px 40px rgba(22, 48, 43, 0.08)",
         }}
       >
-        <p style={{ margin: 0, color: "#4a6a62", fontSize: 14 }}>Live Demo MVP</p>
-        <h1 style={{ margin: "8px 0 12px", fontSize: 34 }}>LINE AI Clinic Webhook</h1>
+        <p style={{ margin: 0, color: "#4a6a62", fontSize: 14 }}>正式展示環境</p>
+        <h1 style={{ margin: "8px 0 12px", fontSize: 34 }}>LINE AI 醫美客服系統</h1>
         <p style={{ margin: 0, lineHeight: 1.7 }}>
           這個骨架目前只做安全路由：穩定 FAQ 自動回答，價格、預約、醫療風險與個人化問題一律轉真人。
         </p>
@@ -25,22 +25,22 @@ export default async function HomePage() {
 
       <section style={{ display: "grid", gap: 16, marginTop: 24 }}>
         <InfoCard
-          title="API"
+          title="系統資訊"
           rows={[
-            ["Health", "GET /api/health"],
-            ["Webhook", "POST /api/line/webhook"],
-            ["Recent logs", "GET /api/debug/recent"],
-            ["Send reply", String(config.sendReply)],
-            ["Include pending", String(config.includePending)],
+            ["健康檢查", "GET /api/health"],
+            ["LINE Webhook", "POST /api/line/webhook"],
+            ["近期記錄", "GET /api/debug/recent"],
+            ["自動回覆", String(config.sendReply)],
+            ["納入待審內容", String(config.includePending)],
           ]}
         />
         <InfoCard
-          title="Seed Summary"
+          title="資料匯入摘要"
           rows={[
-            ["Seed dir", config.seedDir],
-            ["FAQ rows", String(summary.faqCount)],
-            ["Handoff rows", String(summary.handoffCount)],
-            ["Pricing rows", String(summary.pricingCount)],
+            ["資料夾", config.seedDir],
+            ["FAQ 筆數", String(summary.faqCount)],
+            ["轉真人規則", String(summary.handoffCount)],
+            ["價格活動", String(summary.pricingCount)],
           ]}
         />
       </section>

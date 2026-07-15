@@ -100,7 +100,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
       <div style={{ margin: "0 auto", maxWidth: 980 }}>
         <header style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between", marginBottom: 18 }}>
           <div>
-            <p style={{ color: "#5e7a72", fontSize: 14, margin: 0 }}>Team Management</p>
+            <p style={{ color: "#5e7a72", fontSize: 14, margin: 0 }}>團隊管理</p>
             <h1 style={{ color: "#16302b", margin: "4px 0 0" }}>人員與權限管理</h1>
             <p style={{ color: "#66756f", fontSize: 14, margin: "6px 0 0" }}>帳號採邀請制；停用後將立即無法登入後台。</p>
           </div>

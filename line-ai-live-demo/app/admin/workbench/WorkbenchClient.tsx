@@ -379,7 +379,7 @@ export function WorkbenchClient({
               <header style={detailHeaderStyle}>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <p style={eyebrowStyle}>Conversation</p>
+                    <p style={eyebrowStyle}>對話內容</p>
                     {detail.state.hasNewCustomerMessage ? <span style={newMessagePillStyle}>有新訊息</span> : null}
                   </div>
                   <h2 style={detailNameStyle}>{detail.displayName}</h2>
