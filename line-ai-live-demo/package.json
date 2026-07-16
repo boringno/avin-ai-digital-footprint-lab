@@ -27,6 +27,7 @@
     "validate:content-versioning": "tsx scripts/validate-content-versioning.ts",
     "validate:retention-sweep": "tsx scripts/validate-retention-sweep.ts",
     "validate:admin-login-protection": "tsx scripts/validate-admin-login-protection.ts",
+    "validate:admin-team": "tsx scripts/validate-admin-team.ts",
     "validate:schedule-month": "tsx scripts/validate-schedule-month.ts",
     "validate:handoff-digest": "tsx scripts/validate-handoff-digest.ts",
     "validate:admin-notifications": "tsx scripts/validate-admin-notifications.ts"

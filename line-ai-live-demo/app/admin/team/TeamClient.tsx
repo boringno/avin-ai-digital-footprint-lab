@@ -118,6 +118,30 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
     }
   }
 
+  async function removeMember(member: TeamMember) {
+    if (busyMemberId || !window.confirm(`確定要移除「${member.displayName}」嗎？移除後對方將無法登入，且會從目前人員清單消失。`)) {
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    setBusyMemberId(member.id);
+    try {
+      const response = await fetch("/api/admin/team/member", {
+        body: JSON.stringify({ member_id: member.id }),
+        headers: { "content-type": "application/json" },
+        method: "DELETE",
+      });
+      await parseResponse(response);
+      await refreshMembers();
+      setNotice("人員已移除，已無法登入且不再顯示於目前清單。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "移除人員失敗，請稍後再試。");
+    } finally {
+      setBusyMemberId("");
+    }
+  }
+
   async function sendHandoffDigestTest() {
     if (isSendingDigestTest) return;
 
@@ -213,6 +237,9 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
                       <button disabled={isBusy} onClick={() => updateMember(member.id, { is_active: !member.isActive })} style={secondaryButtonStyle} type="button">
                         {isBusy ? "處理中..." : member.isActive ? "停用帳號" : "重新啟用"}
                       </button>
+                      <button disabled={isBusy} onClick={() => removeMember(member)} style={removeButtonStyle} type="button">
+                        {isBusy ? "處理中..." : "移除人員"}
+                      </button>
                     </div>
                   ) : null}
                 </article>
@@ -258,6 +285,17 @@ const secondaryButtonStyle = {
   border: "1px solid #b9cbc5",
   borderRadius: 10,
   color: "#16302b",
+  cursor: "pointer",
+  fontSize: 15,
+  minHeight: 42,
+  padding: "8px 12px",
+} satisfies React.CSSProperties;
+
+const removeButtonStyle = {
+  background: "#fff7f5",
+  border: "1px solid #d88a7a",
+  borderRadius: 10,
+  color: "#9f1d1d",
   cursor: "pointer",
   fontSize: 15,
   minHeight: 42,

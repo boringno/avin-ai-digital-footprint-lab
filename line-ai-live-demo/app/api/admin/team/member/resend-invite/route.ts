@@ -17,8 +17,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    await resendAdminTeamInvitation({ memberId: body.member_id, staff });
-    return NextResponse.json({ ok: true });
+    const result = await resendAdminTeamInvitation({ memberId: body.member_id, staff });
+    return NextResponse.json({ ok: true, mode: result.mode });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to resend invitation", ok: false }, { status: 400 });
   }

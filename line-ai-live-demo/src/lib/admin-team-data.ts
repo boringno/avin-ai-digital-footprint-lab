@@ -4,6 +4,7 @@ import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type ClientManagedRole = "agent" | "analyst" | "manager";
+export type TeamAccessEmailMode = "invitation" | "password_reset";
 
 export type TeamMember = {
   createdAt: string;
@@ -25,6 +26,7 @@ type StaffUserRow = {
   invited_at: string | null;
   is_active: boolean;
   last_invited_at: string | null;
+  removed_at: string | null;
   role: StaffRole;
   tenant_id: string;
 };
@@ -41,6 +43,25 @@ export function canViewTeam(staff: AdminStaffUser) {
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+export function isSelfTeamInvitation(input: {
+  actorAuthUserId: string;
+  actorEmail: string;
+  targetAuthUserId?: string;
+  targetEmail: string;
+}) {
+  const matchesEmail = normalizeEmail(input.actorEmail) === normalizeEmail(input.targetEmail);
+  const matchesAuthUser = Boolean(input.targetAuthUserId) && input.actorAuthUserId === input.targetAuthUserId;
+  return matchesEmail || matchesAuthUser;
+}
+
+export function getTeamAccessEmailMode(emailConfirmedAt: string | null | undefined): TeamAccessEmailMode {
+  return emailConfirmedAt ? "password_reset" : "invitation";
+}
+
+export function canRemoveTeamMember(input: { actorStaffId: string; targetRole: StaffRole; targetStaffId: string }) {
+  return input.actorStaffId !== input.targetStaffId && input.targetRole !== "owner" && input.targetRole !== "maintainer";
 }
 
 function assertClientManagedRole(role: string): asserts role is ClientManagedRole {
@@ -114,8 +135,9 @@ export async function loadAdminTeam(staff: AdminStaffUser) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("staff_users")
-    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
     .eq("tenant_id", staff.tenantId)
+    .is("removed_at", null)
     .order("created_at", { ascending: true })
     .returns<StaffUserRow[]>();
 
@@ -145,6 +167,17 @@ export async function inviteAdminTeamMember(input: {
 
   const supabase = getSupabaseServerClient();
   const existingAuthUser = await findAuthUserByEmail(email);
+  if (
+    isSelfTeamInvitation({
+      actorAuthUserId: input.staff.authUserId,
+      actorEmail: input.staff.email,
+      targetAuthUserId: existingAuthUser?.id,
+      targetEmail: email,
+    })
+  ) {
+    throw new Error("不可透過邀請流程變更自己的帳號或權限。");
+  }
+
   const now = new Date().toISOString();
   let authUserId = existingAuthUser?.id ?? "";
   let invitationSent = false;
@@ -184,12 +217,13 @@ export async function inviteAdminTeamMember(input: {
         invited_at: invitationSent ? now : undefined,
         is_active: true,
         last_invited_at: invitationSent ? now : undefined,
+        removed_at: null,
         role: input.role,
         tenant_id: input.staff.tenantId,
       },
       { onConflict: "auth_user_id" },
     )
-    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
     .single<StaffUserRow>();
 
   if (error || !data) {
@@ -215,14 +249,14 @@ export async function resendAdminTeamInvitation(input: { memberId: string; staff
   const supabase = getSupabaseServerClient();
   const { data: member, error: memberError } = await supabase
     .from("staff_users")
-    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
     .eq("id", input.memberId)
     .eq("tenant_id", input.staff.tenantId)
     .maybeSingle<StaffUserRow>();
   if (memberError || !member) {
     throw new Error("Team member was not found.");
   }
-  if (!member.is_active) {
+  if (member.removed_at || !member.is_active) {
     throw new Error("This account is disabled and cannot receive an invitation.");
   }
 
@@ -230,21 +264,27 @@ export async function resendAdminTeamInvitation(input: { memberId: string; staff
   if (authError || !authData.user) {
     throw new Error("The account could not be found in authentication.");
   }
-  if (authData.user.email_confirmed_at) {
-    throw new Error("This account has already completed activation. Use password reset instead.");
-  }
-
   const email = normalizeEmail(authData.user.email ?? member.email ?? "");
   if (!email) {
     throw new Error("This account does not have an email address.");
   }
   const config = getRuntimeConfig();
-  const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
-    data: { name: member.display_name },
-    redirectTo: `${config.appBaseUrl.replace(/\/$/, "")}/admin/activate`,
-  });
-  if (inviteError) {
-    throw new Error(getInvitationErrorMessage(inviteError));
+  const redirectTo = `${config.appBaseUrl.replace(/\/$/, "")}/admin/activate`;
+  const mode = getTeamAccessEmailMode(authData.user.email_confirmed_at);
+
+  if (mode === "invitation") {
+    const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
+      data: { name: member.display_name },
+      redirectTo,
+    });
+    if (inviteError) {
+      throw new Error(getInvitationErrorMessage(inviteError));
+    }
+  } else {
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (resetError) {
+      throw new Error(getInvitationErrorMessage(resetError));
+    }
   }
 
   const now = new Date().toISOString();
@@ -258,12 +298,13 @@ export async function resendAdminTeamInvitation(input: { memberId: string; staff
   }
 
   await writeAdminAuditLog({
-    action: "team_member_invitation_resent",
-    after: { role: member.role },
+    action: mode === "invitation" ? "team_member_invitation_resent" : "team_member_password_reset_sent",
+    after: { mode, role: member.role },
     staff: input.staff,
     targetId: member.id,
     targetTable: "staff_users",
   });
+  return { mode };
 }
 
 export async function updateAdminTeamMember(input: {
@@ -279,7 +320,7 @@ export async function updateAdminTeamMember(input: {
   const supabase = getSupabaseServerClient();
   const { data: before, error: loadError } = await supabase
     .from("staff_users")
-    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
     .eq("id", input.memberId)
     .eq("tenant_id", input.staff.tenantId)
     .maybeSingle<StaffUserRow>();
@@ -287,11 +328,11 @@ export async function updateAdminTeamMember(input: {
   if (loadError || !before) {
     throw new Error("Team member was not found.");
   }
-  if (before.id === input.staff.id) {
-    throw new Error("You cannot change your own role or access from this page.");
-  }
-  if (before.role === "owner" || before.role === "maintainer") {
+  if (!canRemoveTeamMember({ actorStaffId: input.staff.id, targetRole: before.role, targetStaffId: before.id })) {
     throw new Error("Owner and maintainer accounts are managed outside the client team page.");
+  }
+  if (before.removed_at) {
+    throw new Error("This team member has already been removed.");
   }
 
   const patch: { is_active?: boolean; role?: ClientManagedRole } = {};
@@ -311,7 +352,7 @@ export async function updateAdminTeamMember(input: {
     .update(patch)
     .eq("id", before.id)
     .eq("tenant_id", input.staff.tenantId)
-    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
     .single<StaffUserRow>();
 
   if (error || !data) {
@@ -328,4 +369,45 @@ export async function updateAdminTeamMember(input: {
   });
 
   return toMember(data, await getAuthEmailById(data.auth_user_id));
+}
+
+export async function removeAdminTeamMember(input: { memberId: string; staff: AdminStaffUser }) {
+  if (!canManageTeam(input.staff)) {
+    throw new Error("Only the clinic owner can remove team members.");
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data: before, error: loadError } = await supabase
+    .from("staff_users")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, removed_at, created_at")
+    .eq("id", input.memberId)
+    .eq("tenant_id", input.staff.tenantId)
+    .maybeSingle<StaffUserRow>();
+  if (loadError || !before) {
+    throw new Error("Team member was not found.");
+  }
+  if (!canRemoveTeamMember({ actorStaffId: input.staff.id, targetRole: before.role, targetStaffId: before.id })) {
+    throw new Error("You cannot remove your own, owner, or maintainer account from this page.");
+  }
+  if (before.removed_at) {
+    throw new Error("This team member has already been removed.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("staff_users")
+    .update({ is_active: false, removed_at: new Date().toISOString() })
+    .eq("id", before.id)
+    .eq("tenant_id", input.staff.tenantId);
+  if (updateError) {
+    throw new Error(`Failed to remove team member: ${updateError.message}`);
+  }
+
+  await writeAdminAuditLog({
+    action: "team_member_removed",
+    after: { is_active: false, role: before.role },
+    before: { is_active: before.is_active, role: before.role },
+    staff: input.staff,
+    targetId: before.id,
+    targetTable: "staff_users",
+  });
 }
