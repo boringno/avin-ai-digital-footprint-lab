@@ -96,6 +96,28 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
     }
   }
 
+  async function resendInvite(memberId: string) {
+    if (busyMemberId) return;
+
+    setError("");
+    setNotice("");
+    setBusyMemberId(memberId);
+    try {
+      const response = await fetch("/api/admin/team/member/resend-invite", {
+        body: JSON.stringify({ member_id: memberId }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      await parseResponse(response);
+      setNotice("邀請信已重新寄送，對方請在一小時內開啟連結並設定密碼。");
+      await refreshMembers();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "重新寄送邀請失敗，請稍後再試。");
+    } finally {
+      setBusyMemberId("");
+    }
+  }
+
   async function sendHandoffDigestTest() {
     if (isSendingDigestTest) return;
 
@@ -183,6 +205,11 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
                         <option value="agent">第一線客服</option>
                         <option value="analyst">行銷／報表查看</option>
                       </select>
+                      {member.isActive ? (
+                        <button disabled={isBusy} onClick={() => resendInvite(member.id)} style={secondaryButtonStyle} type="button">
+                          重新寄送邀請
+                        </button>
+                      ) : null}
                       <button disabled={isBusy} onClick={() => updateMember(member.id, { is_active: !member.isActive })} style={secondaryButtonStyle} type="button">
                         {isBusy ? "處理中..." : member.isActive ? "停用帳號" : "重新啟用"}
                       </button>

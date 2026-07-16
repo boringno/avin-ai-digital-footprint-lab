@@ -49,6 +49,17 @@ function assertClientManagedRole(role: string): asserts role is ClientManagedRol
   }
 }
 
+function getInvitationErrorMessage(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  if (/email address not authorized|smtp/i.test(message)) {
+    return "系統尚未設定正式寄信服務，暫時無法寄送帳號邀請。";
+  }
+  if (/rate limit|too many/i.test(message)) {
+    return "寄信次數暫時超過限制，請稍後再試。";
+  }
+  return "帳號邀請寄送失敗，請稍後再試或聯絡系統管理者。";
+}
+
 async function getAuthEmailById(authUserId: string) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase.auth.admin.getUserById(authUserId);
@@ -138,14 +149,14 @@ export async function inviteAdminTeamMember(input: {
   let authUserId = existingAuthUser?.id ?? "";
   let invitationSent = false;
 
-  if (!existingAuthUser) {
+  if (!existingAuthUser || !existingAuthUser.email_confirmed_at) {
     const config = getRuntimeConfig();
     const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, {
       data: { name: displayName },
-      redirectTo: `${config.appBaseUrl.replace(/\/$/, "")}/admin/login`,
+      redirectTo: `${config.appBaseUrl.replace(/\/$/, "")}/admin/activate`,
     });
     if (error || !data.user) {
-      throw new Error(`Failed to send invitation: ${error?.message ?? "No user was created"}`);
+      throw new Error(getInvitationErrorMessage(error));
     }
     authUserId = data.user.id;
     invitationSent = true;
@@ -194,6 +205,65 @@ export async function inviteAdminTeamMember(input: {
   });
 
   return { invitationSent, member: toMember(data, email) };
+}
+
+export async function resendAdminTeamInvitation(input: { memberId: string; staff: AdminStaffUser }) {
+  if (!canManageTeam(input.staff)) {
+    throw new Error("Only the clinic owner can resend team invitations.");
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data: member, error: memberError } = await supabase
+    .from("staff_users")
+    .select("id, tenant_id, auth_user_id, email, display_name, role, is_active, invited_at, last_invited_at, created_at")
+    .eq("id", input.memberId)
+    .eq("tenant_id", input.staff.tenantId)
+    .maybeSingle<StaffUserRow>();
+  if (memberError || !member) {
+    throw new Error("Team member was not found.");
+  }
+  if (!member.is_active) {
+    throw new Error("This account is disabled and cannot receive an invitation.");
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.admin.getUserById(member.auth_user_id);
+  if (authError || !authData.user) {
+    throw new Error("The account could not be found in authentication.");
+  }
+  if (authData.user.email_confirmed_at) {
+    throw new Error("This account has already completed activation. Use password reset instead.");
+  }
+
+  const email = normalizeEmail(authData.user.email ?? member.email ?? "");
+  if (!email) {
+    throw new Error("This account does not have an email address.");
+  }
+  const config = getRuntimeConfig();
+  const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
+    data: { name: member.display_name },
+    redirectTo: `${config.appBaseUrl.replace(/\/$/, "")}/admin/activate`,
+  });
+  if (inviteError) {
+    throw new Error(getInvitationErrorMessage(inviteError));
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("staff_users")
+    .update({ last_invited_at: now })
+    .eq("id", member.id)
+    .eq("tenant_id", input.staff.tenantId);
+  if (updateError) {
+    throw new Error("The invitation was sent but its record could not be updated.");
+  }
+
+  await writeAdminAuditLog({
+    action: "team_member_invitation_resent",
+    after: { role: member.role },
+    staff: input.staff,
+    targetId: member.id,
+    targetTable: "staff_users",
+  });
 }
 
 export async function updateAdminTeamMember(input: {

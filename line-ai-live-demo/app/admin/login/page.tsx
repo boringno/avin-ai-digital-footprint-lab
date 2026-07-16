@@ -1,3 +1,5 @@
+import { InviteLinkRedirect } from "./InviteLinkRedirect";
+
 type LoginPageProps = {
   searchParams?: Promise<{
     error?: string;
@@ -25,6 +27,7 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
 
   return (
     <main style={{ maxWidth: 420, margin: "0 auto", padding: "72px 20px" }}>
+      <InviteLinkRedirect />
       <section
         style={{
           background: "#fff",
