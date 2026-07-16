@@ -66,6 +66,7 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
             登入
           </button>
         </form>
+        <p style={{ marginBottom: 0, marginTop: 18 }}><a href="/admin/password-reset">忘記密碼？</a></p>
       </section>
     </main>
   );
