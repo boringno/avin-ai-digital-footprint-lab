@@ -6,10 +6,22 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasAdminSession = Boolean(request.cookies.get(ADMIN_ACCESS_COOKIE)?.value);
 
-  if (pathname.startsWith("/admin/login") || pathname.startsWith("/admin/forbidden")) {
+  const publicAdminPage =
+    pathname.startsWith("/admin/login") ||
+    pathname.startsWith("/admin/forbidden");
+  const publicAuthFlowPage =
+    pathname.startsWith("/admin/activate") ||
+    pathname.startsWith("/admin/password-reset");
+
+  if (publicAdminPage) {
     if (hasAdminSession) {
       return NextResponse.redirect(new URL("/admin/workbench", request.url));
     }
+    return NextResponse.next();
+  }
+
+  // Invite and password-reset links must work before, or alongside, an admin session.
+  if (publicAuthFlowPage) {
     return NextResponse.next();
   }
 
@@ -25,7 +37,9 @@ export function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/api/admin") &&
     !pathname.startsWith("/api/admin/auth/login") &&
-    !pathname.startsWith("/api/admin/auth/logout")
+    !pathname.startsWith("/api/admin/auth/logout") &&
+    !pathname.startsWith("/api/admin/auth/activate") &&
+    !pathname.startsWith("/api/admin/auth/request-password-reset")
   ) {
     if (!hasAdminSession) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
