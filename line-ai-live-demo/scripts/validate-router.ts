@@ -12,6 +12,9 @@ type TestCase = {
   replyIncludes?: string[];
 };
 
+// Pricing campaigns are date-bound; keep router regression tests deterministic.
+const VALIDATION_NOW = new Date("2026-07-21T04:00:00.000Z");
+
 const TEST_CASES: TestCase[] = [
   {
     expectedDecisionType: "clinic_info_reply",
@@ -112,6 +115,12 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "medical_guidance_reply",
     expectedMatchedKey: "pregnancy_caution",
     message: "孕婦適合皮秒嗎？",
+  },
+  {
+    expectedDecisionType: "medical_guidance_reply",
+    expectedMatchedKey: "pregnancy_caution",
+    message: "我懷孕了想預約肉毒",
+    replyExcludes: ["方便時段", "聯絡電話"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
@@ -658,6 +667,7 @@ async function main() {
       conversationContext: testCase.conversationContext,
       includePending: false,
       message: testCase.message,
+      now: VALIDATION_NOW,
     });
 
     results.push({

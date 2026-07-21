@@ -1688,6 +1688,21 @@ export async function routeCustomerMessage({
   const seedData = await loadSeedData();
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
 
+  // Pregnancy, breastfeeding, and trying-to-conceive guidance must win over booking intake.
+  const pregnancyReply = getPregnancyGuidanceReply(
+    trimmedMessage,
+    matchedTreatment?.name ?? nextContext.lastReferencedTreatment,
+    seedData.pregnancyRules,
+    includePending,
+  );
+  if (pregnancyReply) {
+    nextContext.lastIntent = pregnancyReply.matchedKey;
+    return {
+      ...pregnancyReply,
+      nextContext,
+    };
+  }
+
   if (isCapabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "capability_intro";
     return {
@@ -1782,22 +1797,6 @@ export async function routeCustomerMessage({
       nextContext,
       replyMessages: [buildTreatmentCarouselMessage()],
       replyText: getTreatmentCarouselReplyText(),
-    };
-  }
-
-  const pregnancyReply = getPregnancyGuidanceReply(
-    trimmedMessage,
-    matchedTreatment?.name ?? nextContext.lastReferencedTreatment,
-    seedData.pregnancyRules,
-    includePending,
-  );
-  if (pregnancyReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
-      ? "booking_intake"
-      : pregnancyReply.matchedKey;
-    return {
-      ...pregnancyReply,
-      nextContext,
     };
   }
 
