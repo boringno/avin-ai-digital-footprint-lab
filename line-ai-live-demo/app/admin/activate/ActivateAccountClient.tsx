@@ -5,7 +5,6 @@ import { FormEvent, useEffect, useState } from "react";
 export function ActivateAccountClient() {
   const [accessToken, setAccessToken] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +19,6 @@ export function ActivateAccountClient() {
     if (submitting) return;
 
     setError("");
-    setNotice("");
     if (!accessToken) {
       setError("此邀請連結已失效，請聯絡診所管理者重新寄送。");
       return;
@@ -45,9 +43,7 @@ export function ActivateAccountClient() {
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? "設定密碼失敗，請稍後再試。");
       }
-      setNotice("密碼設定完成，請使用您的 Email 與新密碼登入後台。");
-      setPassword("");
-      setPasswordConfirmation("");
+      window.location.assign("/admin/login?password_set=1");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "設定密碼失敗，請稍後再試。");
     } finally {
@@ -62,7 +58,6 @@ export function ActivateAccountClient() {
         <h1 style={{ fontSize: 28, margin: "8px 0 10px" }}>設定後台密碼</h1>
         <p style={{ color: "#66756f", lineHeight: 1.6, margin: "0 0 20px" }}>完成後請使用 Email 與新密碼登入。請勿與其他人共用帳號。</p>
         {error ? <p style={errorStyle}>{error}</p> : null}
-        {notice ? <p style={noticeStyle}>{notice} <a href="/admin/login">前往登入</a></p> : null}
         <form onSubmit={submit} style={{ display: "grid", gap: 14 }}>
           <label style={{ display: "grid", gap: 6 }}>
             <span>新密碼</span>
@@ -100,12 +95,5 @@ const errorStyle = {
   background: "#fff2f0",
   borderRadius: 12,
   color: "#9f1d1d",
-  padding: 12,
-} satisfies React.CSSProperties;
-
-const noticeStyle = {
-  background: "#e8f7ed",
-  borderRadius: 12,
-  color: "#126838",
   padding: 12,
 } satisfies React.CSSProperties;

@@ -3,6 +3,7 @@ import { InviteLinkRedirect } from "./InviteLinkRedirect";
 type LoginPageProps = {
   searchParams?: Promise<{
     error?: string;
+    password_set?: string;
   }>;
 };
 
@@ -24,6 +25,7 @@ function getErrorMessage(error?: string) {
 export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
   const params = searchParams ? await searchParams : {};
   const errorMessage = getErrorMessage(params?.error);
+  const passwordSet = params?.password_set === "1";
 
   return (
     <main style={{ maxWidth: 420, margin: "0 auto", padding: "72px 20px" }}>
@@ -41,6 +43,9 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
         <h1 style={{ fontSize: 28, margin: "8px 0 20px" }}>客服後台登入</h1>
         {errorMessage ? (
           <p style={{ background: "#fff2f0", borderRadius: 12, color: "#9f1d1d", padding: 12 }}>{errorMessage}</p>
+        ) : null}
+        {passwordSet ? (
+          <p style={{ background: "#e8f7ed", borderRadius: 12, color: "#126838", padding: 12 }}>密碼設定完成，請使用 Email 與新密碼登入。</p>
         ) : null}
         <form action="/api/admin/auth/login" method="post" style={{ display: "grid", gap: 14 }}>
           <label style={{ display: "grid", gap: 6 }}>
