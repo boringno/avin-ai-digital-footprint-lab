@@ -14,8 +14,8 @@ export async function POST(request: Request) {
   const accessToken = body.accessToken?.trim() ?? "";
   const password = body.password ?? "";
 
-  if (!accessToken || password.length < 12) {
-    return NextResponse.json({ error: "請使用有效邀請連結，並設定至少 12 碼的密碼。", ok: false }, { status: 400 });
+  if (!accessToken || password.length < 8) {
+    return NextResponse.json({ error: "請使用有效邀請連結，並設定至少 8 碼的密碼。", ok: false }, { status: 400 });
   }
 
   const supabase = getSupabaseServerClient();

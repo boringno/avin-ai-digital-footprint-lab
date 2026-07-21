@@ -25,8 +25,8 @@ export function ActivateAccountClient() {
       setError("此邀請連結已失效，請聯絡診所管理者重新寄送。");
       return;
     }
-    if (password.length < 12) {
-      setError("密碼至少需要 12 碼。");
+    if (password.length < 8) {
+      setError("密碼至少需要 8 碼。");
       return;
     }
     if (password !== passwordConfirmation) {
@@ -66,11 +66,11 @@ export function ActivateAccountClient() {
         <form onSubmit={submit} style={{ display: "grid", gap: 14 }}>
           <label style={{ display: "grid", gap: 6 }}>
             <span>新密碼</span>
-            <input autoComplete="new-password" disabled={!accessToken || submitting} minLength={12} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} style={inputStyle} />
+            <input autoComplete="new-password" disabled={!accessToken || submitting} minLength={8} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} style={inputStyle} />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
             <span>再次輸入新密碼</span>
-            <input autoComplete="new-password" disabled={!accessToken || submitting} minLength={12} onChange={(event) => setPasswordConfirmation(event.target.value)} required type="password" value={passwordConfirmation} style={inputStyle} />
+            <input autoComplete="new-password" disabled={!accessToken || submitting} minLength={8} onChange={(event) => setPasswordConfirmation(event.target.value)} required type="password" value={passwordConfirmation} style={inputStyle} />
           </label>
           <button disabled={!accessToken || submitting} type="submit" style={buttonStyle}>{submitting ? "設定中..." : "完成設定"}</button>
         </form>
