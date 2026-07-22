@@ -1,12 +1,13 @@
 export const editableContentTypes = ["faq", "campaign"] as const;
 
 export type EditableContentType = (typeof editableContentTypes)[number];
-export type ContentVersionStatus = "draft" | "in_review" | "published" | "disabled" | "expired";
+export type ContentVersionStatus = "draft" | "in_review" | "changes_requested" | "approved" | "published" | "disabled" | "expired";
 
 export type ContentDraftInput = {
   changeReason: string;
   contentKey: string;
   contentType: EditableContentType;
+  displayName: string;
   endAt: string | null;
   payload: Record<string, unknown>;
   startAt: string | null;
@@ -15,6 +16,9 @@ export type ContentDraftInput = {
 const contentKeyPattern = /^[a-z0-9][a-z0-9_-]{1,79}$/;
 
 export function assertContentDraftInput(input: ContentDraftInput) {
+  if (!input.displayName.trim()) {
+    throw new Error("A display name is required");
+  }
   if (!contentKeyPattern.test(input.contentKey)) {
     throw new Error("內容識別名稱請使用 2 至 80 碼的小寫英文、數字、- 或 _。");
   }
@@ -42,10 +46,13 @@ export function assertContentDraftInput(input: ContentDraftInput) {
   }
 }
 
-export function canTransitionContentStatus(from: ContentVersionStatus, action: "submit" | "publish" | "disable") {
+export type ContentVersionAction = "submit" | "approve" | "request_changes" | "publish" | "disable";
+
+export function canTransitionContentStatus(from: ContentVersionStatus, action: ContentVersionAction) {
   if (action === "submit") return from === "draft";
-  if (action === "publish") return from === "in_review";
-  return from === "draft" || from === "in_review" || from === "published";
+  if (action === "approve" || action === "request_changes") return from === "in_review";
+  if (action === "publish") return from === "approved";
+  return from === "draft" || from === "in_review" || from === "changes_requested" || from === "approved" || from === "published";
 }
 
 function assertRequiredText(payload: Record<string, unknown>, key: string, message: string) {

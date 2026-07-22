@@ -143,6 +143,19 @@ export function canEditContent(role: StaffRole) {
   return role === "owner" || role === "manager";
 }
 
+export function canCreateContentDraft(role: StaffRole) {
+  return role === "owner" || role === "manager" || role === "maintainer";
+}
+
 export function canReviewContent(role: StaffRole) {
+  return role === "maintainer";
+}
+
+// Publishing remains gated by review, but either the clinic owner or platform maintainer may release it.
+export function canPublishContent(role: StaffRole) {
+  return role === "owner" || role === "maintainer";
+}
+
+export function canSubmitContentSource(role: StaffRole) {
   return role === "owner" || role === "manager";
 }

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { canEditContent, canReviewContent, canUseWorkbench, canViewContent, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { canCreateContentDraft, canPublishContent, canReviewContent, canUseWorkbench, canViewContent, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
 import { loadAdminContent } from "@/lib/admin-content-data";
 
 import { ContentClient } from "./ContentClient";
@@ -12,7 +12,8 @@ export default async function AdminContentPage() {
 
   return (
     <ContentClient
-      canEdit={canEditContent(staff.role)}
+      canEdit={canCreateContentDraft(staff.role)}
+      canPublish={canPublishContent(staff.role)}
       canReview={canReviewContent(staff.role)}
       canUseWorkbench={canUseWorkbench(staff.role)}
       initialItems={await loadAdminContent(staff)}

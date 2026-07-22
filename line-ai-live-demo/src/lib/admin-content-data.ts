@@ -1,5 +1,5 @@
 import type { AdminStaffUser } from "@/lib/admin-auth";
-import { canEditContent, canReviewContent, canViewContent } from "@/lib/admin-auth";
+import { canCreateContentDraft, canPublishContent, canReviewContent, canViewContent } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
 import {
   assertContentDraftInput,
@@ -18,6 +18,7 @@ export type AdminContentVersion = {
   id: string;
   payload: Record<string, unknown>;
   publishedAt: string | null;
+  reviewNote: string | null;
   reviewedBy: string | null;
   startAt: string | null;
   status: ContentVersionStatus;
@@ -26,6 +27,7 @@ export type AdminContentVersion = {
 
 export type AdminContentItem = {
   contentKey: string;
+  displayName: string;
   contentType: EditableContentType;
   currentVersionId: string | null;
   id: string;
@@ -35,6 +37,7 @@ export type AdminContentItem = {
 
 type ContentItemRow = {
   content_key: string;
+  display_name: string;
   content_type: EditableContentType;
   current_version_id: string | null;
   id: string;
@@ -51,6 +54,7 @@ type ContentVersionRow = {
   item_id: string;
   payload_json: Record<string, unknown>;
   published_at: string | null;
+  review_note: string | null;
   reviewed_by: string | null;
   start_at: string | null;
   status: ContentVersionStatus;
@@ -69,7 +73,7 @@ export async function loadAdminContent(staff: AdminStaffUser) {
   const supabase = getSupabaseServerClient();
   const { data: items, error: itemError } = await supabase
     .from("content_items")
-    .select("id, tenant_id, content_type, content_key, current_version_id, is_archived")
+    .select("id, tenant_id, content_type, content_key, display_name, current_version_id, is_archived")
     .eq("tenant_id", staff.tenantId)
     .in("content_type", ["faq", "campaign"])
     .order("updated_at", { ascending: false })
@@ -84,7 +88,7 @@ export async function loadAdminContent(staff: AdminStaffUser) {
   }
   const { data: versions, error: versionError } = await supabase
     .from("content_versions")
-    .select("id, tenant_id, item_id, version_no, payload_json, status, start_at, end_at, change_reason, edited_by, reviewed_by, published_at, created_at")
+    .select("id, tenant_id, item_id, version_no, payload_json, status, start_at, end_at, change_reason, review_note, edited_by, reviewed_by, published_at, created_at")
     .eq("tenant_id", staff.tenantId)
     .in("item_id", itemIds)
     .order("version_no", { ascending: false })
@@ -95,6 +99,7 @@ export async function loadAdminContent(staff: AdminStaffUser) {
 
   return (items ?? []).map((item) => ({
     contentKey: item.content_key,
+    displayName: item.display_name,
     contentType: item.content_type,
     currentVersionId: item.current_version_id,
     id: item.id,
@@ -104,19 +109,21 @@ export async function loadAdminContent(staff: AdminStaffUser) {
 }
 
 export async function createAdminContentDraft(input: ContentDraftInput & { staff: AdminStaffUser }) {
-  if (!canEditContent(input.staff.role)) {
+  if (!canCreateContentDraft(input.staff.role)) {
     throw new Error("您沒有建立內容草稿的權限。");
   }
   if (!hasSupabaseServerConfig()) {
     throw new Error("內容資料庫尚未設定完成。");
   }
-  assertContentDraftInput(input);
+  const contentKey = input.contentKey || `${input.contentType}-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+  assertContentDraftInput({ ...input, contentKey });
 
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase.rpc("create_content_draft", {
     p_change_reason: input.changeReason.trim(),
-    p_content_key: input.contentKey,
+    p_content_key: contentKey,
     p_content_type: input.contentType,
+    p_display_name: input.displayName.trim(),
     p_editor_id: input.staff.id,
     p_end_at: input.endAt,
     p_payload_json: input.payload,
@@ -129,7 +136,7 @@ export async function createAdminContentDraft(input: ContentDraftInput & { staff
 
   await writeAdminAuditLog({
     action: "content_version.draft_created",
-    after: { content_key: input.contentKey, content_type: input.contentType },
+    after: { content_key: contentKey, content_type: input.contentType, display_name: input.displayName.trim() },
     staff: input.staff,
     targetId: String(data),
     targetTable: "content_versions",
@@ -138,12 +145,17 @@ export async function createAdminContentDraft(input: ContentDraftInput & { staff
 }
 
 export async function updateAdminContentVersion(input: {
-  action: "submit" | "publish" | "disable";
+  action: "submit" | "approve" | "request_changes" | "publish" | "disable";
+  reviewNote?: string;
   staff: AdminStaffUser;
   versionId: string;
 }) {
-  const needsReviewPermission = input.action === "publish" || input.action === "disable";
-  if (needsReviewPermission ? !canReviewContent(input.staff.role) : !canEditContent(input.staff.role)) {
+  const canAct = input.action === "submit"
+    ? canCreateContentDraft(input.staff.role)
+    : input.action === "approve" || input.action === "request_changes"
+      ? canReviewContent(input.staff.role)
+      : canPublishContent(input.staff.role);
+  if (!canAct) {
     throw new Error("您沒有執行此內容操作的權限。");
   }
   if (!hasSupabaseServerConfig()) {
@@ -174,6 +186,16 @@ export async function updateAdminContentVersion(input: {
     if (error) {
       throw new Error(`送審失敗：${error.message}`);
     }
+  } else if (input.action === "approve" || input.action === "request_changes") {
+    const { error } = await supabase
+      .from("content_versions")
+      .update({ review_note: input.reviewNote?.trim() || null, reviewed_by: input.staff.id, status: input.action === "approve" ? "approved" : "changes_requested" })
+      .eq("id", before.id)
+      .eq("tenant_id", input.staff.tenantId)
+      .eq("status", "in_review");
+    if (error) {
+      throw new Error(`Content engineering review failed: ${error.message}`);
+    }
   } else if (input.action === "publish") {
     const { error } = await supabase.rpc("publish_content_version", {
       p_reviewer_id: input.staff.id,
@@ -196,7 +218,10 @@ export async function updateAdminContentVersion(input: {
 
   await writeAdminAuditLog({
     action: `content_version.${input.action}`,
-    after: { status: input.action === "submit" ? "in_review" : input.action === "publish" ? "published" : "disabled" },
+    after: {
+      review_note: input.action === "approve" || input.action === "request_changes" ? input.reviewNote?.trim() || null : undefined,
+      status: input.action === "submit" ? "in_review" : input.action === "approve" ? "approved" : input.action === "request_changes" ? "changes_requested" : input.action === "publish" ? "published" : "disabled",
+    },
     before: { status: before.status },
     staff: input.staff,
     targetId: before.id,
@@ -213,6 +238,7 @@ function toContentVersion(row: ContentVersionRow): AdminContentVersion {
     id: row.id,
     payload: row.payload_json,
     publishedAt: row.published_at,
+    reviewNote: row.review_note,
     reviewedBy: row.reviewed_by,
     startAt: row.start_at,
     status: row.status,

@@ -13,7 +13,9 @@ type DraftForm = {
   campaignName: string;
   changeReason: string;
   contentKey: string;
+  displayName: string;
   contentType: EditableContentType;
+  contentPurpose: ContentPurpose;
   endAt: string;
   fallbackMessage: string;
   priceText: string;
@@ -23,6 +25,40 @@ type DraftForm = {
   treatmentName: string;
 };
 
+type ContentPurpose =
+  | "faq_general"
+  | "clinic_information"
+  | "payment"
+  | "first_visit"
+  | "booking"
+  | "treatment_intro"
+  | "campaign_pricing"
+  | "aftercare"
+  | "pregnancy_nursing"
+  | "other";
+
+const contentPurposeOptions: Array<{ label: string; type: EditableContentType; value: ContentPurpose }> = [
+  { label: "常見問題", type: "faq", value: "faq_general" },
+  { label: "館別、地址與營業資訊", type: "faq", value: "clinic_information" },
+  { label: "付款方式", type: "faq", value: "payment" },
+  { label: "初診準備", type: "faq", value: "first_visit" },
+  { label: "預約、改期或取消", type: "faq", value: "booking" },
+  { label: "療程第一層介紹", type: "faq", value: "treatment_intro" },
+  { label: "活動與價格", type: "campaign", value: "campaign_pricing" },
+  { label: "術後照護", type: "faq", value: "aftercare" },
+  { label: "懷孕、哺乳或備孕", type: "faq", value: "pregnancy_nursing" },
+  { label: "其他（需工程師判定）", type: "faq", value: "other" },
+];
+
+function contentPurposeFor(type: EditableContentType, payload: Record<string, unknown>): ContentPurpose {
+  const value = payload.content_purpose;
+  if (typeof value === "string" && contentPurposeOptions.some((option) => option.value === value)) {
+    return value as ContentPurpose;
+  }
+
+  return type === "campaign" ? "campaign_pricing" : "faq_general";
+}
+
 const emptyDraft: DraftForm = {
   aliases: "",
   answerText: "",
@@ -30,7 +66,9 @@ const emptyDraft: DraftForm = {
   campaignName: "",
   changeReason: "",
   contentKey: "",
+  displayName: "",
   contentType: "faq",
+  contentPurpose: "faq_general",
   endAt: "",
   fallbackMessage: "請由客服協助確認最新活動內容。",
   priceText: "",
@@ -41,6 +79,8 @@ const emptyDraft: DraftForm = {
 };
 
 const statusLabels: Record<AdminContentVersion["status"], string> = {
+  approved: "工程審核完成",
+  changes_requested: "請修正後重送",
   disabled: "已停用",
   draft: "草稿",
   expired: "已過期",
@@ -50,12 +90,14 @@ const statusLabels: Record<AdminContentVersion["status"], string> = {
 
 export function ContentClient({
   canEdit,
+  canPublish,
   canReview,
   canUseWorkbench,
   initialItems,
   staffName,
 }: {
   canEdit: boolean;
+  canPublish: boolean;
   canReview: boolean;
   canUseWorkbench: boolean;
   initialItems: AdminContentItem[];
@@ -84,7 +126,8 @@ export function ContentClient({
         body: JSON.stringify({
           change_reason: draft.changeReason,
           content_key: draft.contentKey.trim(),
-          content_type: draft.contentType,
+          content_type: contentPurposeOptions.find((option) => option.value === draft.contentPurpose)?.type ?? draft.contentType,
+          display_name: draft.displayName.trim(),
           end_at: draft.endAt ? new Date(draft.endAt).toISOString() : null,
           payload: buildPayload(draft),
           start_at: draft.startAt ? new Date(draft.startAt).toISOString() : null,
@@ -104,21 +147,28 @@ export function ContentClient({
     }
   }
 
-  async function act(versionId: string, action: "submit" | "publish" | "disable") {
+  async function act(versionId: string, action: "submit" | "approve" | "request_changes" | "publish" | "disable") {
     if (busyId) return;
     setBusyId(versionId);
     setError("");
     setNotice("");
     try {
+      const reviewNote = action === "approve" || action === "request_changes" ? window.prompt("工程審核備註（退回修正時請填寫原因）") ?? "" : "";
       const response = await fetch("/api/admin/content", {
-        body: JSON.stringify({ action, version_id: versionId }),
+        body: JSON.stringify({ action, review_note: reviewNote, version_id: versionId }),
         headers: { "content-type": "application/json" },
         method: "PATCH",
       });
       const body = (await response.json()) as { error?: string; items?: AdminContentItem[]; ok?: boolean };
       if (!response.ok || !body.ok) throw new Error(body.error ?? "內容操作失敗，請重新整理後再試。");
       setItems(body.items ?? []);
-      setNotice(action === "submit" ? "草稿已送審，尚未對客人生效。" : action === "publish" ? "內容已發布。runtime 尚未切換前，不會改變 LINE 回覆。" : "版本已停用。");
+      setNotice(
+        action === "submit" ? "草稿已送交工程師審核，尚未對客人生效。"
+          : action === "approve" ? "工程審核完成，診所管理者或工程師可確認發布。"
+          : action === "request_changes" ? "已退回修正；請依工程備註建立新草稿後重送。"
+          : action === "publish" ? "內容已發布。runtime 尚未切換前，不會改變 LINE 回覆。"
+          : "版本已停用。",
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "內容操作失敗，請重新整理後再試。");
     } finally {
@@ -135,7 +185,9 @@ export function ContentClient({
       campaignName: stringValue(payload.campaign_name),
       changeReason: `依版本 ${version.versionNo} 更新`,
       contentKey: item.contentKey,
+      displayName: item.displayName,
       contentType: item.contentType,
+      contentPurpose: contentPurposeFor(item.contentType, payload),
       endAt: toDateTimeLocal(version.endAt),
       fallbackMessage: stringValue(payload.fallback_message) || "請由客服協助確認最新活動內容。",
       priceText: stringValue(payload.price_text),
@@ -160,6 +212,7 @@ export function ContentClient({
           <div style={headerActionsStyle}>
             <a href="/admin/reports" style={pillLinkStyle}>月報</a>
             <a href="/admin/schedules" style={pillLinkStyle}>門診班表</a>
+            <a href="/admin/content-submissions" style={pillLinkStyle}>資料提交</a>
             {canUseWorkbench ? <a href="/admin/workbench" style={pillLinkStyle}>客服工作台</a> : null}
             <button disabled={Boolean(busyId)} onClick={() => void refresh()} style={pillButtonStyle} type="button">重新整理</button>
             <form action="/api/admin/auth/logout" method="post"><button style={pillButtonStyle} type="submit">登出</button></form>
@@ -180,11 +233,11 @@ export function ContentClient({
             {items.length === 0 ? <p style={subtleStyle}>目前還沒有內容版本。可從上方建立第一份 FAQ 或活動草稿。</p> : items.map((item) => (
               <article key={item.id} style={itemStyle}>
                 <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}>
-                  <div><strong style={{ color: "#16302b", fontSize: 18 }}>{item.contentType === "faq" ? "常見問題" : "活動方案"}</strong><span style={keyStyle}>{item.contentKey}</span></div>
+                  <div><strong style={{ color: "#16302b", fontSize: 18 }}>{item.displayName}</strong><span style={keyStyle}>系統編號：{item.contentKey}</span></div>
                   <span style={item.currentVersionId ? activeBadgeStyle : mutedBadgeStyle}>{item.currentVersionId ? "有正式版本" : "尚未發布"}</span>
                 </div>
                 <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                  {item.versions.map((version) => <VersionCard actionBusy={busyId === version.id} canEdit={canEdit} canReview={canReview} item={item} key={version.id} onAction={(action) => void act(version.id, action)} onEdit={() => editFromVersion(item, version)} version={version} />)}
+                  {item.versions.map((version) => <VersionCard actionBusy={busyId === version.id} canEdit={canEdit} canPublish={canPublish} canReview={canReview} item={item} key={version.id} onAction={(action) => void act(version.id, action)} onEdit={() => editFromVersion(item, version)} version={version} />)}
                 </div>
               </article>
             ))}
@@ -200,8 +253,8 @@ function DraftEditor({ busy, draft, onChange, onSave }: { busy: boolean; draft: 
   return <section style={{ ...panelStyle, marginBottom: 16 }}>
     <div><h2 style={{ color: "#16302b", margin: 0 }}>建立新版本草稿</h2><p style={subtleStyle}>每次儲存都新增一個版本，舊版本不會被覆寫。</p></div>
     <div style={formGridStyle}>
-      <label style={labelStyle}>內容類型<select disabled={busy} onChange={(event) => onChange({ contentType: event.target.value as EditableContentType })} style={inputStyle} value={draft.contentType}><option value="faq">常見問題</option><option value="campaign">活動方案</option></select></label>
-      <label style={labelStyle}>內容識別名稱<input disabled={busy} onChange={(event) => onChange({ contentKey: event.target.value })} placeholder="例如: botox-pricing" style={inputStyle} value={draft.contentKey} /></label>
+      <label style={labelStyle}>內容用途<select disabled={busy} onChange={(event) => { const contentPurpose = event.target.value as ContentPurpose; const option = contentPurposeOptions.find((item) => item.value === contentPurpose); onChange({ contentPurpose, contentType: option?.type ?? "faq" }); }} style={inputStyle} value={draft.contentPurpose}>{contentPurposeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label style={labelStyle}>中文內容名稱<input disabled={busy} onChange={(event) => onChange({ displayName: event.target.value })} placeholder="例如：高雄館停車資訊" style={inputStyle} value={draft.displayName} /></label>
       {isFaq ? <><label style={labelStyle}>問題分類<input disabled={busy} onChange={(event) => onChange({ topic: event.target.value })} placeholder="例如: 價格說明" style={inputStyle} value={draft.topic} /></label><label style={labelStyle}>客人常見問法<input disabled={busy} onChange={(event) => onChange({ questionPattern: event.target.value })} placeholder="例如: 肉毒價格怎麼算" style={inputStyle} value={draft.questionPattern} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>核准回覆內容<textarea disabled={busy} onChange={(event) => onChange({ answerText: event.target.value })} rows={5} style={inputStyle} value={draft.answerText} /></label></> : <><label style={labelStyle}>活動名稱<input disabled={busy} onChange={(event) => onChange({ campaignName: event.target.value })} style={inputStyle} value={draft.campaignName} /></label><label style={labelStyle}>適用療程<input disabled={busy} onChange={(event) => onChange({ treatmentName: event.target.value })} style={inputStyle} value={draft.treatmentName} /></label><label style={labelStyle}>活動價格說明<input disabled={busy} onChange={(event) => onChange({ priceText: event.target.value })} style={inputStyle} value={draft.priceText} /></label><label style={labelStyle}>適用館別<input disabled={busy} onChange={(event) => onChange({ branchScope: event.target.value })} style={inputStyle} value={draft.branchScope} /></label><label style={labelStyle}>辨識別名（用頓號分隔）<input disabled={busy} onChange={(event) => onChange({ aliases: event.target.value })} style={inputStyle} value={draft.aliases} /></label><label style={labelStyle}>開始時間<input disabled={busy} onChange={(event) => onChange({ startAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.startAt} /></label><label style={labelStyle}>結束時間<input disabled={busy} onChange={(event) => onChange({ endAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.endAt} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>無法直接套用時的保守說明<textarea disabled={busy} onChange={(event) => onChange({ fallbackMessage: event.target.value })} rows={3} style={inputStyle} value={draft.fallbackMessage} /></label></>}
       <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>修改原因<input disabled={busy} onChange={(event) => onChange({ changeReason: event.target.value })} placeholder="例如: 更新 8 月活動內容" style={inputStyle} value={draft.changeReason} /></label>
     </div>
@@ -209,7 +262,7 @@ function DraftEditor({ busy, draft, onChange, onSave }: { busy: boolean; draft: 
   </section>;
 }
 
-function VersionCard({ actionBusy, canEdit, canReview, item, onAction, onEdit, version }: { actionBusy: boolean; canEdit: boolean; canReview: boolean; item: AdminContentItem; onAction: (action: "submit" | "publish" | "disable") => void; onEdit: () => void; version: AdminContentVersion }) {
+function VersionCard({ actionBusy, canEdit, canPublish, canReview, item, onAction, onEdit, version }: { actionBusy: boolean; canEdit: boolean; canPublish: boolean; canReview: boolean; item: AdminContentItem; onAction: (action: "submit" | "approve" | "request_changes" | "publish" | "disable") => void; onEdit: () => void; version: AdminContentVersion }) {
   return <div style={versionStyle}>
     <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}><div><strong>版本 {version.versionNo}</strong><span style={statusStyle(version.status)}>{statusLabels[version.status]}</span></div><span style={subtleStyle}>建立於 {formatDate(version.createdAt)}</span></div>
     <p style={versionTextStyle}>{summarizePayload(item.contentType, version.payload)}</p>
@@ -217,15 +270,17 @@ function VersionCard({ actionBusy, canEdit, canReview, item, onAction, onEdit, v
     <div style={versionActionsStyle}>
       {canEdit ? <button disabled={actionBusy} onClick={onEdit} style={secondaryButtonStyle} type="button">以此版本修改</button> : null}
       {canEdit && version.status === "draft" ? <button disabled={actionBusy} onClick={() => onAction("submit")} style={secondaryButtonStyle} type="button">{actionBusy ? "處理中..." : "送審"}</button> : null}
-      {canReview && version.status === "in_review" ? <button disabled={actionBusy} onClick={() => onAction("publish")} style={primaryButtonStyle} type="button">{actionBusy ? "發布中..." : "審核發布"}</button> : null}
-      {canReview && (version.status === "draft" || version.status === "in_review" || version.status === "published") ? <button disabled={actionBusy} onClick={() => onAction("disable")} style={dangerButtonStyle} type="button">{actionBusy ? "處理中..." : "停用"}</button> : null}
+      {canReview && version.status === "in_review" ? <><button disabled={actionBusy} onClick={() => onAction("approve")} style={primaryButtonStyle} type="button">{actionBusy ? "處理中..." : "工程審核完成"}</button><button disabled={actionBusy} onClick={() => onAction("request_changes")} style={secondaryButtonStyle} type="button">退回修正</button></> : null}
+      {canPublish && version.status === "approved" ? <button disabled={actionBusy} onClick={() => onAction("publish")} style={primaryButtonStyle} type="button">{actionBusy ? "發布中..." : "確認發布"}</button> : null}
+      {canPublish && (version.status === "draft" || version.status === "in_review" || version.status === "changes_requested" || version.status === "approved" || version.status === "published") ? <button disabled={actionBusy} onClick={() => onAction("disable")} style={dangerButtonStyle} type="button">{actionBusy ? "處理中..." : "停用"}</button> : null}
     </div>
   </div>;
 }
 
 function buildPayload(draft: DraftForm) {
-  if (draft.contentType === "faq") return { answer_text: draft.answerText.trim(), question_pattern: draft.questionPattern.trim(), topic: draft.topic.trim() };
-  return { aliases: draft.aliases.split(/[、,，]/).map((value) => value.trim()).filter(Boolean), branch_scope: draft.branchScope.trim(), campaign_name: draft.campaignName.trim(), fallback_message: draft.fallbackMessage.trim(), price_text: draft.priceText.trim(), treatment_name: draft.treatmentName.trim() };
+  const contentType = contentPurposeOptions.find((option) => option.value === draft.contentPurpose)?.type ?? draft.contentType;
+  if (contentType === "faq") return { answer_text: draft.answerText.trim(), content_purpose: draft.contentPurpose, question_pattern: draft.questionPattern.trim(), topic: draft.topic.trim() };
+  return { aliases: draft.aliases.split(/[、,，]/).map((value) => value.trim()).filter(Boolean), branch_scope: draft.branchScope.trim(), campaign_name: draft.campaignName.trim(), content_purpose: draft.contentPurpose, fallback_message: draft.fallbackMessage.trim(), price_text: draft.priceText.trim(), treatment_name: draft.treatmentName.trim() };
 }
 function stringValue(value: unknown) { return typeof value === "string" ? value : ""; }
 function toDateTimeLocal(value: string | null) { return value ? new Date(value).toISOString().slice(0, 16) : ""; }
