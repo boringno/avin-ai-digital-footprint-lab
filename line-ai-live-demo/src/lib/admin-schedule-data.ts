@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
 
-import { parse } from "csv-parse/sync";
-
 import type { AdminStaffUser } from "@/lib/admin-auth";
 import { canEditContent, canViewContent } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
@@ -11,16 +9,6 @@ import { SCHEDULE_BRANCHES } from "@/lib/schedule-month";
 export { SCHEDULE_BRANCHES } from "@/lib/schedule-month";
 const MAX_ORIGINAL_BYTES = 10 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 1024 * 1024;
-
-type ScheduleCsvRow = {
-  branch: string;
-  doctor_name: string;
-  notes?: string;
-  schedule_date: string;
-  source_month: string;
-  status?: string;
-  time_slot: string;
-};
 
 type VersionRow = {
   change_reason: string;
@@ -59,19 +47,6 @@ function assertImage(file: File, maxBytes: number, label: string) {
   if (file.size <= 0 || file.size > maxBytes) throw new Error(`${label}檔案大小不符合 LINE 限制。`);
 }
 
-function parseScheduleCsv(file: File, sourceMonth: string) {
-  return file.text().then((content) => {
-    const rows = parse(content, { bom: true, columns: true, skip_empty_lines: true, trim: true }) as ScheduleCsvRow[];
-    if (rows.length === 0) throw new Error("門診 CSV 不可為空。");
-    for (const row of rows) {
-      if (!row.doctor_name || !row.branch || !row.schedule_date || !row.time_slot) throw new Error("門診 CSV 缺少醫師、館別、日期或時段。");
-      if (!SCHEDULE_BRANCHES.includes(row.branch as (typeof SCHEDULE_BRANCHES)[number])) throw new Error("門診 CSV 含有未核准館別。");
-      if (row.source_month && row.source_month !== sourceMonth) throw new Error("門診 CSV 的月份必須與上傳月份一致。");
-    }
-    return rows;
-  });
-}
-
 export async function loadAdminScheduleMonths(staff: AdminStaffUser) {
   if (!canViewContent(staff.role)) throw new Error("您沒有查看門診班表的權限。");
   if (!hasSupabaseServerConfig()) return [] satisfies AdminScheduleVersion[];
@@ -108,13 +83,11 @@ export async function loadAdminScheduleMonths(staff: AdminStaffUser) {
   }));
 }
 
-export async function createAdminScheduleDraft(input: { changeReason: string; csv: File; originals: Record<string, File>; previews: Record<string, File>; sourceMonth: string; staff: AdminStaffUser }) {
+export async function createAdminScheduleDraft(input: { changeReason: string; originals: Record<string, File>; previews: Record<string, File>; sourceMonth: string; staff: AdminStaffUser }) {
   if (!canEditContent(input.staff.role)) throw new Error("您沒有建立門診班表草稿的權限。");
   if (!hasSupabaseServerConfig()) throw new Error("門診班表資料庫尚未設定完成。");
   assertMonth(input.sourceMonth);
   if (!input.changeReason.trim()) throw new Error("請填寫本次更新原因。");
-  if (input.csv.type && !["text/csv", "application/vnd.ms-excel"].includes(input.csv.type)) throw new Error("請上傳 CSV 格式的結構化門診資料。");
-  const rows = await parseScheduleCsv(input.csv, input.sourceMonth);
   for (const branch of SCHEDULE_BRANCHES) {
     const original = input.originals[branch];
     const preview = input.previews[branch];
@@ -171,14 +144,12 @@ export async function createAdminScheduleDraft(input: { changeReason: string; cs
     }
     const { error: assetsError } = await supabase.from("schedule_month_assets").insert(assetRows);
     if (assetsError) throw new Error("儲存門診圖片資料失敗。");
-    const { error: rowsError } = await supabase.from("doctor_schedule").insert(rows.map((row) => ({ branch: row.branch, doctor_name: row.doctor_name, notes: row.notes ?? "", schedule_date: row.schedule_date, source_month: input.sourceMonth, status: row.status ?? "available", tenant_id: input.staff.tenantId, time_slot: row.time_slot, version_id: version.id })));
-    if (rowsError) throw new Error("儲存門診 CSV 資料失敗。");
   } catch (error) {
     if (uploadedPaths.length) await supabase.storage.from("schedule-assets").remove(uploadedPaths);
     throw error;
   }
 
-  await writeAdminAuditLog({ action: "schedule_month.draft_created", after: { source_month: input.sourceMonth, version_no: versionNo }, staff: input.staff, targetId: version.id, targetTable: "schedule_month_versions" });
+  await writeAdminAuditLog({ action: "schedule_month.draft_created", after: { source_month: input.sourceMonth, structured_schedule_rows: 0, version_no: versionNo }, staff: input.staff, targetId: version.id, targetTable: "schedule_month_versions" });
 }
 
 export async function updateAdminScheduleMonth(input: { action: "disable" | "publish"; staff: AdminStaffUser; versionId: string }) {
@@ -186,6 +157,6 @@ export async function updateAdminScheduleMonth(input: { action: "disable" | "pub
   const supabase = getSupabaseServerClient();
   const rpc = input.action === "publish" ? "publish_schedule_month" : "disable_schedule_month";
   const { error } = await supabase.rpc(rpc, { p_publisher_id: input.staff.id, p_tenant_id: input.staff.tenantId, p_version_id: input.versionId });
-  if (error) throw new Error(input.action === "publish" ? "發布失敗，請確認四館圖片與 CSV 資料已完整上傳。" : "停用門診班表失敗。");
+  if (error) throw new Error(input.action === "publish" ? "發布失敗，請確認四館圖片皆完整上傳。" : "停用門診班表失敗。");
   await writeAdminAuditLog({ action: `schedule_month.${input.action}`, after: { version_id: input.versionId }, staff: input.staff, targetId: input.versionId, targetTable: "schedule_month_versions" });
 }

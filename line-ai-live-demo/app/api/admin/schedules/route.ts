@@ -36,12 +36,8 @@ export async function POST(request: Request) {
 
   try {
     const formData = await request.formData();
-    const csv = formData.get("schedule_csv");
-    if (!(csv instanceof File) || csv.size === 0) throw new Error("請上傳當月的結構化 CSV。");
-
     await createAdminScheduleDraft({
       changeReason: String(formData.get("change_reason") ?? ""),
-      csv,
       originals: filesFor(formData, "original"),
       previews: filesFor(formData, "preview"),
       sourceMonth: String(formData.get("source_month") ?? ""),
