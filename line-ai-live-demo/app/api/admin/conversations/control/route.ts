@@ -56,9 +56,9 @@ export async function POST(request: Request) {
   } as Parameters<typeof updateConversationStatus>[1]);
 
   await saveConversationState(after, staff.tenantId);
-  if (body.action === "mark_human_active") {
+  if (body.action === "mark_human_active" || body.action === "resume_ai") {
     await markHandoffTaskTaken(staff, body.user_id);
-  } else if (body.action === "resume_ai" || body.action === "complete" || body.action === "close") {
+  } else if (body.action === "complete" || body.action === "close") {
     await markHandoffTaskResolved(staff, body.user_id);
   }
 

@@ -8,6 +8,7 @@ import { bookingStatusLabels, type BookingStatusKey } from "@/lib/admin-display-
 type QueueItem = {
   conversationId: string;
   createdAt: string;
+  customerName: string | null;
   displayName: string;
   handoffReason: string;
   interestedTreatments: string[];
@@ -28,6 +29,7 @@ type WorkbenchLeadSummary = {
   displayName: string;
   id: string;
   interestedTreatments: string[];
+  lineUserId: string;
   phone: string | null;
   preferredBranch: string | null;
   preferredTimeSlots: string[];
@@ -91,7 +93,7 @@ export function WorkbenchClient({
   const [isCompact, setIsCompact] = useState(false);
   const [isPageVisible, setIsPageVisible] = useState(true);
   const [isSending, setIsSending] = useState(false);
-  const [controlAction, setControlAction] = useState<"" | "mark_human_active" | "resume_ai">("");
+  const [controlAction, setControlAction] = useState<"" | "complete" | "mark_human_active" | "resume_ai">("");
   const [leadActionId, setLeadActionId] = useState("");
   const [isPending, startTransition] = useTransition();
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -162,7 +164,7 @@ export function WorkbenchClient({
   }
 
   async function postControl(
-    action: "mark_human_active" | "resume_ai",
+    action: "complete" | "mark_human_active" | "resume_ai",
     target?: { conversationId: string; userId: string },
   ) {
     const conversationId = target?.conversationId ?? data.detail?.conversationId ?? "";
@@ -186,31 +188,35 @@ export function WorkbenchClient({
 
       const result = (await response.json()) as { error?: string; ok?: boolean };
       if (!response.ok || !result.ok) {
-        setErrorMessage(action === "mark_human_active" ? "接手失敗，請再按一次。" : "交回 AI 失敗，請再按一次。");
+        setErrorMessage(
+          action === "mark_human_active" ? "接手失敗，請再按一次。" : action === "complete" ? "結案失敗，請再按一次。" : "交由 AI 協助失敗，請再按一次。",
+        );
         return;
       }
 
       setSelectedConversationId(conversationId);
       await refresh(conversationId);
     } catch {
-      setErrorMessage(action === "mark_human_active" ? "接手失敗，請再按一次。" : "交回 AI 失敗，請再按一次。");
+      setErrorMessage(
+        action === "mark_human_active" ? "接手失敗，請再按一次。" : action === "complete" ? "結案失敗，請再按一次。" : "交由 AI 協助失敗，請再按一次。",
+      );
     } finally {
       setControlAction("");
     }
   }
 
-  async function updateLeadStatus(leadId: string, bookingStatus: BookingStatusKey) {
+  async function updateLeadStatus(lead: WorkbenchLeadSummary, bookingStatus: BookingStatusKey) {
     if (leadActionId) {
       return;
     }
 
     setErrorMessage("");
-    setLeadActionId(leadId);
+    setLeadActionId(lead.id);
     try {
       const response = await fetch("/api/admin/leads/update", {
         body: JSON.stringify({
           booking_status: bookingStatus,
-          lead_id: leadId,
+          lead_id: lead.id,
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -220,7 +226,14 @@ export function WorkbenchClient({
         setErrorMessage("更新預約線索失敗，請再按一次。");
         return;
       }
-      await refresh(selectedConversationId);
+
+      if (bookingStatus === "booked") {
+        await postControl("complete", {
+          conversationId: lead.conversationId,
+          userId: lead.lineUserId,
+        });
+      }
+      await refresh(bookingStatus === "booked" ? lead.conversationId : selectedConversationId);
     } catch {
       setErrorMessage("更新預約線索失敗，請再按一次。");
     } finally {
@@ -279,7 +292,7 @@ export function WorkbenchClient({
 
       <div style={summaryStripStyle}>
         <SummaryPill label="待接手" tone="red" value={pendingItems.length} />
-        <SummaryPill label="我服務中" tone="green" value={activeItems.length} />
+        <SummaryPill label="服務與追蹤中" tone="green" value={activeItems.length} />
         <SummaryPill label="今日要聯繫" tone="yellow" value={data.leadSummaries.length} />
       </div>
 
@@ -323,9 +336,9 @@ export function WorkbenchClient({
           </section>
 
           <section style={panelStyle}>
-            <SectionHeader eyebrow="我服務中" title={`目前正在處理 ${activeItems.length} 位`} />
+            <SectionHeader eyebrow="服務與追蹤中" title={`目前正在處理或追蹤 ${activeItems.length} 位`} />
             <div style={{ display: "grid", gap: 10 }}>
-              {activeItems.length === 0 ? <EmptyState text="目前沒有已接手對話。" /> : null}
+              {activeItems.length === 0 ? <EmptyState text="目前沒有需要真人追蹤的對話。" /> : null}
               {activeItems.map((item) => (
                 <ConversationCard
                   controlAction={controlAction}
@@ -357,8 +370,8 @@ export function WorkbenchClient({
                   isCompact={isCompact}
                   key={lead.id}
                   lead={lead}
-                  onBooked={() => void updateLeadStatus(lead.id, "booked")}
-                  onContacted={() => void updateLeadStatus(lead.id, "contacted")}
+                  onBooked={() => void updateLeadStatus(lead, "booked")}
+                  onContacted={() => void updateLeadStatus(lead, "contacted")}
                   onOpenConversation={() => selectConversation(lead.conversationId)}
                 />
               ))}
@@ -383,6 +396,9 @@ export function WorkbenchClient({
                     {detail.state.hasNewCustomerMessage ? <span style={newMessagePillStyle}>有新訊息</span> : null}
                   </div>
                   <h2 style={detailNameStyle}>{detail.displayName}</h2>
+                  {hasDistinctCustomerName(detail.bookingLead?.customerName, detail.displayName) ? (
+                    <p style={detailCustomerNameStyle}>客人姓名：{detail.bookingLead?.customerName}</p>
+                  ) : null}
                   <p style={detailCaptionStyle}>{formatLineIdentity(detail.lineUserId, isCompact)}</p>
                 </div>
                 <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
@@ -496,11 +512,26 @@ export function WorkbenchClient({
                         style={secondaryButtonStyle}
                         type="button"
                       >
-                        {controlAction === "resume_ai" ? "處理中..." : "交回 AI"}
+                        {controlAction === "resume_ai" ? "處理中..." : "交由 AI 協助"}
                       </button>
                     )}
                     <button disabled={!messageText.trim() || isSending} onClick={() => void sendStaffMessage()} style={primaryButtonStyle} type="button">
                       {isSending ? "傳送中..." : "送出訊息"}
+                    </button>
+                    <button
+                      disabled={Boolean(controlAction)}
+                      onClick={() => {
+                        if (window.confirm("確認結案？結案後 AI 將停止主動回覆這位客人。")) {
+                          void postControl("complete", {
+                            conversationId: detail.conversationId,
+                            userId: detail.lineUserId,
+                          });
+                        }
+                      }}
+                      style={secondaryButtonStyle}
+                      type="button"
+                    >
+                      {controlAction === "complete" ? "結案中..." : "結案並停止 AI"}
                     </button>
                   </div>
                 ) : null}
@@ -544,7 +575,7 @@ export function WorkbenchClient({
                   style={secondaryButtonStyle}
                   type="button"
                 >
-                  {controlAction === "resume_ai" ? "處理中..." : "交回 AI"}
+                  {controlAction === "resume_ai" ? "處理中..." : "交由 AI 協助"}
                 </button>
               )}
 
@@ -557,6 +588,21 @@ export function WorkbenchClient({
                   前往輸入
                 </button>
               )}
+              <button
+                disabled={Boolean(controlAction)}
+                onClick={() => {
+                  if (window.confirm("確認結案？結案後 AI 將停止主動回覆這位客人。")) {
+                    void postControl("complete", {
+                      conversationId: detail.conversationId,
+                      userId: detail.lineUserId,
+                    });
+                  }
+                }}
+                style={secondaryButtonStyle}
+                type="button"
+              >
+                {controlAction === "complete" ? "結案中..." : "結案"}
+              </button>
             </div>
             <button disabled={!messageText.trim() || isSending} onClick={() => void sendStaffMessage()} style={stickySendButtonStyle} type="button">
               {isSending ? "傳送中..." : "送出訊息"}
@@ -577,7 +623,7 @@ function ConversationCard({
   onOpen,
   onPrimary,
 }: {
-  controlAction: "" | "mark_human_active" | "resume_ai";
+  controlAction: "" | "complete" | "mark_human_active" | "resume_ai";
   isCompact: boolean;
   isSelected: boolean;
   item: QueueItem;
@@ -604,16 +650,17 @@ function ConversationCard({
       <div style={cardHeaderRowStyle}>
         <div style={{ display: "grid", gap: 4 }}>
           <strong>{item.displayName}</strong>
+          {hasDistinctCustomerName(item.customerName, item.displayName) ? <span style={customerNameStyle}>客人姓名：{item.customerName}</span> : null}
           <span style={waitTextStyle}>
-            {mode === "pending" ? `等待 ${waitMinutes} 分鐘` : "真人服務中"}
+            {mode === "pending" ? `等待 ${waitMinutes} 分鐘` : item.status === "ai_active" ? "AI 協助中，真人持續追蹤" : "真人服務中"}
           </span>
         </div>
-        <StatusBadge label={mode === "pending" ? "待接手" : "服務中"} tone={isUrgent ? "red" : "green"} />
+        <StatusBadge label={mode === "pending" ? "待接手" : item.status === "ai_active" ? "AI 協助" : "服務中"} tone={isUrgent ? "red" : "green"} />
       </div>
 
       <p style={quoteStyle}>{item.lastCustomerMessage || "尚未擷取到客人最新訊息"}</p>
       <p style={summaryTextStyle}>{summaryParts.length > 0 ? `摘要：${summaryParts.join("｜")}` : "摘要：尚未整理出療程、館別或電話資訊"}</p>
-      <p style={hintTextStyle}>下一步：{mode === "pending" ? summarizeNextStep(item) : "確認需求後，可直接回覆，或交回 AI 繼續接待。"}</p>
+      <p style={hintTextStyle}>下一步：{mode === "pending" ? summarizeNextStep(item) : item.status === "ai_active" ? "AI 可先協助回覆；真人仍可隨時在此接手訊息。" : "確認需求後，可直接回覆，或交由 AI 協助。"}</p>
 
       <div style={{ display: "flex", flexDirection: isCompact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
         <button disabled={Boolean(controlAction)} onClick={onPrimary} style={primaryButtonStyle} type="button">
@@ -621,7 +668,7 @@ function ConversationCard({
             ? "處理中..."
             : mode === "pending"
               ? "接手回覆"
-              : "交回 AI"}
+              : "交由 AI 協助"}
         </button>
         <button disabled={Boolean(controlAction)} onClick={onOpen} style={secondaryButtonStyle} type="button">
           {mode === "pending" ? "查看對話" : "繼續回覆"}
@@ -640,7 +687,7 @@ function LeadSummaryCard({
   onContacted,
   onOpenConversation,
 }: {
-  controlAction: "" | "mark_human_active" | "resume_ai";
+  controlAction: "" | "complete" | "mark_human_active" | "resume_ai";
   isBusy: boolean;
   isCompact: boolean;
   lead: WorkbenchLeadSummary;
@@ -652,7 +699,8 @@ function LeadSummaryCard({
     <article style={leadCardStyle}>
       <div style={cardHeaderRowStyle}>
         <div style={{ display: "grid", gap: 4 }}>
-          <strong>{lead.customerName || lead.displayName}</strong>
+          <strong>{lead.displayName}</strong>
+          {hasDistinctCustomerName(lead.customerName, lead.displayName) ? <span style={customerNameStyle}>客人姓名：{lead.customerName}</span> : null}
           <span style={waitTextStyle}>{formatTime(lead.updatedAt)} 更新</span>
         </div>
         <span style={leadStatusPillStyle}>{bookingStatusLabels[lead.bookingStatus]}</span>
@@ -823,7 +871,7 @@ function formatDirection(direction: MessageItem["direction"]) {
 
 function formatRuntimeStatus(status: string) {
   const labels: Record<string, string> = {
-    ai_active: "AI 回覆中",
+    ai_active: "AI 協助中（真人持續追蹤）",
     ai_paused: "AI 暫停中",
     closed: "已結束",
     handoff_pending: "等待客服接手",
@@ -854,6 +902,10 @@ function formatLineIdentity(lineUserId: string, isCompact: boolean) {
   }
 
   return `LINE ID：${lineUserId}`;
+}
+
+function hasDistinctCustomerName(customerName: string | null | undefined, displayName: string) {
+  return Boolean(customerName && customerName.trim() && customerName.trim() !== displayName.trim());
 }
 
 function maskLineUserId(lineUserId: string) {
@@ -963,6 +1015,13 @@ const waitTextStyle = {
   lineHeight: 1.5,
 } satisfies CSSProperties;
 
+const customerNameStyle = {
+  color: "#335563",
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.4,
+} satisfies CSSProperties;
+
 const quoteStyle = {
   color: "#18312b",
   fontSize: 15,
@@ -1002,6 +1061,13 @@ const detailCaptionStyle = {
   color: "#66756f",
   fontSize: 13,
   lineHeight: 1.5,
+  margin: 0,
+} satisfies CSSProperties;
+
+const detailCustomerNameStyle = {
+  color: "#335563",
+  fontSize: 14,
+  fontWeight: 700,
   margin: 0,
 } satisfies CSSProperties;
 

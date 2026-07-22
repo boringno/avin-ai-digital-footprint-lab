@@ -9,6 +9,7 @@ import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase
 export type WorkbenchQueueItem = {
   conversationId: string;
   createdAt: string;
+  customerName: string | null;
   displayName: string;
   handoffReason: string;
   interestedTreatments: string[];
@@ -30,6 +31,7 @@ export type WorkbenchLeadSummary = {
   displayName: string;
   id: string;
   interestedTreatments: string[];
+  lineUserId: string;
   phone: string | null;
   preferredBranch: string | null;
   preferredTimeSlots: string[];
@@ -348,6 +350,7 @@ async function loadWorkbenchQueue(staff: AdminStaffUser) {
       {
         conversationId: conversation.id,
         createdAt: task.created_at,
+        customerName: queueLeadInfo.get(conversation.id)?.customerName ?? null,
         displayName: conversation.display_name || shortLineUserId(conversation.line_user_id),
         handoffReason: task.reason,
         interestedTreatments: queueLeadInfo.get(conversation.id)?.interestedTreatments ?? [],
@@ -396,6 +399,7 @@ async function loadWorkbenchLeadSummaries(staff: AdminStaffUser) {
         displayName: conversation.display_name || shortLineUserId(conversation.line_user_id),
         id: lead.id,
         interestedTreatments: normalizeStringArray(lead.interested_treatments),
+        lineUserId: conversation.line_user_id,
         phone: lead.phone,
         preferredBranch: lead.preferred_branch,
         preferredTimeSlots: normalizeStringArray(lead.preferred_time_slots),
@@ -447,13 +451,13 @@ async function loadLatestCustomerMessages(staff: AdminStaffUser, conversationIds
 
 async function loadQueueLeadInfo(staff: AdminStaffUser, conversationIds: string[]) {
   if (conversationIds.length === 0) {
-    return new Map<string, { interestedTreatments: string[]; phoneTail: string | null; preferredBranch: string | null }>();
+    return new Map<string, { customerName: string | null; interestedTreatments: string[]; phoneTail: string | null; preferredBranch: string | null }>();
   }
 
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("booking_leads_db")
-    .select("conversation_id, interested_treatments, preferred_branch, phone")
+    .select("conversation_id, customer_name, interested_treatments, preferred_branch, phone")
     .eq("tenant_id", staff.tenantId)
     .in("conversation_id", conversationIds);
 
@@ -462,9 +466,10 @@ async function loadQueueLeadInfo(staff: AdminStaffUser, conversationIds: string[
   }
 
   return new Map(
-    ((data ?? []) as Array<{ conversation_id: string; interested_treatments: unknown; phone: string | null; preferred_branch: string | null }>).map((row) => [
+    ((data ?? []) as Array<{ conversation_id: string; customer_name: string | null; interested_treatments: unknown; phone: string | null; preferred_branch: string | null }>).map((row) => [
       row.conversation_id,
       {
+        customerName: row.customer_name,
         interestedTreatments: normalizeStringArray(row.interested_treatments),
         phoneTail: lastPhoneDigits(row.phone),
         preferredBranch: row.preferred_branch,
@@ -531,12 +536,13 @@ async function updateHandoffTaskForLineUser(staff: AdminStaffUser, lineUserId: s
           status,
         };
 
-  const { error } = await supabase
+  const { data: updatedTasks, error } = await supabase
     .from("handoff_tasks")
     .update(patch)
     .eq("tenant_id", staff.tenantId)
     .eq("conversation_id", conversation.id)
-    .in("status", ["open", "taken"]);
+    .in("status", ["open", "taken"])
+    .select("id");
 
   if (error) {
     await reportOperationalError({
@@ -548,6 +554,31 @@ async function updateHandoffTaskForLineUser(staff: AdminStaffUser, lineUserId: s
       },
       source: "admin_workbench_handoff_task",
     });
+    return;
+  }
+
+  // A staff member may open an ordinary historical conversation from the inbox.
+  // Preserve that manual takeover in the same queue instead of requiring a new
+  // customer safety handoff first.
+  if (status === "taken" && (updatedTasks ?? []).length === 0) {
+    const { error: insertError } = await supabase.from("handoff_tasks").insert({
+      assigned_to: staff.id,
+      conversation_id: conversation.id,
+      reason: "manual_followup",
+      status: "taken",
+      tenant_id: staff.tenantId,
+    });
+
+    if (insertError) {
+      await reportOperationalError({
+        alert: true,
+        error: new Error(`Failed to create manual follow-up task: ${insertError.message}`),
+        extra: {
+          line_user_id: lineUserId,
+        },
+        source: "admin_workbench_manual_followup",
+      });
+    }
   }
 }
 
