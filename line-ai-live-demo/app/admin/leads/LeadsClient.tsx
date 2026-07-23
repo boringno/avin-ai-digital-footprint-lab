@@ -256,7 +256,8 @@ function LeadCard({
     <article style={cardStyle}>
       <div style={{ alignItems: "flex-start", display: "flex", gap: 8, justifyContent: "space-between" }}>
         <div>
-          <strong>{lead.customerName || lead.displayName}</strong>
+          <strong>{lead.displayName}</strong>
+          {hasDistinctCustomerName(lead.customerName, lead.displayName) ? <p style={customerNameStyle}>客人姓名：{lead.customerName}</p> : null}
           <p style={mutedTextStyle}>{formatTime(lead.updatedAt)} 更新</p>
         </div>
         <span style={statusPillStyle}>{bookingStatusLabels[lead.bookingStatus]}</span>
@@ -331,6 +332,10 @@ function formatTime(value: string) {
     minute: "2-digit",
     month: "2-digit",
   }).format(new Date(value));
+}
+
+function hasDistinctCustomerName(customerName: string | null, displayName: string) {
+  return Boolean(customerName && customerName.trim() && customerName.trim() !== displayName.trim());
 }
 
 const boardStyle = {
@@ -474,6 +479,13 @@ const mutedTextStyle = {
   color: "#66756f",
   fontSize: 12,
   margin: "3px 0 0",
+} satisfies React.CSSProperties;
+
+const customerNameStyle = {
+  color: "#335563",
+  fontSize: 13,
+  fontWeight: 700,
+  margin: "4px 0 0",
 } satisfies React.CSSProperties;
 
 const primaryButtonStyle = {
