@@ -197,7 +197,9 @@ export function ContentClient({
       treatmentName: stringValue(payload.treatment_name),
     });
     setNotice(`已帶入版本 ${version.versionNo}。儲存後會建立新草稿，不會覆寫舊版本。`);
-    window.scrollTo({ behavior: "smooth", top: 0 });
+    window.requestAnimationFrame(() => {
+      document.getElementById("content-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   return (
@@ -212,6 +214,7 @@ export function ContentClient({
           <div style={headerActionsStyle}>
             <a href="/admin/reports" style={pillLinkStyle}>月報</a>
             <a href="/admin/schedules" style={pillLinkStyle}>門診班表</a>
+            {canPublish ? <a href="/admin/runtime-releases" style={pillLinkStyle}>正式回覆發布</a> : null}
             <a href="/admin/content-submissions" style={pillLinkStyle}>資料提交</a>
             {canUseWorkbench ? <a href="/admin/workbench" style={pillLinkStyle}>客服工作台</a> : null}
             <button disabled={Boolean(busyId)} onClick={() => void refresh()} style={pillButtonStyle} type="button">重新整理</button>
@@ -250,7 +253,7 @@ export function ContentClient({
 
 function DraftEditor({ busy, draft, onChange, onSave }: { busy: boolean; draft: DraftForm; onChange: (patch: Partial<DraftForm>) => void; onSave: () => void }) {
   const isFaq = draft.contentType === "faq";
-  return <section style={{ ...panelStyle, marginBottom: 16 }}>
+  return <section id="content-draft-editor" style={{ ...panelStyle, marginBottom: 16 }}>
     <div><h2 style={{ color: "#16302b", margin: 0 }}>建立新版本草稿</h2><p style={subtleStyle}>每次儲存都新增一個版本，舊版本不會被覆寫。</p></div>
     <div style={formGridStyle}>
       <label style={labelStyle}>內容用途<select disabled={busy} onChange={(event) => { const contentPurpose = event.target.value as ContentPurpose; const option = contentPurposeOptions.find((item) => item.value === contentPurpose); onChange({ contentPurpose, contentType: option?.type ?? "faq" }); }} style={inputStyle} value={draft.contentPurpose}>{contentPurposeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>

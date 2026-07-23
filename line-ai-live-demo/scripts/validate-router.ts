@@ -686,6 +686,19 @@ async function main() {
     });
   }
 
+  const schedulePhraseResult = await routeCustomerMessage({
+    includePending: false,
+    message: "我是要看高雄的本月診表",
+    now: VALIDATION_NOW,
+  });
+  results.push({
+    expectedDecisionType: "doctor_schedule_auto_reply",
+    expectedMatchedType: "doctor_schedule",
+    message: "我是要看高雄的本月診表",
+    passed: schedulePhraseResult.decisionType === "doctor_schedule_auto_reply" && schedulePhraseResult.matchedType === "doctor_schedule",
+    result: schedulePhraseResult,
+  });
+
   const scheduleResults = validateScheduleMonthReplies();
 
   console.log(JSON.stringify({ router: results, scheduleMonth: scheduleResults }, null, 2));

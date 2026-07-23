@@ -30,6 +30,9 @@ export type RuntimeConfig = {
   lineReplyTimeoutMs: number;
   logDir: string;
   openAiApiKey: string;
+  openAiIntentClassifierEnabled: boolean;
+  openAiIntentClassifierMaxTokens: number;
+  openAiIntentClassifierMinConfidence: number;
   openAiMaxTokens: number;
   openAiModel: string;
   retentionSweepMode: string;
@@ -60,6 +63,15 @@ function parseInteger(value: string | undefined, fallback: number) {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseConfidence(value: string | undefined, fallback: number) {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
 }
 
 function getDefaultLogDir(appRoot: string) {
@@ -122,6 +134,9 @@ export function getRuntimeConfig(): RuntimeConfig {
       ? path.resolve(appRoot, process.env.LIVE_DEMO_LOG_DIR)
       : getDefaultLogDir(appRoot),
     openAiApiKey: process.env.OPENAI_API_KEY ?? "",
+    openAiIntentClassifierEnabled: parseBoolean(process.env.OPENAI_INTENT_CLASSIFIER_ENABLED, true),
+    openAiIntentClassifierMaxTokens: parseInteger(process.env.OPENAI_INTENT_CLASSIFIER_MAX_TOKENS, 96),
+    openAiIntentClassifierMinConfidence: parseConfidence(process.env.OPENAI_INTENT_CLASSIFIER_MIN_CONFIDENCE, 0.85),
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
     retentionSweepMode: process.env.RETENTION_SWEEP_MODE ?? "",

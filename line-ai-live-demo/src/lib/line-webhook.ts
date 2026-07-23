@@ -1,9 +1,15 @@
 import crypto from "node:crypto";
 
 import { generateAiReply } from "@/lib/ai-reply-client";
+import {
+  classifyControlledIntent,
+  isHighConfidenceControlledIntent,
+  shouldUseControlledIntentClassifier,
+} from "@/lib/ai-intent-classifier";
 import { getClaudeReplyInvocationCount } from "@/lib/claude-client";
 import { clinicConfig } from "@/lib/clinic-config";
 import { createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
+import { getRuntimeConfig } from "@/lib/live-demo-config";
 import {
   applyAutoResumeIfDue,
   createEmptyConversationState,
@@ -17,6 +23,7 @@ import {
 } from "@/lib/conversation-state";
 import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
+import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
@@ -256,11 +263,12 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     };
   }
 
-  const routedDecision = await routeCustomerMessage({
+  let routedDecision = await routeCustomerMessage({
     conversationContext: existingContext,
     includePending,
     message: event.message.text ?? "",
     now: currentTime,
+    runtimeAudienceKey: sourceUserId,
   });
 
   let replyText = routedDecision.replyText;
@@ -269,6 +277,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let aiTokensOut: number | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
+  let controlledClassifierAttempted = false;
 
   if (routedDecision.decisionType === "handoff_pending") {
     const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
@@ -301,6 +310,41 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   // be rephrased by the LLM.
   const canHumanizeReply = false;
 
+  if (
+    routedDecision.decisionType === "fallback_reply" &&
+    shouldAllowAiFallbackReply(event.message.text ?? "") &&
+    shouldUseControlledIntentClassifier(event.message.text ?? "")
+  ) {
+    controlledClassifierAttempted = true;
+    const controlledIntent = await classifyControlledIntent(event.message.text ?? "");
+    const config = getRuntimeConfig();
+    if (controlledIntent) {
+      aiModel = controlledIntent.model;
+      aiTokensIn = controlledIntent.tokensIn;
+      aiTokensOut = controlledIntent.tokensOut;
+    }
+    if (
+      controlledIntent &&
+      isHighConfidenceControlledIntent(controlledIntent, config.openAiIntentClassifierMinConfidence) &&
+      controlledIntent.intent === "doctor_schedule"
+    ) {
+      const scheduleDecision = await resolveDoctorScheduleDecision({
+        fallbackReply: routedDecision.replyText,
+        message: event.message.text ?? "",
+        today: currentTime,
+      });
+      routedDecision = {
+        ...routedDecision,
+        ...scheduleDecision,
+        nextContext: {
+          ...routedDecision.nextContext,
+          lastIntent: scheduleDecision.matchedKey,
+        },
+      };
+      replyText = scheduleDecision.replyText;
+    }
+  }
+
   if (canHumanizeReply) {
     const humanizedReply = await maybeHumanizeReply({
       baseReplyText: routedDecision.replyText,
@@ -314,7 +358,11 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       replyText = humanizedReply;
       usedAiHumanizer = true;
     }
-  } else if (routedDecision.decisionType === "fallback_reply" && shouldAllowAiFallbackReply(event.message.text ?? "")) {
+  } else if (
+    !controlledClassifierAttempted &&
+    routedDecision.decisionType === "fallback_reply" &&
+    shouldAllowAiFallbackReply(event.message.text ?? "")
+  ) {
     const aiReply = await generateAiReply(event.message.text ?? "", {
       bookingBranch: routedDecision.nextContext.bookingDraft.branch,
       bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
@@ -327,8 +375,8 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     if (aiReply) {
       replyText = aiReply.text;
       aiModel = aiReply.model;
-      aiTokensIn = aiReply.tokensIn;
-      aiTokensOut = aiReply.tokensOut;
+      aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
+      aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
       usedAiReplyGenerator = true;
     }
   }

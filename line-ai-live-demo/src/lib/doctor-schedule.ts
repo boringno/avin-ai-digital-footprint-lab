@@ -68,16 +68,29 @@ export function resolvePublishedScheduleForValidation(input: {
     return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_unpublished:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: "本月門診表目前尚未公告，我先請真人客服協助您確認。" };
   }
 
+  const branch = findRequestedBranch(input.message);
+  if (!branch) {
+    return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_branch_required:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: "請問想查哪一館的本月門診表？目前可查高雄、台中、桃園或林口館。" };
+  }
+
   const doctorName = Array.from(new Set(input.rows.map((row) => row.doctor_name).filter(Boolean)))
     .sort((left, right) => right.length - left.length)
     .find((name) => normalizeText(input.message).includes(normalizeText(name)));
   if (doctorName) {
-    const doctorRows = input.rows.filter((row) => row.doctor_name === doctorName);
-    return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_found:${doctorName}:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: formatScheduleRows(doctorName, input.sourceMonth, doctorRows) };
+    const doctorRows = input.rows.filter((row) => row.doctor_name === doctorName && row.branch === branch);
+    if (doctorRows.length > 0) {
+      return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_found:${doctorName}:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: formatScheduleRows(doctorName, input.sourceMonth, doctorRows) };
+    }
   }
 
-  const branch = findRequestedBranch(input.message);
-  if (!branch) return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_branch_required:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: "請問想查哪一館的本月門診表？目前可查高雄、台中、桃園或林口館。" };
+  if (isSpecificDoctorScheduleRequest(input.message)) {
+    return {
+      decisionType: "doctor_schedule_auto_reply",
+      matchedKey: `doctor_schedule_human_confirmation:${input.sourceMonth}`,
+      matchedType: "doctor_schedule",
+      replyText: "本月班表已公告；指定醫師的日期與時段請由真人客服協助確認。",
+    };
+  }
   const asset = input.assets.find((item) => item.branch === branch);
   if (!asset) return { decisionType: "doctor_schedule_auto_reply", matchedKey: `doctor_schedule_asset_missing:${branch}:${input.sourceMonth}`, matchedType: "doctor_schedule", replyText: `${branch}本月門診表暫時無法提供，我先請真人客服協助確認。` };
   return {
@@ -91,6 +104,13 @@ export function resolvePublishedScheduleForValidation(input: {
 
 function normalizeText(text: string) {
   return text.replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function isSpecificDoctorScheduleRequest(message: string) {
+  const normalized = normalizeText(message);
+  const mentionsClinician = normalized.includes("醫師") || normalized.includes("醫生") || normalized.includes("dr.");
+  const asksForPrecision = /哪天|何時|幾點|時間|時段|看診|門診|預約|星期|禮拜|本週|下週|今天|明天|\d{1,2}\s*(?:日|號)/.test(message);
+  return mentionsClinician && asksForPrecision;
 }
 
 function buildMonthKey(date: Date) {

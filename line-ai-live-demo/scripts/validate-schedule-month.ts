@@ -33,6 +33,6 @@ assert.equal(decision("高雄館門診表", false).replyMessages?.length ?? 0, 0
 assert.equal(decision("陳醫師哪天看診", true).replyMessages?.length ?? 0, 0, "指定醫師查詢不傳圖片");
 assert.match(decision("陳醫師哪天看診", true).matchedKey, /^doctor_schedule_branch_required:/, "指定醫師查詢未指定館別時先反問");
 assert.match(decision("請給我班表", true).matchedKey, /^doctor_schedule_branch_required:/, "未指定館別先反問");
-assert.match(decision("陳醫師哪天看診", true, historicalRows).matchedKey, /^doctor_schedule_found:/, "既有結構化資料仍可精確回覆");
+assert.match(decision("高雄館陳醫師哪天看診", true, historicalRows).matchedKey, /^doctor_schedule_found:/, "指定館別與結構化資料可精確回覆");
 
 console.log("schedule month validation passed: 11 checks");

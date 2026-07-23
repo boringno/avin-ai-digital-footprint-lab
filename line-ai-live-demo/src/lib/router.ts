@@ -15,6 +15,7 @@ import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { getHumanSupportStatus } from "@/lib/human-support";
 import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
+import { loadRuntimeContentOverlay, type RuntimeContentOverlay } from "@/lib/runtime-content-release";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -51,6 +52,9 @@ type RouteCustomerMessageInput = {
   includePending: boolean;
   message: string;
   now?: Date;
+  runtimeAudienceKey?: string;
+  runtimeContentOverlay?: RuntimeContentOverlay;
+  tenantId?: string;
 };
 
 type BookingFieldKey = "branch" | "isFirstVisit" | "name" | "phone" | "timeSlots" | "treatment";
@@ -115,7 +119,7 @@ const TREATMENT_DISCOVERY_TERMS = [
 ];
 
 const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
-const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表", "診次"];
+const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表", "診次", "診表"];
 const BRANCH_QUERY_HINT_TERMS = ["館", "分館", "分店", "據點", "門市", "地址", "在哪", "哪裡", "最近", "有嗎", "有沒有"];
 const STRUCTURED_BOOKING_FIELD_LABELS = {
   branch: ["館別", "管別"],
@@ -1655,6 +1659,9 @@ export async function routeCustomerMessage({
   includePending,
   message,
   now,
+  runtimeAudienceKey = "",
+  runtimeContentOverlay,
+  tenantId,
 }: RouteCustomerMessageInput): Promise<RouterDecision> {
   const trimmedMessage = message.trim();
   const currentTime = now ?? new Date();
@@ -1686,13 +1693,25 @@ export async function routeCustomerMessage({
   }
 
   const seedData = await loadSeedData();
+  // Runtime content is an additive, reviewed overlay. Any database error or a
+  // non-selected canary audience leaves the established seed baseline intact.
+  const runtimeOverlay = runtimeContentOverlay ?? await loadRuntimeContentOverlay({
+    audienceKey: runtimeAudienceKey,
+    now: currentTime,
+    tenantId,
+  });
+  const runtimeData = {
+    ...seedData,
+    faqEntries: [...runtimeOverlay.faqEntries, ...seedData.faqEntries],
+    pricingCampaigns: [...runtimeOverlay.pricingCampaigns, ...seedData.pricingCampaigns],
+  };
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
 
   // Pregnancy, breastfeeding, and trying-to-conceive guidance must win over booking intake.
   const pregnancyReply = getPregnancyGuidanceReply(
     trimmedMessage,
     matchedTreatment?.name ?? nextContext.lastReferencedTreatment,
-    seedData.pregnancyRules,
+    runtimeData.pregnancyRules,
     includePending,
   );
   if (pregnancyReply) {
@@ -1777,6 +1796,19 @@ export async function routeCustomerMessage({
     };
   }
 
+  if (includesAnyTerm(trimmedMessage, DOCTOR_SCHEDULE_TERMS)) {
+    const doctorScheduleDecision = await resolveDoctorScheduleDecision({
+      fallbackReply: buildHandoffPendingReply("醫師門診與班表仍需依現場安排確認。", currentTime),
+      message: trimmedMessage,
+      today: currentTime,
+    });
+    nextContext.lastIntent = doctorScheduleDecision.matchedKey;
+    return {
+      ...doctorScheduleDecision,
+      nextContext,
+    };
+  }
+
   const basicInfoReply = getClinicBasicInfoReply(trimmedMessage, nextContext);
   if (basicInfoReply) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
@@ -1800,19 +1832,6 @@ export async function routeCustomerMessage({
     };
   }
 
-  if (includesAnyTerm(trimmedMessage, DOCTOR_SCHEDULE_TERMS)) {
-    const doctorScheduleDecision = await resolveDoctorScheduleDecision({
-      fallbackReply: buildHandoffPendingReply("醫師門診與班表仍需依現場安排確認。", currentTime),
-      message: trimmedMessage,
-      today: currentTime,
-    });
-    nextContext.lastIntent = doctorScheduleDecision.matchedKey;
-    return {
-      ...doctorScheduleDecision,
-      nextContext,
-    };
-  }
-
   const concernReply = getConcernReply(trimmedMessage);
   if (concernReply) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
@@ -1827,7 +1846,7 @@ export async function routeCustomerMessage({
   const pricingReply = getPricingReply(
     trimmedMessage,
     nextContext,
-    seedData.pricingCampaigns,
+    runtimeData.pricingCampaigns,
     includePending,
     currentTime,
   );
@@ -1861,7 +1880,7 @@ export async function routeCustomerMessage({
     };
   }
 
-  const matchedFaq = matchFaq(trimmedMessage, seedData.faqEntries, includePending);
+  const matchedFaq = matchFaq(trimmedMessage, runtimeData.faqEntries, includePending);
   if (matchedFaq) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
       ? "booking_intake"
