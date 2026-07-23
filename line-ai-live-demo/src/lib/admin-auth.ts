@@ -106,6 +106,18 @@ export function canAccessSystemAdmin(role: StaffRole) {
   return role === "owner" || role === "manager" || role === "maintainer";
 }
 
+export function canManageClinicHandoffNotifications(role: StaffRole) {
+  return role === "owner";
+}
+
+export function canManagePlatformHandoffNotifications(role: StaffRole) {
+  return role === "maintainer";
+}
+
+export function canViewHandoffNotifications(role: StaffRole) {
+  return canManageClinicHandoffNotifications(role) || canManagePlatformHandoffNotifications(role);
+}
+
 // Keep role checks on the server so hiding a button never becomes the only control.
 export function canUseWorkbench(role: StaffRole) {
   return role === "owner" || role === "manager" || role === "agent" || role === "maintainer";
@@ -158,4 +170,10 @@ export function canPublishContent(role: StaffRole) {
 
 export function canSubmitContentSource(role: StaffRole) {
   return role === "owner" || role === "manager";
+}
+
+// Runtime releases alter live LINE answers. They remain separate from ordinary
+// content drafting and require either the clinic owner or platform maintainer.
+export function canManageRuntimeContentReleases(role: StaffRole) {
+  return role === "owner" || role === "maintainer";
 }

@@ -7,19 +7,19 @@ function expect(condition: unknown, label: string) {
 }
 
 const config = {
-  handoffDigestKaohsiungTo: "kaohsiung@example.test",
+  handoffDigestKaohsiungTo: "kaohsiung@example.test, backup@example.test",
   handoffDigestLinkouTo: "",
   handoffDigestTaichungTo: "",
   handoffDigestTaoyuanTo: "",
 } as Parameters<typeof getHandoffDigestRecipients>[0];
 const recipients = getHandoffDigestRecipients(config);
-expect(recipients["高雄館"] === "kaohsiung@example.test", "Kaohsiung recipient is resolved from config");
-expect(recipients["台中館"] === "" && recipients["桃園館"] === "" && recipients["林口館"] === "", "blank branches remain disabled");
+expect(recipients["高雄館"].join(",") === "kaohsiung@example.test,backup@example.test", "Kaohsiung recipients are resolved from config");
+expect(recipients["台中館"].length === 0 && recipients["桃園館"].length === 0 && recipients["林口館"].length === 0, "blank branches remain disabled");
 
 const weekdayKey = getHandoffDigestKey(new Date("2026-07-13T12:00:00.000Z"));
 const saturdayKey = getHandoffDigestKey(new Date("2026-07-11T08:00:00.000Z"));
 const sundayKey = getHandoffDigestKey(new Date("2026-07-12T08:00:00.000Z"));
-expect(weekdayKey === "2026-07-13-weekday-evening", "weekday slot is Taiwan evening");
+expect(weekdayKey === "2026-07-13-weekday-afternoon", "weekday test slot is Taiwan afternoon");
 expect(saturdayKey === "2026-07-11-saturday-afternoon", "Saturday slot is Taiwan afternoon");
 expect(sundayKey === "2026-07-12-sunday-afternoon", "Sunday slot is Taiwan afternoon");
 

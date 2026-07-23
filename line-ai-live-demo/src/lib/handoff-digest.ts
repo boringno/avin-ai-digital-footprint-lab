@@ -19,6 +19,12 @@ type ResendResponse = {
   id?: string;
 };
 
+type RecipientRow = {
+  branch: HandoffDigestBranch;
+  recipient_email: string;
+  recipient_scope: "clinic" | "platform";
+};
+
 export type HandoffDigestResult = {
   deliveries: Array<{ branch: HandoffDigestBranch; status: "sent" | "skipped"; taskCount: number }>;
   unassignedTaskCount: number;
@@ -26,13 +32,38 @@ export type HandoffDigestResult = {
 
 const HANDOFF_DIGEST_BRANCHES = ["高雄館", "台中館", "桃園館", "林口館"] as const;
 
-export function getHandoffDigestRecipients(config: RuntimeConfig): Record<HandoffDigestBranch, string> {
+export function getHandoffDigestRecipients(config: RuntimeConfig): Record<HandoffDigestBranch, string[]> {
   return {
-    "台中館": config.handoffDigestTaichungTo.trim(),
-    "桃園館": config.handoffDigestTaoyuanTo.trim(),
-    "林口館": config.handoffDigestLinkouTo.trim(),
-    "高雄館": config.handoffDigestKaohsiungTo.trim(),
+    "台中館": splitRecipients(config.handoffDigestTaichungTo),
+    "桃園館": splitRecipients(config.handoffDigestTaoyuanTo),
+    "林口館": splitRecipients(config.handoffDigestLinkouTo),
+    "高雄館": splitRecipients(config.handoffDigestKaohsiungTo),
   };
+}
+
+export async function loadHandoffDigestRecipients(config: RuntimeConfig, tenantId = DEFAULT_TENANT_ID) {
+  const fallbackRecipients = getHandoffDigestRecipients(config);
+  const { data, error } = await getSupabaseServerClient()
+    .from("handoff_notification_recipients")
+    .select("branch, recipient_scope, recipient_email")
+    .eq("tenant_id", tenantId)
+    .eq("is_active", true)
+    .returns<RecipientRow[]>();
+  if (error) throw new Error(`Failed to load handoff digest recipients: ${error.message}`);
+
+  const savedClinicRecipients = new Map<HandoffDigestBranch, string[]>();
+  const platformRecipients = new Map<HandoffDigestBranch, string[]>();
+  for (const row of data ?? []) {
+    const target = row.recipient_scope === "clinic" ? savedClinicRecipients : platformRecipients;
+    target.set(row.branch, [...(target.get(row.branch) ?? []), row.recipient_email]);
+  }
+
+  return Object.fromEntries(
+    HANDOFF_DIGEST_BRANCHES.map((branch) => [
+      branch,
+      uniqueRecipients([...(savedClinicRecipients.has(branch) ? savedClinicRecipients.get(branch)! : fallbackRecipients[branch]), ...(platformRecipients.get(branch) ?? [])]),
+    ]),
+  ) as Record<HandoffDigestBranch, string[]>;
 }
 
 export function getHandoffDigestKey(now = new Date()) {
@@ -46,13 +77,13 @@ export function getHandoffDigestKey(now = new Date()) {
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const date = `${values.year}-${values.month}-${values.day}`;
   const slotByWeekday: Record<string, string> = {
-    Fri: "weekday-evening",
-    Mon: "weekday-evening",
+    Fri: "weekday-afternoon",
+    Mon: "weekday-afternoon",
     Sat: "saturday-afternoon",
     Sun: "sunday-afternoon",
-    Thu: "weekday-evening",
-    Tue: "weekday-evening",
-    Wed: "weekday-evening",
+    Thu: "weekday-afternoon",
+    Tue: "weekday-afternoon",
+    Wed: "weekday-afternoon",
   };
 
   return `${date}-${slotByWeekday[values.weekday] ?? "manual"}`;
@@ -75,10 +106,12 @@ export function buildHandoffDigestEmail(input: { branch: HandoffDigestBranch; ta
   };
 }
 
-export async function sendHandoffDigestTest(branch: HandoffDigestBranch = "高雄館") {
+export async function sendHandoffDigestTest(branch: HandoffDigestBranch = "高雄館", recipientScope: "clinic" | "platform" = "clinic", tenantId = DEFAULT_TENANT_ID) {
   const config = getRuntimeConfig();
-  const recipient = getHandoffDigestRecipients(config)[branch];
-  return sendHandoffDigestEmail({ appBaseUrl: config.appBaseUrl, branch, from: config.handoffDigestFrom, recipient, test: true });
+  const selectedRecipients = recipientScope === "clinic"
+    ? await loadRecipientsForScope(branch, "clinic", config, tenantId)
+    : await loadRecipientsForScope(branch, "platform", config, tenantId);
+  return sendHandoffDigestEmail({ appBaseUrl: config.appBaseUrl, branch, from: config.handoffDigestFrom, recipients: selectedRecipients, test: true });
 }
 
 export async function runHandoffDigest(now = new Date()): Promise<HandoffDigestResult> {
@@ -87,7 +120,7 @@ export async function runHandoffDigest(now = new Date()): Promise<HandoffDigestR
   }
 
   const config = getRuntimeConfig();
-  const recipients = getHandoffDigestRecipients(config);
+  const recipients = await loadHandoffDigestRecipients(config);
   const { data, error } = await getSupabaseServerClient()
     .from("handoff_tasks")
     .select("id, branch")
@@ -111,7 +144,7 @@ export async function runHandoffDigest(now = new Date()): Promise<HandoffDigestR
   const deliveries: HandoffDigestResult["deliveries"] = [];
   for (const branch of activeDigestBranches()) {
     const taskCount = counts.get(branch) ?? 0;
-    if (taskCount === 0 || !recipients[branch] || !config.handoffDigestFrom || !config.resendApiKey) {
+    if (taskCount === 0 || recipients[branch].length === 0 || !config.handoffDigestFrom || !config.resendApiKey) {
       deliveries.push({ branch, status: "skipped", taskCount });
       continue;
     }
@@ -126,7 +159,7 @@ export async function runHandoffDigest(now = new Date()): Promise<HandoffDigestR
       appBaseUrl: config.appBaseUrl,
       branch,
       from: config.handoffDigestFrom,
-      recipient: recipients[branch],
+      recipients: recipients[branch],
       taskCount,
     });
     if (!result.ok) {
@@ -165,12 +198,12 @@ async function sendHandoffDigestEmail(input: {
   appBaseUrl: string;
   branch: HandoffDigestBranch;
   from: string;
-  recipient: string;
+  recipients: string[];
   taskCount?: number;
   test?: boolean;
 }) {
   const config = getRuntimeConfig();
-  if (!config.resendApiKey || !input.from || !input.recipient) return { ok: false, providerMessageId: null };
+  if (!config.resendApiKey || !input.from || input.recipients.length === 0) return { ok: false, providerMessageId: null };
 
   const message = buildHandoffDigestEmail({
     appBaseUrl: input.appBaseUrl,
@@ -180,7 +213,7 @@ async function sendHandoffDigestEmail(input: {
   });
   try {
     const response = await fetch("https://api.resend.com/emails", {
-      body: JSON.stringify({ from: input.from, html: message.html, subject: message.subject, text: message.text, to: [input.recipient] }),
+      body: JSON.stringify({ from: input.from, html: message.html, subject: message.subject, text: message.text, to: input.recipients }),
       headers: { Authorization: `Bearer ${config.resendApiKey}`, "Content-Type": "application/json", "User-Agent": "line-ai-live-demo" },
       method: "POST",
     });
@@ -202,4 +235,25 @@ function activeDigestBranches(): HandoffDigestBranch[] {
 
 function isHandoffDigestBranch(value: string | null): value is HandoffDigestBranch {
   return typeof value === "string" && HANDOFF_DIGEST_BRANCHES.includes(value as HandoffDigestBranch);
+}
+
+async function loadRecipientsForScope(branch: HandoffDigestBranch, scope: "clinic" | "platform", config: RuntimeConfig, tenantId: string) {
+  const { data, error } = await getSupabaseServerClient()
+    .from("handoff_notification_recipients")
+    .select("recipient_email")
+    .eq("tenant_id", tenantId)
+    .eq("branch", branch)
+    .eq("recipient_scope", scope)
+    .eq("is_active", true);
+  if (error) throw new Error(`Failed to load ${scope} notification recipients: ${error.message}`);
+  const savedRecipients = (data ?? []).map((row) => String(row.recipient_email));
+  return scope === "clinic" && savedRecipients.length === 0 ? getHandoffDigestRecipients(config)[branch] : uniqueRecipients(savedRecipients);
+}
+
+function splitRecipients(value: string) {
+  return uniqueRecipients(value.split(","));
+}
+
+function uniqueRecipients(values: string[]) {
+  return [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))];
 }

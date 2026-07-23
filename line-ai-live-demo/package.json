@@ -30,7 +30,11 @@
     "validate:admin-team": "tsx scripts/validate-admin-team.ts",
     "validate:schedule-month": "tsx scripts/validate-schedule-month.ts",
     "validate:handoff-digest": "tsx scripts/validate-handoff-digest.ts",
-    "validate:admin-notifications": "tsx scripts/validate-admin-notifications.ts"
+    "validate:handoff-recipient-settings": "tsx scripts/validate-handoff-recipient-settings.ts",
+    "validate:admin-notifications": "tsx scripts/validate-admin-notifications.ts",
+    "validate:runtime-releases": "tsx scripts/validate-runtime-releases.ts",
+    "validate:conversation-inbox": "tsx scripts/validate-conversation-inbox.ts",
+    "validate:ai-intent-classifier": "tsx scripts/validate-ai-intent-classifier.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { canReviewFaqMiss, canUseWorkbench, canViewContent, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { canReviewFaqMiss, canUseWorkbench, canViewContent, canViewHandoffNotifications, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
 import { staffRoleLabels } from "@/lib/admin-display-maps";
 import { loadWorkbenchData } from "@/lib/admin-workbench-data";
 
@@ -42,6 +42,7 @@ export default async function AdminWorkbenchPage() {
             {canReviewFaqMiss(staff.role) ? <a href="/admin/faq-candidates" style={pillStyle}>問題補強</a> : null}
             {canViewContent(staff.role) ? <a href="/admin/content" style={pillStyle}>內容管理</a> : null}
             {canViewContent(staff.role) ? <a href="/admin/schedules" style={pillStyle}>門診班表</a> : null}
+            {canViewHandoffNotifications(staff.role) ? <a href="/admin/notifications" style={pillStyle}>通知設定</a> : null}
             {staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer" ? (
               <a href="/admin/team" style={pillStyle}>
                 團隊管理
@@ -49,6 +50,9 @@ export default async function AdminWorkbenchPage() {
             ) : null}
             <a href="/admin/leads" style={pillStyle}>
               預約線索
+            </a>
+            <a href="/admin/conversations" style={pillStyle}>
+              全部對話
             </a>
             <form action="/api/admin/auth/logout" method="post">
               <button type="submit" style={{ ...pillStyle, cursor: "pointer", font: "inherit" }}>

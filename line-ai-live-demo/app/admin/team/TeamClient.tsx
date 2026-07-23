@@ -171,6 +171,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
           <div style={{ display: "flex", gap: 8 }}>
             <a href="/admin/workbench" style={linkButtonStyle}>接手工作台</a>
             <a href="/admin/leads" style={linkButtonStyle}>預約線索</a>
+            <a href="/admin/notifications" style={linkButtonStyle}>通知設定</a>
           </div>
         </header>
 

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { canEditLeads, canReviewFaqMiss, canViewContent, canViewLeads, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { canEditLeads, canReviewFaqMiss, canViewContent, canViewHandoffNotifications, canViewLeads, canViewReports, getAdminStaffFromCookies } from "@/lib/admin-auth";
 import { staffRoleLabels } from "@/lib/admin-display-maps";
 import { loadAdminLeadsData } from "@/lib/admin-leads-data";
 
@@ -42,6 +42,7 @@ export default async function AdminLeadsPage() {
             {canReviewFaqMiss(staff.role) ? <a href="/admin/faq-candidates" style={linkButtonStyle}>問題補強</a> : null}
             {canViewContent(staff.role) ? <a href="/admin/content" style={linkButtonStyle}>內容管理</a> : null}
             {canViewContent(staff.role) ? <a href="/admin/schedules" style={linkButtonStyle}>門診班表</a> : null}
+            {canViewHandoffNotifications(staff.role) ? <a href="/admin/notifications" style={linkButtonStyle}>通知設定</a> : null}
             {staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer" ? (
               <a href="/admin/team" style={linkButtonStyle}>
                 團隊管理

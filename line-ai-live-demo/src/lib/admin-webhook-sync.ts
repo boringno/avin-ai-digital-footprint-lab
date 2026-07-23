@@ -238,7 +238,7 @@ async function safelyStoreIntentLabel(messageId: string, result: ProcessedWebhoo
 }
 
 async function maybeCreateHandoffTask(conversationId: string, result: ProcessedWebhookResult) {
-  if (result.decision.decisionType !== "handoff_pending") {
+  if (!shouldCreateHandoffTask(result)) {
     return;
   }
 
@@ -275,6 +275,10 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
     conversationId,
     reason: result.decision.matchedKey || "unknown",
   });
+}
+
+export function shouldCreateHandoffTask(result: { decision: Pick<ProcessedWebhookResult["decision"], "decisionType"> }) {
+  return ["handoff_pending", "booking_intake_reply"].includes(result.decision.decisionType);
 }
 
 async function maybeUpsertBookingLead(conversationId: string, result: ProcessedWebhookResult) {

@@ -8,6 +8,9 @@ export type HandoffNotificationInput = {
 };
 
 const handoffReasonLabels: Record<string, string> = {
+  booking_cancel_request: "預約取消需求",
+  booking_intake: "新預約需求",
+  booking_modify_request: "預約變更需求",
   customer_account_lookup: "客戶資料查詢",
   effect_guarantee_request: "療效保證問題",
   human_request: "客人要求真人協助",
