@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 import { ADMIN_ACCESS_COOKIE, ADMIN_REFRESH_COOKIE, canViewReports, getAdminStaffFromAccessToken } from "@/lib/admin-auth";
-import { buildAdminLoginRateLimitKeys, isAdminLoginRateLimited, recordAdminLoginFailure } from "@/lib/admin-login-protection";
+import { buildAdminLoginRateLimitKeys, clearAdminLoginFailures, isAdminLoginRateLimited, recordAdminLoginFailure } from "@/lib/admin-login-protection";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 
@@ -69,6 +69,13 @@ export async function POST(request: Request) {
   const staff = await getAdminStaffFromAccessToken(data.session.access_token);
   if (!staff) {
     return NextResponse.redirect(new URL("/admin/forbidden", request.url), { status: 303 });
+  }
+
+  // A successful admin login should clear any prior failure window for the same key hashes.
+  try {
+    await clearAdminLoginFailures(rateLimitKeys);
+  } catch (error) {
+    await reportOperationalError({ alert: true, error, source: "admin_login_rate_limit_reset" });
   }
 
   // Login telemetry is operational only; a failed timestamp update must not block access.

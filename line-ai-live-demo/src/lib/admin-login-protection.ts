@@ -8,6 +8,12 @@ const LOGIN_WINDOW_SECONDS = 15 * 60;
 const MAX_FAILURES = 5;
 const BLOCK_SECONDS = 15 * 60;
 
+type AdminLoginAttemptResetPatch = {
+  blocked_until: null;
+  failure_count: number;
+  window_started_at: string;
+};
+
 export function buildAdminLoginRateLimitKeys(email: string, request: Request) {
   const config = getRuntimeConfig();
   if (!config.supabaseServiceRoleKey) {
@@ -54,6 +60,29 @@ export async function recordAdminLoginFailure(keyHashes: string[]) {
     throw new Error("Unable to record admin login failure.");
   }
   return data === true;
+}
+
+export function buildAdminLoginResetPatch(now = new Date()): AdminLoginAttemptResetPatch {
+  return {
+    blocked_until: null,
+    failure_count: 0,
+    window_started_at: now.toISOString(),
+  };
+}
+
+export async function clearAdminLoginFailures(keyHashes: string[]) {
+  if (!hasSupabaseServerConfig() || keyHashes.length === 0) {
+    return;
+  }
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("admin_login_attempts")
+    .update(buildAdminLoginResetPatch())
+    .eq("tenant_id", LOGIN_TENANT_ID)
+    .in("key_hash", keyHashes);
+  if (error) {
+    throw new Error("Unable to clear admin login failures.");
+  }
 }
 
 function hashLoginKey(kind: "email" | "source", value: string, secret: string) {
