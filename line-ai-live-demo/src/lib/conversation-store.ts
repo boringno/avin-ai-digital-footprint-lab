@@ -22,6 +22,9 @@ type ConversationRuntimeStatePatch = Partial<
   Pick<ConversationRuntimeStateRow, "booking_draft_json" | "context_json" | "is_soft_deleted" | "retention_expiry" | "soft_deleted_at" | "state_json">
 >;
 
+type ConversationRuntimeStateUpsertRow = Pick<ConversationRuntimeStateRow, "line_user_id" | "retention_expiry" | "tenant_id">
+  & Partial<Pick<ConversationRuntimeStateRow, "booking_draft_json" | "context_json" | "is_soft_deleted" | "soft_deleted_at" | "state_json">>;
+
 function buildRetentionExpiryIso(now = new Date()) {
   const retentionExpiry = new Date(now);
   retentionExpiry.setDate(retentionExpiry.getDate() + RETENTION_DAYS);
@@ -51,6 +54,36 @@ export function buildInsertRow(
     state_json: patch.state_json ?? {},
     tenant_id: tenantId,
   };
+}
+
+export function buildConversationRuntimeStateUpsertRow(
+  userId: string,
+  patch: ConversationRuntimeStatePatch,
+  tenantId: string = DEFAULT_TENANT_ID,
+): ConversationRuntimeStateUpsertRow {
+  const row: ConversationRuntimeStateUpsertRow = {
+    line_user_id: userId,
+    retention_expiry: patch.retention_expiry ?? buildRetentionExpiryIso(),
+    tenant_id: tenantId,
+  };
+
+  if (Object.prototype.hasOwnProperty.call(patch, "booking_draft_json")) {
+    row.booking_draft_json = patch.booking_draft_json ?? {};
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "context_json")) {
+    row.context_json = patch.context_json ?? {};
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "is_soft_deleted")) {
+    row.is_soft_deleted = patch.is_soft_deleted ?? false;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "soft_deleted_at")) {
+    row.soft_deleted_at = patch.soft_deleted_at ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "state_json")) {
+    row.state_json = patch.state_json ?? {};
+  }
+
+  return row;
 }
 
 export function isSupabaseConversationStoreEnabled() {
@@ -98,41 +131,15 @@ export async function saveConversationRuntimeState(
   }
 
   const supabase = getSupabaseServerClient();
-  const existing = await loadConversationRuntimeState(userId, tenantId);
-  const patchWithRetention: ConversationRuntimeStatePatch = {
-    ...patch,
-    retention_expiry: patch.retention_expiry ?? buildRetentionExpiryIso(),
-  };
-
-  if (!existing) {
-    const insertRow = buildInsertRow(userId, patchWithRetention, tenantId);
-    const { error } = await supabase.from(TABLE_NAME).insert(insertRow);
-    if (error) {
-      const wrappedError = new Error(`Failed to insert conversation runtime state: ${error.message}`);
-      await reportOperationalError({
-        error: wrappedError,
-        extra: {
-          operation: "insert_conversation_runtime_state",
-        },
-        source: "supabase_conversation_store",
-      });
-      throw wrappedError;
-    }
-    return;
-  }
-
-  const updateScopeFilters = buildTenantScopeFilters(userId, tenantId);
   const { error } = await supabase
     .from(TABLE_NAME)
-    .update(patchWithRetention)
-    .eq("tenant_id", updateScopeFilters.tenant_id)
-    .eq("line_user_id", updateScopeFilters.line_user_id);
+    .upsert(buildConversationRuntimeStateUpsertRow(userId, patch, tenantId), { onConflict: "line_user_id" });
   if (error) {
-    const wrappedError = new Error(`Failed to update conversation runtime state: ${error.message}`);
+    const wrappedError = new Error(`Failed to upsert conversation runtime state: ${error.message}`);
     await reportOperationalError({
       error: wrappedError,
       extra: {
-        operation: "update_conversation_runtime_state",
+        operation: "upsert_conversation_runtime_state",
       },
       source: "supabase_conversation_store",
     });
