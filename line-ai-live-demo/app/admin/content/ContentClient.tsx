@@ -105,6 +105,7 @@ export function ContentClient({
 }) {
   const [busyId, setBusyId] = useState("");
   const [draft, setDraft] = useState<DraftForm>(emptyDraft);
+  const [editingVersionLabel, setEditingVersionLabel] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [items, setItems] = useState(initialItems);
   const [notice, setNotice] = useState("");
@@ -139,6 +140,7 @@ export function ContentClient({
       if (!response.ok || !body.ok) throw new Error(body.error ?? "建立草稿失敗，請重新確認內容。");
       setItems(body.items ?? []);
       setDraft(emptyDraft);
+      setEditingVersionLabel(null);
       setNotice("已建立新版本草稿，尚未對客人生效。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "建立草稿失敗，請重新確認內容。");
@@ -196,6 +198,7 @@ export function ContentClient({
       topic: stringValue(payload.topic),
       treatmentName: stringValue(payload.treatment_name),
     });
+    setEditingVersionLabel(`${item.displayName}／版本 ${version.versionNo}`);
     setNotice(`已帶入版本 ${version.versionNo}。儲存後會建立新草稿，不會覆寫舊版本。`);
     window.requestAnimationFrame(() => {
       document.getElementById("content-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -225,7 +228,7 @@ export function ContentClient({
         {error ? <p style={errorStyle}>{error}</p> : null}
         {notice ? <p style={noticeStyle}>{notice}</p> : null}
 
-        {canEdit ? <DraftEditor busy={busyId === "new-draft"} draft={draft} onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} onSave={() => void createDraft()} /> : <section style={infoStyle}>您目前可查看內容與版本歷史，但不能建立、送審或發布內容。</section>}
+        {canEdit ? <DraftEditor busy={busyId === "new-draft"} draft={draft} editingVersionLabel={editingVersionLabel} onCancelEdit={() => { setDraft(emptyDraft); setEditingVersionLabel(null); setNotice("已取消帶入版本，您可以建立新的空白草稿。"); }} onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} onSave={() => void createDraft()} /> : <section style={infoStyle}>您目前可查看內容與版本歷史，但不能建立、送審或發布內容。</section>}
 
         <section style={panelStyle}>
           <div style={{ alignItems: "baseline", display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", marginBottom: 14 }}>
@@ -251,10 +254,11 @@ export function ContentClient({
   );
 }
 
-function DraftEditor({ busy, draft, onChange, onSave }: { busy: boolean; draft: DraftForm; onChange: (patch: Partial<DraftForm>) => void; onSave: () => void }) {
+function DraftEditor({ busy, draft, editingVersionLabel, onCancelEdit, onChange, onSave }: { busy: boolean; draft: DraftForm; editingVersionLabel: string | null; onCancelEdit: () => void; onChange: (patch: Partial<DraftForm>) => void; onSave: () => void }) {
   const isFaq = draft.contentType === "faq";
   return <section id="content-draft-editor" style={{ ...panelStyle, marginBottom: 16 }}>
-    <div><h2 style={{ color: "#16302b", margin: 0 }}>建立新版本草稿</h2><p style={subtleStyle}>每次儲存都新增一個版本，舊版本不會被覆寫。</p></div>
+    <div><h2 style={{ color: "#16302b", margin: 0 }}>{editingVersionLabel ? "修改既有版本" : "建立新版本草稿"}</h2><p style={subtleStyle}>每次儲存都新增一個版本，舊版本不會被覆寫。</p></div>
+    {editingVersionLabel ? <div style={editingNoticeStyle}><span>正在以「{editingVersionLabel}」建立新草稿。</span><button disabled={busy} onClick={onCancelEdit} style={compactButtonStyle} type="button">取消帶入</button></div> : null}
     <div style={formGridStyle}>
       <label style={labelStyle}>內容用途<select disabled={busy} onChange={(event) => { const contentPurpose = event.target.value as ContentPurpose; const option = contentPurposeOptions.find((item) => item.value === contentPurpose); onChange({ contentPurpose, contentType: option?.type ?? "faq" }); }} style={inputStyle} value={draft.contentPurpose}>{contentPurposeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       <label style={labelStyle}>中文內容名稱<input disabled={busy} onChange={(event) => onChange({ displayName: event.target.value })} placeholder="例如：高雄館停車資訊" style={inputStyle} value={draft.displayName} /></label>
@@ -313,6 +317,8 @@ const secondaryButtonStyle = { background: "#fff", border: "1px solid #b9cbc5", 
 const dangerButtonStyle = { background: "#fff6f4", border: "1px solid #e6aaa3", borderRadius: 10, color: "#8c332c", cursor: "pointer", font: "inherit", minHeight: 42, padding: "9px 12px" } satisfies CSSProperties;
 const errorStyle = { background: "#fff2f0", border: "1px solid #f3b9b3", borderRadius: 12, color: "#8c2323", marginBottom: 16, padding: 12 } satisfies CSSProperties;
 const noticeStyle = { background: "#e8f7ed", border: "1px solid #b9e4c7", borderRadius: 12, color: "#17693a", marginBottom: 16, padding: 12 } satisfies CSSProperties;
+const editingNoticeStyle = { alignItems: "center", background: "#fff8e6", border: "1px solid #ead38d", borderRadius: 12, color: "#6c5000", display: "flex", flexWrap: "wrap", fontSize: 14, gap: 10, justifyContent: "space-between", marginTop: 14, padding: 12 } satisfies CSSProperties;
+const compactButtonStyle = { background: "#fff", border: "1px solid #b9a462", borderRadius: 8, color: "#644900", cursor: "pointer", font: "inherit", minHeight: 36, padding: "6px 10px" } satisfies CSSProperties;
 const countStyle = { color: "#5e7a72", fontSize: 14 } satisfies CSSProperties;
 const keyStyle = { color: "#66756f", fontFamily: "monospace", fontSize: 13, marginLeft: 8 } satisfies CSSProperties;
 const activeBadgeStyle = { background: "#e8f7ed", border: "1px solid #b9e4c7", borderRadius: 999, color: "#17693a", fontSize: 13, padding: "5px 9px" } satisfies CSSProperties;
