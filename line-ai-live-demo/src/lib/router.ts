@@ -729,10 +729,35 @@ function shouldKeepBookingMode(previousContext: ConversationContext | undefined,
 }
 
 function isFreeTextBookingInfoQuestion(message: string) {
+  // A customer can ask a factual question while an unfinished booking draft exists.
+  // Keep explicit booking actions in the intake flow, but let factual questions reach
+  // their dedicated rule instead of repeating the booking summary.
+  if (
+    includesAnyTerm(message, APPOINTMENT_TERMS) ||
+    isBookingModifyRequest(message) ||
+    isBookingCancelRequest(message)
+  ) {
+    return false;
+  }
+
   return (
     includesAnyTerm(message, ADDRESS_TERMS) ||
+    includesAnyTerm(message, BUSINESS_HOUR_TERMS) ||
+    includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
+    includesAnyTerm(message, NEAREST_BRANCH_TERMS) ||
+    includesAnyTerm(message, PHONE_TERMS) ||
     includesAnyTerm(message, TREATMENT_DISCOVERY_TERMS) ||
-    includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS)
+    includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS) ||
+    includesAnyTerm(message, TRANSPORT_TERMS)
+  );
+}
+
+function hasExplicitBookingDetails(message: string) {
+  return (
+    Boolean(extractPhone(message)) ||
+    Boolean(extractBookingName(message)) ||
+    Boolean(extractFirstVisit(message)) ||
+    extractBookingProgressTimeSlots(message).length > 0
   );
 }
 
@@ -750,13 +775,20 @@ function isBookingFollowupMessage(message: string, previousContext: Conversation
   }
 
   const structuredBookingForm = hasStructuredBookingForm(message);
+  if (structuredBookingForm || isBookingModifyRequest(message) || isBookingCancelRequest(message)) {
+    return true;
+  }
+
+  if (isFreeTextBookingInfoQuestion(message) && !hasExplicitBookingDetails(message)) {
+    return false;
+  }
+
   if (isBookingConversationIntent(previousContext.lastIntent)) {
-    return hasBookingDraftProgress(message, previousContext) || structuredBookingForm;
+    return hasBookingDraftProgress(message, previousContext);
   }
 
   if (previousContext.lastIntent === "human_request") {
     return (
-      structuredBookingForm ||
       (hasBookingDraftValue(previousContext) && hasBookingDraftProgress(message, previousContext)) ||
       hasFreeTextBookingSignal(message)
     );

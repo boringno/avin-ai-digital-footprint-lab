@@ -699,6 +699,33 @@ async function main() {
     result: schedulePhraseResult,
   });
 
+  const bookingScheduleQuestionResult = await routeCustomerMessage({
+    conversationContext: {
+      bookingDraft: {
+        branch: "\u9ad8\u96c4\u9928",
+        name: "Ivan",
+        phone: "0912345678",
+        timeSlots: ["7/5 13:30"],
+        treatment: "\u8089\u6bd2",
+      },
+      introSent: false,
+      lastIntent: "booking_intake",
+      userId: "validate-booking-schedule-question",
+    },
+    includePending: false,
+    message: "\u6211\u60f3\u4e86\u89e3\u9ad8\u96c4\u9928\u8a3a\u6b21",
+    now: VALIDATION_NOW,
+  });
+  results.push({
+    expectedDecisionType: "doctor_schedule_auto_reply",
+    expectedMatchedType: "doctor_schedule",
+    message: "booking-context schedule question",
+    passed:
+      bookingScheduleQuestionResult.decisionType === "doctor_schedule_auto_reply" &&
+      bookingScheduleQuestionResult.matchedType === "doctor_schedule",
+    result: bookingScheduleQuestionResult,
+  });
+
   const scheduleResults = validateScheduleMonthReplies();
 
   console.log(JSON.stringify({ router: results, scheduleMonth: scheduleResults }, null, 2));
