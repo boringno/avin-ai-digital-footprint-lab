@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/handoff-digest-weekday",
-      "schedule": "0 6 * * 1-5"
+      "schedule": "20 11 * * 5"
     },
     {
       "path": "/api/cron/handoff-digest-weekend",
