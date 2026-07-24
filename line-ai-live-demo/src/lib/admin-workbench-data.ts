@@ -45,6 +45,7 @@ export type WorkbenchMessage = {
   id: string;
   sendError: string | null;
   sendStatus: "failed" | "pending" | "sent" | "skipped";
+  staffName: string | null;
 };
 
 export type WorkbenchConversationDetail = {
@@ -86,6 +87,7 @@ type MessageRow = {
   created_at: string;
   direction: "ai" | "customer" | "staff" | "system";
   id: string;
+  payload_json: unknown;
   send_error: string | null;
   send_status: "failed" | "pending" | "sent" | "skipped";
 };
@@ -149,7 +151,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
   const [{ data: messages, error: messagesError }, { data: runtimeState }, { data: bookingLead }] = await Promise.all([
     supabase
       .from("conversation_messages")
-      .select("id, direction, content, send_status, send_error, created_at")
+      .select("id, direction, content, payload_json, send_status, send_error, created_at")
       .eq("tenant_id", staff.tenantId)
       .eq("conversation_id", conversation.id)
       .order("created_at", { ascending: true })
@@ -194,6 +196,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
       id: message.id,
       sendError: message.send_error,
       sendStatus: message.send_status,
+      staffName: getStaffMessageName(message.payload_json),
     })),
     state: normalizeConversationState(conversation.line_user_id, runtimeState?.state_json),
   };
@@ -588,6 +591,15 @@ function normalizeConversationState(lineUserId: string, value: Record<string, un
     ...(value ?? {}),
     userId: lineUserId,
   } as ConversationState;
+}
+
+function getStaffMessageName(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const staffName = (payload as Record<string, unknown>).staff_name;
+  return typeof staffName === "string" && staffName.trim() ? staffName.trim() : null;
 }
 
 function normalizeStringArray(value: unknown) {

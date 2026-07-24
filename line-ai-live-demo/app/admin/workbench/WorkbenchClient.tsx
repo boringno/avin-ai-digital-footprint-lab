@@ -43,6 +43,7 @@ type MessageItem = {
   id: string;
   sendError: string | null;
   sendStatus: string;
+  staffName: string | null;
 };
 
 type Detail = {
@@ -791,7 +792,7 @@ function MessageBubble({ isCompact, message }: { isCompact: boolean; message: Me
         }}
       >
         <p style={messageMetaStyle}>
-          {formatDirection(message.direction)} · {formatTime(message.createdAt)}
+          {formatMessageAuthor(message)} · {formatTime(message.createdAt)}
           {message.sendStatus === "failed" ? " · 傳送失敗" : ""}
         </p>
         <p style={messageBodyStyle}>{message.content}</p>
@@ -867,6 +868,11 @@ function formatDirection(direction: MessageItem["direction"]) {
   if (direction === "staff") return "真人客服";
   if (direction === "ai") return "AI";
   return "系統";
+}
+
+function formatMessageAuthor(message: MessageItem) {
+  const direction = formatDirection(message.direction);
+  return message.direction === "staff" && message.staffName ? `${direction}・${message.staffName}` : direction;
 }
 
 function formatRuntimeStatus(status: string) {

@@ -182,7 +182,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
               <div style={timelineStyle}>
                 {detail.messages.map((message) => (
                   <article key={message.id} style={{ ...messageStyle, ...(message.direction === "customer" ? customerMessageStyle : message.direction === "staff" ? staffMessageStyle : aiMessageStyle) }}>
-                    <strong>{message.direction === "customer" ? "客人" : message.direction === "staff" ? "真人客服" : message.direction === "ai" ? "AI 客服" : "系統"}</strong>
+                    <strong>{message.direction === "customer" ? "客人" : message.direction === "staff" ? message.staffName ? `真人客服・${message.staffName}` : "真人客服" : message.direction === "ai" ? "AI 客服" : "系統"}</strong>
                     <span style={{ whiteSpace: "pre-wrap" }}>{message.content}</span>
                     <small>{formatTime(message.createdAt)}</small>
                   </article>
