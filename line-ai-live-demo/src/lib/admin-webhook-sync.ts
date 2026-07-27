@@ -41,6 +41,8 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
 
   try {
     for (const result of input.results) {
+      await captureLineGroupSource(result);
+
       if (!result.sourceUserId) {
         continue;
       }
@@ -68,6 +70,43 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
         result_count: input.results.length,
       },
       source: "admin_webhook_sync",
+    });
+  }
+}
+
+async function captureLineGroupSource(result: ProcessedWebhookResult) {
+  if (result.sourceType !== "group" || !result.sourceGroupId) {
+    return;
+  }
+
+  try {
+    const supabase = getSupabaseServerClient();
+    const groupName = await fetchLineGroupName(result.sourceGroupId);
+    const { error } = await supabase
+      .from("line_group_sources")
+      .upsert(
+        {
+          group_id: result.sourceGroupId,
+          group_name: groupName,
+          last_event_id: emptyToNull(result.webhookEventId),
+          last_seen_at: new Date().toISOString(),
+          tenant_id: TENANT_ID,
+        },
+        { onConflict: "tenant_id,group_id" },
+      );
+
+    if (error) {
+      throw new Error(`Failed to capture LINE group source: ${error.message}`);
+    }
+  } catch (error) {
+    await reportOperationalError({
+      alert: false,
+      error,
+      extra: {
+        group_id: result.sourceGroupId,
+        webhook_event_id: result.webhookEventId,
+      },
+      source: "line_group_source_capture",
     });
   }
 }
@@ -134,6 +173,30 @@ async function fetchLineDisplayName(lineUserId: string) {
     return typeof profile.displayName === "string" && profile.displayName.trim() ? profile.displayName.trim() : null;
   } catch {
     // A profile lookup must never interrupt conversation, booking, or handoff persistence.
+    return null;
+  }
+}
+
+async function fetchLineGroupName(groupId: string) {
+  const accessToken = getRuntimeConfig().lineAccessToken;
+  if (!groupId || !accessToken) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://api.line.me/v2/bot/group/${encodeURIComponent(groupId)}/summary`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as { groupName?: unknown };
+    return typeof payload.groupName === "string" && payload.groupName.trim() ? payload.groupName.trim() : null;
+  } catch {
     return null;
   }
 }

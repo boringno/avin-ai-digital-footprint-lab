@@ -36,7 +36,7 @@ type LineMessageEvent = {
   deliveryContext?: { isRedelivery?: boolean };
   message?: { id?: string; text?: string; type?: string };
   replyToken?: string;
-  source?: { type?: string; userId?: string };
+  source?: { groupId?: string; roomId?: string; type?: string; userId?: string };
   type?: string;
   webhookEventId?: string;
 };
@@ -97,6 +97,9 @@ export type ProcessedWebhookResult = {
     replyToken: string;
   };
   replyToken: string;
+  sourceGroupId: string;
+  sourceRoomId: string;
+  sourceType: string;
   sourceUserId: string;
   usedAiHumanizer: boolean;
   usedAiReplyGenerator: boolean;
@@ -191,6 +194,20 @@ function createAnonymousState(userId: string) {
 }
 
 async function classifyEvent(event: LineMessageEvent, includePending: boolean): Promise<ClassifiedDecision> {
+  if (event.source?.type === "group" || event.source?.type === "room") {
+    return {
+      conversationState: createAnonymousState(""),
+      decisionType: "group_source_ignored",
+      matchedKey: event.source?.type ?? "group_source",
+      matchedType: "system_event",
+      nextContext: createAnonymousContext(""),
+      replyText: "",
+      shouldIntroduce: false,
+      usedAiHumanizer: false,
+      usedAiReplyGenerator: false,
+    };
+  }
+
   const sourceUserId = event.source?.userId ?? "";
   const existingContext = sourceUserId ? await loadConversationContext(sourceUserId) : createAnonymousContext(sourceUserId);
   const loadedState = sourceUserId ? await loadConversationState(sourceUserId) : createAnonymousState(sourceUserId);
@@ -454,6 +471,9 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       messageText: event.message?.text ?? "",
       replyPayload,
       replyToken,
+      sourceGroupId: event.source?.groupId ?? "",
+      sourceRoomId: event.source?.roomId ?? "",
+      sourceType: event.source?.type ?? "",
       sourceUserId: event.source?.userId ?? "",
       usedAiHumanizer: decision.usedAiHumanizer,
       usedAiReplyGenerator: decision.usedAiReplyGenerator,

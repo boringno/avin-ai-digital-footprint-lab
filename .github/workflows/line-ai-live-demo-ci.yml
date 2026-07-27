@@ -53,6 +53,7 @@ jobs:
           npm run validate:tenant-scope
           npm run validate:admin-notifications
           npm run validate:handoff-digest
+          npm run validate:handoff-notification
 
       - name: Build production application
         run: npm run build

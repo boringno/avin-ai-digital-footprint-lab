@@ -1,82 +1,219 @@
 import type { AdminStaffUser } from "@/lib/admin-auth";
 import { canManageClinicHandoffNotifications, canManagePlatformHandoffNotifications } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
-import type { HandoffDigestBranch } from "@/lib/handoff-digest";
+import { activeDigestBranches, type HandoffDigestBranch, type HandoffNotificationChannel } from "@/lib/handoff-digest";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type NotificationRecipientScope = "clinic" | "platform";
 
 export type HandoffNotificationRecipient = {
   branch: HandoffDigestBranch;
-  email: string;
+  channel: HandoffNotificationChannel;
   id: string;
+  isActive: boolean;
   scope: NotificationRecipientScope;
+  target: string;
+};
+
+export type PendingLineGroupSource = {
+  groupId: string;
+  groupName: string | null;
+  lastSeenAt: string;
 };
 
 type RecipientRow = {
   branch: HandoffDigestBranch;
+  channel: HandoffNotificationChannel;
   id: string;
-  recipient_email: string;
+  is_active: boolean;
   recipient_scope: NotificationRecipientScope;
+  target: string | null;
 };
 
-const branches: HandoffDigestBranch[] = ["高雄館", "台中館", "桃園館", "林口館"];
-const maxClinicRecipientsPerBranch = 3;
-const maxPlatformRecipientsPerBranch = 10;
+type PendingGroupRow = {
+  group_id: string;
+  group_name: string | null;
+  last_seen_at: string;
+};
 
 export function getNotificationRecipientScope(staff: AdminStaffUser): NotificationRecipientScope {
-  if (canManageClinicHandoffNotifications(staff.role)) return "clinic";
-  if (canManagePlatformHandoffNotifications(staff.role)) return "platform";
-  throw new Error("您沒有管理通知收件人的權限。");
+  if (canManageClinicHandoffNotifications(staff.role)) {
+    return "clinic";
+  }
+  if (canManagePlatformHandoffNotifications(staff.role)) {
+    return "platform";
+  }
+  throw new Error("Current role cannot manage handoff notification settings");
 }
 
-export function getNotificationRecipientLimit(scope: NotificationRecipientScope) {
-  return scope === "clinic" ? maxClinicRecipientsPerBranch : maxPlatformRecipientsPerBranch;
+export function getNotificationRecipientLimit(scope: NotificationRecipientScope, channel: HandoffNotificationChannel) {
+  if (channel === "line_group") {
+    return 1;
+  }
+  return scope === "clinic" ? 3 : 10;
+}
+
+export function listNotificationBranches() {
+  return activeDigestBranches();
+}
+
+export async function loadNotificationSettingsPageData(staff: AdminStaffUser) {
+  return {
+    pendingGroups: await loadPendingLineGroupSources(staff),
+    recipients: await loadHandoffNotificationRecipients(staff),
+  };
 }
 
 export async function loadHandoffNotificationRecipients(staff: AdminStaffUser) {
   const scope = getNotificationRecipientScope(staff);
-  const { data, error } = await getSupabaseServerClient()
-    .from("handoff_notification_recipients")
-    .select("id, branch, recipient_scope, recipient_email")
-    .eq("tenant_id", staff.tenantId)
-    .eq("recipient_scope", scope)
-    .eq("is_active", true)
-    .order("created_at", { ascending: true })
-    .returns<RecipientRow[]>();
-  if (error) throw new Error(`Failed to load notification recipients: ${error.message}`);
+  const supabase = getSupabaseServerClient();
+  const rows: RecipientRow[] = [];
 
-  return (data ?? []).map((row) => ({ branch: row.branch, email: row.recipient_email, id: row.id, scope: row.recipient_scope }));
+  for (const branch of listNotificationBranches()) {
+    const { data, error } = await supabase
+      .from("handoff_notification_recipients")
+      .select("id, branch, channel, recipient_scope, target, is_active")
+      .eq("tenant_id", staff.tenantId)
+      .eq("branch", branch)
+      .eq("recipient_scope", scope)
+      .eq("is_active", true)
+      .order("created_at", { ascending: true })
+      .returns<RecipientRow[]>();
+
+    if (error) {
+      throw new Error(`Failed to load notification recipients for ${branch}: ${error.message}`);
+    }
+
+    rows.push(...(data ?? []));
+  }
+
+  return rows
+    .filter((row) => row.target)
+    .map((row) => ({
+      branch: row.branch,
+      channel: row.channel,
+      id: row.id,
+      isActive: row.is_active,
+      scope: row.recipient_scope,
+      target: row.target ?? "",
+    }));
 }
 
-export async function replaceHandoffNotificationRecipients(input: { branch: string; emails: string[]; staff: AdminStaffUser }) {
+export async function replaceHandoffNotificationRecipients(input: {
+  branch: string;
+  emails: string[];
+  lineGroups: string[];
+  staff: AdminStaffUser;
+}) {
   const scope = getNotificationRecipientScope(input.staff);
-  if (!branches.includes(input.branch as HandoffDigestBranch)) throw new Error("館別設定不正確。");
+  const branches = listNotificationBranches();
+  if (!branches.includes(input.branch)) {
+    throw new Error("Invalid branch");
+  }
 
-  const emails = normalizeEmails(input.emails);
-  const limit = getNotificationRecipientLimit(scope);
-  if (emails.length > limit) throw new Error(scope === "clinic" ? "每館最多可設定 3 個收件信箱。" : "工程測試每館最多可設定 10 個收件信箱。");
+  const emailTargets = normalizeTargets("email", input.emails);
+  const lineGroupTargets = normalizeTargets("line_group", input.lineGroups);
+  validateTargets(scope, "email", emailTargets);
+  validateTargets(scope, "line_group", lineGroupTargets);
 
-  const { error } = await getSupabaseServerClient().rpc("replace_handoff_notification_recipients", {
-    p_branch: input.branch,
-    p_emails: emails,
-    p_scope: scope,
-    p_tenant_id: input.staff.tenantId,
-  });
-  if (error) throw new Error(`Failed to save notification recipients: ${error.message}`);
+  const supabase = getSupabaseServerClient();
+  for (const [channel, targets] of [
+    ["email", emailTargets],
+    ["line_group", lineGroupTargets],
+  ] as const) {
+    const { error } = await supabase.rpc("replace_handoff_notification_recipients", {
+      p_branch: input.branch,
+      p_channel: channel,
+      p_scope: scope,
+      p_targets: targets,
+      p_tenant_id: input.staff.tenantId,
+    });
+
+    if (error) {
+      throw new Error(`Failed to save ${channel} recipients: ${error.message}`);
+    }
+  }
 
   await writeAdminAuditLog({
     action: "handoff_notification_recipients_updated",
-    after: { branch: input.branch, recipient_count: emails.length, scope },
+    after: {
+      branch: input.branch,
+      email_targets: emailTargets,
+      line_group_targets: lineGroupTargets,
+      scope,
+    },
     staff: input.staff,
     targetId: `${scope}:${input.branch}`,
     targetTable: "handoff_notification_recipients",
   });
+
   return loadHandoffNotificationRecipients(input.staff);
 }
 
-function normalizeEmails(values: string[]) {
-  const emails = [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))];
-  if (emails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new Error("請確認所有收件信箱格式正確。");
-  return emails;
+export async function loadPendingLineGroupSources(staff: AdminStaffUser) {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("line_group_sources")
+    .select("group_id, group_name, last_seen_at")
+    .eq("tenant_id", staff.tenantId)
+    .order("last_seen_at", { ascending: false })
+    .returns<PendingGroupRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to load LINE group sources: ${error.message}`);
+  }
+
+  const boundTargets = new Set<string>();
+  for (const branch of listNotificationBranches()) {
+    const { data: boundRows, error: boundError } = await supabase
+      .from("handoff_notification_recipients")
+      .select("target")
+      .eq("tenant_id", staff.tenantId)
+      .eq("branch", branch)
+      .eq("channel", "line_group")
+      .eq("is_active", true)
+      .returns<Array<{ target: string | null }>>();
+
+    if (boundError) {
+      throw new Error(`Failed to load bound LINE groups for ${branch}: ${boundError.message}`);
+    }
+
+    for (const row of boundRows ?? []) {
+      if (row.target?.trim()) {
+        boundTargets.add(row.target.trim());
+      }
+    }
+  }
+
+  return (data ?? [])
+    .filter((row) => !boundTargets.has(row.group_id))
+    .map((row) => ({
+      groupId: row.group_id,
+      groupName: row.group_name,
+      lastSeenAt: row.last_seen_at,
+    }));
+}
+
+function normalizeTargets(channel: HandoffNotificationChannel, values: string[]) {
+  return [...new Set(values.map((value) => normalizeTarget(channel, value)).filter(Boolean))];
+}
+
+function normalizeTarget(channel: HandoffNotificationChannel, value: string) {
+  const trimmed = value.trim();
+  return channel === "email" ? trimmed.toLowerCase() : trimmed;
+}
+
+function validateTargets(scope: NotificationRecipientScope, channel: HandoffNotificationChannel, targets: string[]) {
+  const limit = getNotificationRecipientLimit(scope, channel);
+  if (targets.length > limit) {
+    throw new Error(channel === "line_group" ? "每個館別目前只能綁定 1 個 LINE 群組" : `收件 Email 最多只能設定 ${limit} 組`);
+  }
+
+  if (channel === "email" && targets.some((target) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target))) {
+    throw new Error("Email 格式不正確");
+  }
+
+  if (channel === "line_group" && targets.some((target) => target.length < 10)) {
+    throw new Error("LINE 群組 ID 格式不正確");
+  }
 }
