@@ -2,7 +2,7 @@ import { google, sheets_v4 } from "googleapis";
 
 import { findBranchByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
-import type { ProcessedWebhookResult, ReplySendResult } from "@/lib/line-webhook";
+import { filterDirectMessageResults, type ProcessedWebhookResult, type ReplySendResult } from "@/lib/line-webhook";
 import { reportOperationalError } from "@/lib/monitoring";
 
 const RAW_MESSAGES_SHEET = "raw_messages";
@@ -984,6 +984,9 @@ export async function validateGoogleSheetsConnection(): Promise<GoogleSheetsVali
 }
 
 export async function syncWebhookResultsToGoogleSheets(input: SyncInput): Promise<GoogleSheetsSyncResult> {
+  // Group and room messages are not customer conversations and must never be
+  // exported to the operational Google Sheets workbook.
+  input = { ...input, results: filterDirectMessageResults(input.results) };
   const config = getRuntimeConfig();
   if (!config.googleSheetsEnabled) {
     return {
@@ -1106,6 +1109,7 @@ function buildGoogleSheetsFailureExtra(input: SyncInput, attempts: number, final
 export async function syncWebhookResultsToGoogleSheetsWithRetry(
   input: SyncInput,
 ): Promise<GoogleSheetsSyncWithRetryResult> {
+  input = { ...input, results: filterDirectMessageResults(input.results) };
   let finalResult = await syncWebhookResultsToGoogleSheets(input);
   let attempts = 1;
 

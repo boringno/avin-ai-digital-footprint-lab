@@ -45,7 +45,7 @@ const cases = [
     name: "malformed branch is reduced to unknown branch",
     passed:
       parseControlledIntentOutput(
-        '{"intent":"doctor_schedule","branch":"台北館","month":"current","confidence":0.96}',
+        '{"intent":"doctor_schedule","branch":"新竹館","month":"current","confidence":0.96}',
         metadata,
       )?.branch === null,
   },

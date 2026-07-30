@@ -35,7 +35,37 @@ begin
 end;
 $$;
 
-drop index if exists handoff_notification_recipients_tenant_id_branch_recipient_scope_recipient_email_key;
+-- Drop the pre-channel unique constraint by its columns instead of by its
+-- generated name. PostgreSQL truncates generated identifiers at 63 bytes.
+do $$
+declare
+  v_conname text;
+begin
+  select con.conname
+    into v_conname
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'handoff_notification_recipients'
+    and con.contype = 'u'
+    and (
+      select array_agg(att.attname::text order by att.attname)
+      from unnest(con.conkey) as key_column(attnum)
+      join pg_attribute att
+        on att.attrelid = con.conrelid
+       and att.attnum = key_column.attnum
+    ) = array['branch', 'recipient_email', 'recipient_scope', 'tenant_id']::text[]
+  limit 1;
+
+  if v_conname is not null then
+    execute format(
+      'alter table public.handoff_notification_recipients drop constraint %I',
+      v_conname
+    );
+  end if;
+end;
+$$;
 
 create unique index if not exists handoff_notification_recipients_tenant_branch_scope_channel_target_key
   on public.handoff_notification_recipients (tenant_id, branch, recipient_scope, channel, target);
@@ -109,7 +139,37 @@ begin
 end;
 $$;
 
-drop index if exists handoff_digest_deliveries_tenant_id_branch_digest_key_key;
+-- The old index belongs to a unique constraint, so it must be dropped through
+-- ALTER TABLE. Resolve it by columns to avoid generated-name assumptions.
+do $$
+declare
+  v_conname text;
+begin
+  select con.conname
+    into v_conname
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'handoff_digest_deliveries'
+    and con.contype = 'u'
+    and (
+      select array_agg(att.attname::text order by att.attname)
+      from unnest(con.conkey) as key_column(attnum)
+      join pg_attribute att
+        on att.attrelid = con.conrelid
+       and att.attnum = key_column.attnum
+    ) = array['branch', 'digest_key', 'tenant_id']::text[]
+  limit 1;
+
+  if v_conname is not null then
+    execute format(
+      'alter table public.handoff_digest_deliveries drop constraint %I',
+      v_conname
+    );
+  end if;
+end;
+$$;
 
 create unique index if not exists handoff_digest_deliveries_tenant_branch_channel_digest_key_key
   on public.handoff_digest_deliveries (tenant_id, branch, channel, digest_key);
@@ -127,6 +187,7 @@ create or replace function public.replace_handoff_notification_recipients(
   p_targets text[]
 ) returns void
 language plpgsql
+set search_path = public, pg_temp
 as $$
 declare
   v_limit integer;

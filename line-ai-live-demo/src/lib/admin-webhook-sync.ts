@@ -1,4 +1,4 @@
-import type { ProcessedWebhookResult, ReplySendResult } from "@/lib/line-webhook";
+import { isGroupSourceResult, type ProcessedWebhookResult, type ReplySendResult } from "@/lib/line-webhook";
 import { notifyAdminHandoffCreated } from "@/lib/admin-handoff-notifications";
 import { storeRuleIntentLabel } from "@/lib/intent-label-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
@@ -42,6 +42,12 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
   try {
     for (const result of input.results) {
       await captureLineGroupSource(result);
+
+      // Groups and rooms are only captured as notification sources. Never
+      // persist their messages as a customer conversation or create a handoff.
+      if (isGroupSourceResult(result)) {
+        continue;
+      }
 
       if (!result.sourceUserId) {
         continue;

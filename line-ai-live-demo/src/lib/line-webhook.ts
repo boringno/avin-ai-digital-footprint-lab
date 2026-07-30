@@ -106,6 +106,18 @@ export type ProcessedWebhookResult = {
   webhookEventId: string;
 };
 
+/**
+ * Group and room events are accepted only to identify an eligible notification
+ * target. They must not be treated as a direct customer conversation.
+ */
+export function isGroupSourceResult(result: Pick<ProcessedWebhookResult, "sourceType">) {
+  return result.sourceType === "group" || result.sourceType === "room";
+}
+
+export function filterDirectMessageResults<T extends Pick<ProcessedWebhookResult, "sourceType">>(results: readonly T[]) {
+  return results.filter((result) => !isGroupSourceResult(result));
+}
+
 export type ReplySendResult = {
   attempts: number;
   errorMessage?: string;

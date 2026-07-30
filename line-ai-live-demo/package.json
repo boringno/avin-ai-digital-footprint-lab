@@ -36,7 +36,8 @@
     "validate:runtime-releases": "tsx scripts/validate-runtime-releases.ts",
     "validate:conversation-inbox": "tsx scripts/validate-conversation-inbox.ts",
     "validate:ai-intent-classifier": "tsx scripts/validate-ai-intent-classifier.ts",
-    "validate:conversation-store": "tsx scripts/validate-conversation-store.ts"
+    "validate:conversation-store": "tsx scripts/validate-conversation-store.ts",
+    "validate:group-source-isolation": "tsx scripts/validate-group-source-isolation.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",
