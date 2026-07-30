@@ -440,9 +440,8 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     nextContext,
     replyMessages: usedAiReplyGenerator || usedAiHumanizer ? undefined : routedDecision.replyMessages,
     replyText,
-    suppressAiFooter:
-      routedDecision.suppressAiFooter ??
-      !["handoff_pending", "medical_guidance_reply"].includes(routedDecision.decisionType),
+    // Keep the AI disclosure consistent on every customer-facing response.
+    suppressAiFooter: false,
     shouldIntroduce: !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
