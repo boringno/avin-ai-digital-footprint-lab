@@ -185,6 +185,13 @@ function isTreatmentLikeMessage(message: string) {
   return includesAnyTerm(message, [...ALL_TREATMENT_TERMS, ...TREATMENT_DISCOVERY_TERMS]);
 }
 
+function isGenericTreatmentInquiry(message: string) {
+  const normalizedMessage = normalizeText(message);
+  return /^(?:您好|你好|嗨|哈囉)?(?:我)?(?:想|想要|想先)?(?:詢問|問|了解|知道)?(?:一下|關於|你們)?療程(?:介紹|資訊|內容)?(?:嗎|呢)?$/.test(
+    normalizedMessage,
+  );
+}
+
 function isHardBlockedQuestion(message: string) {
   return (
     includesAnyTerm(message, POST_PROCEDURE_TERMS) ||
@@ -1897,6 +1904,18 @@ export async function routeCustomerMessage({
     return {
       ...treatmentReply,
       nextContext,
+    };
+  }
+
+  if (isGenericTreatmentInquiry(trimmedMessage)) {
+    nextContext.lastIntent = "guided_clarify";
+    return {
+      decisionType: "fallback_reply",
+      matchedKey: "generic_treatment_inquiry",
+      matchedType: "guided_reply",
+      nextContext,
+      replyText:
+        "可以的，想先了解哪一項療程呢？也可以直接告訴我您想改善的部位或在意的問題，我會先依院內核准資訊協助您整理方向。",
     };
   }
 
