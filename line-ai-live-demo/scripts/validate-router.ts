@@ -276,6 +276,13 @@ const TEST_CASES: TestCase[] = [
     message: "海菲秀是什麼？",
   },
   {
+    expectedDecisionType: "fallback_reply",
+    expectedMatchedKey: "generic_treatment_inquiry",
+    message: "您好，想詢問療程",
+    replyIncludes: ["想先了解哪一項療程", "想改善的部位或在意的問題"],
+    replyExcludes: ["真人客服", "未核准"],
+  },
+  {
     expectedDecisionType: "handoff_pending",
     expectedMatchedKey: "unsupported_treatment_or_unapproved_content",
     message: "海芙是什麼？",
