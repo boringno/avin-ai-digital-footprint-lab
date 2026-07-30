@@ -87,7 +87,22 @@ const ADDRESS_TERMS = ["地址", "在哪", "位置", "哪裡", "怎麼去"];
 const APPOINTMENT_TERMS = ["預約", "想約", "安排時間", "安排療程", "諮詢", "可約", "想做"];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
 const BOOKING_MODIFY_TERMS = ["改約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
-const BRANCH_LIST_TERMS = ["幾間", "館別", "管別", "分館", "分店", "據點", "門市", "各館", "全部館別", "所有館別"];
+const BRANCH_LIST_TERMS = [
+  "幾間",
+  "館別",
+  "管別",
+  "分館",
+  "分店",
+  "據點",
+  "門市",
+  "各館",
+  "全部館別",
+  "所有館別",
+  "只有",
+  "還有",
+  "其他館",
+  "別的館",
+];
 const BUSINESS_HOUR_TERMS = ["營業時間", "營業到幾點", "幾點關", "幾點開", "上班時間", "服務時間"];
 const FIRST_VISIT_TERMS = ["第一次", "初診", "要準備什麼", "需要準備什麼"];
 const NEAREST_BRANCH_TERMS = ["最近", "哪一間", "哪間", "離我最近"];
@@ -1120,8 +1135,12 @@ function resolveBranchFromContext(message: string, context: ConversationContext)
     return explicitBranch;
   }
 
+  const isAddressQuestion = includesAnyTerm(message, ADDRESS_TERMS);
+  const isImmediateBranchFollowup = /^(branch_(focus|address|hours|phone)|nearest_branch):/.test(context.lastIntent ?? "");
+
   if (
-    includesAnyTerm(message, [...ADDRESS_TERMS, ...BUSINESS_HOUR_TERMS, ...PHONE_TERMS, ...TRANSPORT_TERMS, ...NEAREST_BRANCH_TERMS])
+    includesAnyTerm(message, [...ADDRESS_TERMS, ...BUSINESS_HOUR_TERMS, ...PHONE_TERMS, ...TRANSPORT_TERMS, ...NEAREST_BRANCH_TERMS]) &&
+    (!isAddressQuestion || isImmediateBranchFollowup)
   ) {
     const preferredBranch = findBranchByName(context.preferredBranch) ?? findBranchByName(context.lastReferencedBranch);
     if (preferredBranch) {
@@ -1542,7 +1561,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}`,
+    replyText: `${approvedIntroReply} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 

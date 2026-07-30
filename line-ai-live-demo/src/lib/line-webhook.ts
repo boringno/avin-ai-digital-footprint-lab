@@ -161,7 +161,7 @@ function buildReplyPayload(
   suppressAiFooter = false,
 ) {
   const introducedText = shouldIntroduce && !replyText.includes("AI 客服") ? `${AI_INTRO_TEXT}\n\n${replyText}` : replyText;
-  const finalText = appendAiFooter(introducedText);
+  const finalText = suppressAiFooter ? introducedText : appendAiFooter(introducedText);
   const messages = replyMessages?.length
     ? [
         ...(shouldIntroduce && !suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_INTRO_TEXT) } satisfies LineTextMessage] : []),
@@ -440,7 +440,9 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     nextContext,
     replyMessages: usedAiReplyGenerator || usedAiHumanizer ? undefined : routedDecision.replyMessages,
     replyText,
-    suppressAiFooter: routedDecision.suppressAiFooter,
+    suppressAiFooter:
+      routedDecision.suppressAiFooter ??
+      !["handoff_pending", "medical_guidance_reply"].includes(routedDecision.decisionType),
     shouldIntroduce: !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
