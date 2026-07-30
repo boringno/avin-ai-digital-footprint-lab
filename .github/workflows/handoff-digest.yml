@@ -1,0 +1,75 @@
+name: handoff-digest
+
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"
+    - cron: "0 0 * * 6,0"
+    - cron: "0 12 * * 6,0"
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: Digest slot to trigger
+        required: true
+        type: choice
+        options:
+          - weekday_2100
+          - weekend_0800
+          - weekend_2000
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve slot
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "slot=${{ inputs.slot }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "${{ github.event.schedule }}" in
+            "0 13 * * 1-5")
+              echo "slot=weekday_2100" >> "$GITHUB_OUTPUT"
+              ;;
+            "0 0 * * 6,0")
+              echo "slot=weekend_0800" >> "$GITHUB_OUTPUT"
+              ;;
+            "0 12 * * 6,0")
+              echo "slot=weekend_2000" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported schedule: ${{ github.event.schedule }}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Trigger production digest route
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PRODUCTION_APP_URL: ${{ vars.PRODUCTION_APP_URL }}
+          SLOT: ${{ steps.resolve.outputs.slot }}
+        shell: bash
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Missing GitHub secret: CRON_SECRET" >&2
+            exit 1
+          fi
+
+          if [ -z "$PRODUCTION_APP_URL" ]; then
+            echo "Missing GitHub variable: PRODUCTION_APP_URL" >&2
+            exit 1
+          fi
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            -X GET \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${PRODUCTION_APP_URL%/}/api/cron/handoff-digest?slot=$SLOT"

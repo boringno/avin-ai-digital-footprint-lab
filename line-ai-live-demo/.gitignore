@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.*
+!.env.example
+dist
+runtime-logs/
+logs/
+.tmp-*
+tmp-router-validate*.txt
+tsconfig.tsbuildinfo
+
+.vercel

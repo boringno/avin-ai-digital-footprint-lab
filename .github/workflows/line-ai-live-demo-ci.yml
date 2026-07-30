@@ -1,0 +1,59 @@
+name: line-ai-live-demo-ci
+
+on:
+  push:
+    paths:
+      - "line-ai-live-demo/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/line-ai-live-demo-ci.yml"
+  pull_request:
+    paths:
+      - "line-ai-live-demo/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/line-ai-live-demo-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: line-ai-live-demo
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: line-ai-live-demo/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify type safety and release rules
+        run: |
+          npm run check
+          npm run validate:router
+          npm run validate:conversation-guard
+          npm run validate:intent-classify
+          npm run validate:admin-reports
+          npm run validate:reporting-privacy
+          npm run validate:reporting-time
+          npm run validate:content-versioning
+          npm run validate:schedule-month
+          npm run validate:retention-sweep
+          npm run validate:admin-login-protection
+          npm run validate:tenant-scope
+          npm run validate:admin-notifications
+          npm run validate:handoff-digest
+          npm run validate:handoff-notification
+
+      - name: Build production application
+        run: npm run build
