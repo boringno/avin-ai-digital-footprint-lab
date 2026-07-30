@@ -39,6 +39,25 @@ const TEST_CASES: TestCase[] = [
     replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
   },
   {
+    conversationContext: {
+      bookingDraft: { branch: "高雄館", timeSlots: [] },
+      introSent: true,
+      lastIntent: "treatment_intro:onda",
+      preferredBranch: "高雄館",
+      userId: "validate-generic-address-does-not-use-stale-branch",
+    },
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_list",
+    message: "你們地址在哪裡？",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_list",
+    message: "只有高雄館嗎？",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
+  },
+  {
     expectedDecisionType: "clinic_info_reply",
     expectedMatchedKey: "branch_list",
     message: "方便給我各館的地址嗎？我參考看看我哪裡比較近",
