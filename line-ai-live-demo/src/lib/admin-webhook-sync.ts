@@ -28,6 +28,20 @@ type BookingLeadRow = {
   staff_owner: string | null;
 };
 
+const PREGNANCY_RISK_NOTE = "[孕期／哺乳／備孕風險：真人確認]";
+
+export function buildHandoffReason(result: ProcessedWebhookResult) {
+  const baseReason = result.decision.matchedKey || "unknown";
+  return result.bookingDraft.pregnancyRiskFlag ? `${baseReason}:pregnancy_risk` : baseReason;
+}
+
+export function buildBookingLeadNotes(existingNotes: string | undefined, hasPregnancyRisk: boolean) {
+  if (!hasPregnancyRisk || existingNotes?.includes(PREGNANCY_RISK_NOTE)) {
+    return existingNotes ?? "";
+  }
+  return [existingNotes?.trim(), PREGNANCY_RISK_NOTE].filter(Boolean).join("\n");
+}
+
 type SyncAdminWebhookInput = {
   loggedAt: string;
   replyResults: ReplySendResult[];
@@ -353,7 +367,7 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   const { error } = await supabase.from("handoff_tasks").insert({
     branch: emptyToNull(result.bookingDraft.branch),
     conversation_id: conversationId,
-    reason: result.decision.matchedKey || "unknown",
+    reason: buildHandoffReason(result),
     status: "open",
     tenant_id: TENANT_ID,
   });
@@ -364,7 +378,7 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
 
   await notifyAdminHandoffCreated({
     conversationId,
-    reason: result.decision.matchedKey || "unknown",
+    reason: buildHandoffReason(result),
   });
 }
 
@@ -397,6 +411,7 @@ async function maybeUpsertBookingLead(conversationId: string, result: ProcessedW
     phone: emptyToNull(result.bookingDraft.phone) ?? existing?.phone ?? null,
     preferred_branch: emptyToNull(result.bookingDraft.branch) ?? existing?.preferred_branch ?? null,
     preferred_time_slots: mergeStringArrays(existing?.preferred_time_slots, normalizeTimeSlots(result.bookingDraft)),
+    notes: buildBookingLeadNotes(existing?.notes, result.bookingDraft.pregnancyRiskFlag === true),
     tenant_id: TENANT_ID,
   };
 

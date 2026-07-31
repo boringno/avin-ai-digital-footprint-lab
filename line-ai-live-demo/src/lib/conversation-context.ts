@@ -9,6 +9,7 @@ export type BookingDraft = {
   isFirstVisit?: "no" | "unknown" | "yes";
   name?: string;
   phone?: string;
+  pregnancyRiskFlag?: boolean;
   requestedTimeSlots?: string[];
   timeSlots: string[];
   treatment?: string;
@@ -23,6 +24,7 @@ export type ConversationContext = {
   lastSeenAt?: string;
   locationPreference?: string;
   preferredBranch?: string;
+  pregnancyRiskFlag?: boolean;
   userId: string;
 };
 

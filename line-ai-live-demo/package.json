@@ -40,7 +40,8 @@
     "validate:conversation-store": "tsx scripts/validate-conversation-store.ts",
     "validate:group-source-isolation": "tsx scripts/validate-group-source-isolation.ts",
     "validate:group-source-behavior": "tsx scripts/validate-group-source-behavior.ts",
-    "validate:ai-fallback-boundary": "tsx scripts/validate-ai-fallback-boundary.ts"
+    "validate:ai-fallback-boundary": "tsx scripts/validate-ai-fallback-boundary.ts",
+    "validate:pregnancy-risk-handoff": "tsx scripts/validate-pregnancy-risk-handoff.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

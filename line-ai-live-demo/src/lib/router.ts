@@ -567,6 +567,11 @@ function updateContextEntities(message: string, context: ConversationContext) {
     context.bookingDraft.treatment = context.bookingDraft.treatment || matchedTreatment.name;
   }
 
+  if (getPregnancyContext(message)) {
+    context.pregnancyRiskFlag = true;
+    context.bookingDraft.pregnancyRiskFlag = true;
+  }
+
   return {
     matchedBranch,
     matchedTreatment,

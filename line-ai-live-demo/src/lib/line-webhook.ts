@@ -92,6 +92,7 @@ export type ProcessedWebhookResult = {
     isFirstVisit?: "no" | "unknown" | "yes";
     name?: string;
     phone?: string;
+    pregnancyRiskFlag?: boolean;
     requestedTimeSlots?: string[];
     timeSlots: string[];
     treatment?: string;
@@ -482,6 +483,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
         isFirstVisit: decision.nextContext.bookingDraft.isFirstVisit,
         name: decision.nextContext.bookingDraft.name,
         phone: decision.nextContext.bookingDraft.phone,
+        pregnancyRiskFlag: decision.nextContext.pregnancyRiskFlag === true,
         requestedTimeSlots: [...(decision.nextContext.bookingDraft.requestedTimeSlots ?? [])],
         timeSlots: [...decision.nextContext.bookingDraft.timeSlots],
         treatment: decision.nextContext.bookingDraft.treatment,
