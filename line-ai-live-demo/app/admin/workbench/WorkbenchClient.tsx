@@ -10,6 +10,7 @@ import {
   getWorkbenchQueueStatusLabel,
   getWorkbenchQueueStatusText,
 } from "@/lib/admin-workbench-presentation";
+import { useChatTimelineScroll } from "@/hooks/use-chat-timeline-scroll";
 
 type QueueItem = {
   conversationId: string;
@@ -109,6 +110,14 @@ export function WorkbenchClient({
   const composerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const wasPageVisibleRef = useRef(true);
+  const {
+    handleTimelineScroll,
+    prepareForConversationChange,
+    timelineRef,
+  } = useChatTimelineScroll(
+    data.detail?.conversationId,
+    data.detail?.messages.at(-1)?.id,
+  );
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 900px)");
@@ -167,6 +176,7 @@ export function WorkbenchClient({
     if (controlAction || isPending) {
       return;
     }
+    prepareForConversationChange();
     setSelectedConversationId(conversationId);
     startTransition(() => {
       void refresh(conversationId);
@@ -474,7 +484,7 @@ export function WorkbenchClient({
                 </div>
               ) : null}
 
-              <div style={timelineStyle}>
+              <div onScroll={handleTimelineScroll} ref={timelineRef} style={timelineStyle}>
                 {detail.messages.length === 0 ? <EmptyState text="目前還沒有可顯示的對話訊息。" /> : null}
                 {detail.messages.map((message) => (
                   <MessageBubble isCompact={isCompact} key={message.id} message={message} />

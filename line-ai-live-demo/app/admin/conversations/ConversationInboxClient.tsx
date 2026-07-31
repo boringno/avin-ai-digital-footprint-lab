@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { ConversationInboxData, ConversationInboxItem } from "@/lib/admin-conversation-inbox-data";
+import { useChatTimelineScroll } from "@/hooks/use-chat-timeline-scroll";
 
 type ControlAction = "" | "mark_human_active" | "resume_ai";
 
@@ -15,6 +16,14 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
   const [isSending, setIsSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isCompact, setIsCompact] = useState(false);
+  const {
+    handleTimelineScroll,
+    prepareForConversationChange,
+    timelineRef,
+  } = useChatTimelineScroll(
+    data.detail?.conversationId,
+    data.detail?.messages.at(-1)?.id,
+  );
 
   async function refresh(conversationId = selectedConversationId, search = searchText) {
     const params = new URLSearchParams();
@@ -47,6 +56,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
   }, []);
 
   async function selectConversation(item: ConversationInboxItem) {
+    prepareForConversationChange();
     setSelectedConversationId(item.conversationId);
     await refresh(item.conversationId);
   }
@@ -190,7 +200,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
                   : "尚未由真人接手；按真人接手或直接傳送訊息後，AI 就會停止插話。"}
               </div>
 
-              <div style={timelineStyle}>
+              <div onScroll={handleTimelineScroll} ref={timelineRef} style={timelineStyle}>
                 {detail.messages.map((message) => (
                   <article key={message.id} style={{ ...messageStyle, ...(message.direction === "customer" ? customerMessageStyle : message.direction === "staff" ? staffMessageStyle : aiMessageStyle) }}>
                     <strong>{message.direction === "customer" ? "客人" : message.direction === "staff" ? message.staffName ? `真人客服・${message.staffName}` : "真人客服" : message.direction === "ai" ? "AI 客服" : "系統"}</strong>
