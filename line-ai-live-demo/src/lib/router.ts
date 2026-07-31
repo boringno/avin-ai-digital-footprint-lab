@@ -569,7 +569,6 @@ function updateContextEntities(message: string, context: ConversationContext) {
 
   if (getPregnancyContext(message)) {
     context.pregnancyRiskFlag = true;
-    context.bookingDraft.pregnancyRiskFlag = true;
   }
 
   return {
@@ -1331,7 +1330,7 @@ function extractUnknownBranchLikeTerm(message: string) {
     return null;
   }
 
-  const locationStoreCandidate = message.match(/([\u4e00-\u9fffA-Za-z0-9]{2,3}?)(?:有)?(?:分店|據點|分館|門市|診所)/u)?.[1];
+  const locationStoreCandidate = message.match(/([\u4e00-\u9fffA-Za-z0-9]{2,3}?)(?:有)?(?:分店|據點|分館|門市)/u)?.[1];
   if (
     locationStoreCandidate &&
     !["你們", "我們", "目前", "這裡", "附近", "哪些", "所有", "各地"].includes(locationStoreCandidate) &&

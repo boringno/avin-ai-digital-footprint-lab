@@ -45,6 +45,21 @@ async function main() {
   assert(approvedTreatment.decisionType === "treatment_intro_reply", "A11: approved treatment must not be handoff-blocked");
   console.log("PASS: A11 approved treatment remains answerable");
 
+  const nearestClinic = await route("離我最近的診所是哪一間");
+  assert(
+    nearestClinic.matchedKey === "nearest_branch_clarify" && nearestClinic.decisionType === "clinic_info_reply",
+    "A12: generic clinic wording must retain the existing nearest-branch clarification",
+  );
+  console.log("PASS: A12 nearest-clinic wording retains the existing nearest-branch clarification");
+
+  const recommendedClinic = await route("推薦的診所有哪些");
+  assert(
+    recommendedClinic.decisionType !== "handoff_pending" &&
+      !recommendedClinic.matchedKey.startsWith("unsupported_branch_query:"),
+    "A13: generic clinic wording must not be mistaken for an unavailable branch",
+  );
+  console.log("PASS: A13 recommended-clinic wording is not blocked as an unavailable branch");
+
   const systemPrompt = buildSystemPrompt();
   for (const branch of ["高雄館", "台中館", "桃園館", "林口館"]) {
     assert(systemPrompt.includes(branch), `Prompt must include active branch: ${branch}`);
