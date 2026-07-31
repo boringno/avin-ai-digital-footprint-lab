@@ -672,6 +672,52 @@ TEST_CASES.push(
     expectedMatchedKey: "treatment_intro:botox",
     message: "我想了解肉毒",
   },
+  {
+    conversationContext: {
+      bookingDraft: { requestedTimeSlots: [], timeSlots: [] },
+      introSent: false,
+      lastReferencedTreatment: "肉毒",
+      userId: "validate-promotion-overview-after-botox",
+    },
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "現在活動有哪些",
+  },
+  {
+    conversationContext: {
+      bookingDraft: { requestedTimeSlots: [], timeSlots: [] },
+      introSent: false,
+      lastReferencedTreatment: "皮秒",
+      userId: "validate-promotion-overview-after-pico",
+    },
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "優惠有哪些",
+  },
+  {
+    conversationContext: {
+      bookingDraft: { requestedTimeSlots: [], timeSlots: [], treatment: "肉毒" },
+      introSent: false,
+      userId: "validate-promotion-overview-during-booking",
+    },
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "promotion_overview",
+    expectedReplyMessageCount: 1,
+    message: "現在有什麼優惠",
+  },
+  {
+    conversationContext: {
+      bookingDraft: { requestedTimeSlots: [], timeSlots: [] },
+      introSent: false,
+      lastReferencedTreatment: "皮秒",
+      userId: "validate-promotion-explicit-botox",
+    },
+    expectedDecisionType: "pricing_auto_reply",
+    expectedMatchedKey: "肉毒除皺",
+    message: "肉毒有活動嗎",
+  },
 );
 
 TEST_CASES.push({

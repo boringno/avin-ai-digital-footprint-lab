@@ -430,6 +430,13 @@ function getContextualPricingTerms(message: string, context: ConversationContext
   return [...terms].map((term) => normalizeText(term)).filter(Boolean);
 }
 
+function findExplicitPricingMatch(message: string, activeCampaigns: PricingCampaign[]) {
+  const normalizedMessage = normalizeText(message);
+  return [...activeCampaigns]
+    .sort((left, right) => right.treatment_name.length - left.treatment_name.length)
+    .find((campaign) => getCampaignSearchTerms(campaign).some((term) => normalizedMessage.includes(term)));
+}
+
 function matchPricing(
   message: string,
   context: ConversationContext,
@@ -437,12 +444,8 @@ function matchPricing(
   includePending: boolean,
   today: Date,
 ) {
-  const normalizedMessage = normalizeText(message);
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
-
-  const explicitMatch = [...activeCampaigns]
-    .sort((left, right) => right.treatment_name.length - left.treatment_name.length)
-    .find((campaign) => getCampaignSearchTerms(campaign).some((term) => normalizedMessage.includes(term)));
+  const explicitMatch = findExplicitPricingMatch(message, activeCampaigns);
 
   if (explicitMatch) {
     return explicitMatch;
@@ -1620,6 +1623,24 @@ function getPricingReply(
   }
 
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
+  const explicitPricingMatch = findExplicitPricingMatch(message, activeCampaigns);
+
+  // A broad campaign question must not inherit the prior treatment context.
+  // Only a treatment named in this message itself may narrow the response.
+  if (isPromotionIntent(message) && !explicitPricingMatch && activeCampaigns.length > 0) {
+    const replyText = buildPromotionOverviewReply(activeCampaigns);
+    const carouselCards = buildPromotionCarouselCards(activeCampaigns);
+    return {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "promotion_overview",
+      matchedType: "pricing_campaign",
+      nextContext: context,
+      replyMessages: carouselCards.length > 0 ? [buildPromotionCarouselMessage(carouselCards, "目前活動優惠")] : undefined,
+      replyText,
+      suppressAiFooter: carouselCards.length > 0,
+    } satisfies RouterDecision;
+  }
+
   const matchedPricing = matchPricing(message, context, pricingCampaigns, includePending, today);
   if (matchedPricing) {
     const replyText = buildPricingReply(matchedPricing);
