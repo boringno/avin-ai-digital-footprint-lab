@@ -111,6 +111,11 @@ type BookingLeadRow = {
 };
 
 const bookingStatusSet = new Set<BookingStatusKey>(["new", "contacted", "booked", "arrived", "won", "lost"]);
+export const ADMIN_CONVERSATION_MESSAGE_LIMIT = 80;
+
+export function orderNewestMessagesChronologically<T>(newestFirstMessages: T[]) {
+  return [...newestFirstMessages].reverse();
+}
 
 export async function loadWorkbenchData(staff: AdminStaffUser, selectedConversationId?: string) {
   if (!hasSupabaseServerConfig()) {
@@ -155,8 +160,8 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
       .select("id, direction, content, payload_json, send_status, send_error, created_at")
       .eq("tenant_id", staff.tenantId)
       .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: true })
-      .limit(80),
+      .order("created_at", { ascending: false })
+      .limit(ADMIN_CONVERSATION_MESSAGE_LIMIT),
     supabase
       .from("conversation_runtime_state")
       .select("line_user_id, state_json")
@@ -190,7 +195,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
     displayName: conversation.display_name || shortLineUserId(conversation.line_user_id),
     leadStage: conversation.lead_stage,
     lineUserId: conversation.line_user_id,
-    messages: ((messages ?? []) as MessageRow[]).map((message) => ({
+    messages: orderNewestMessagesChronologically((messages ?? []) as MessageRow[]).map((message) => ({
       content: message.content,
       createdAt: message.created_at,
       direction: message.direction,
