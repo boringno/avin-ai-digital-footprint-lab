@@ -211,6 +211,21 @@ function includesAnyTerm(message: string, terms: string[]) {
   return terms.some((term) => normalizedMessage.includes(normalizeText(term)));
 }
 
+function hasContraindicationOrMedicalHistorySignal(message: string) {
+  if (includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive])) {
+    return false;
+  }
+
+  const normalizedMessage = normalizeText(message);
+  return (
+    /我有.{1,30}(?:可以|可不可以|能不能|能否|適不適合)/.test(normalizedMessage) ||
+    /我在(?:吃|服用)|我正在用/.test(normalizedMessage) ||
+    /(?:我有)?.{0,30}病史/.test(normalizedMessage) ||
+    /開過刀|動過手術/.test(normalizedMessage) ||
+    /我對.{1,30}過敏/.test(normalizedMessage)
+  );
+}
+
 function isTreatmentLikeMessage(message: string) {
   return includesAnyTerm(message, [...ALL_TREATMENT_TERMS, ...TREATMENT_DISCOVERY_TERMS]);
 }
@@ -1704,6 +1719,15 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
       matchedKey: "human_request",
       matchedType: "handoff_rule",
       replyText: buildHandoffPendingReply("沒問題，我先幫您整理目前需求。", now),
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (hasContraindicationOrMedicalHistorySignal(message)) {
+    return {
+      decisionType: "handoff_pending",
+      matchedKey: "contraindication_or_medical_history",
+      matchedType: "handoff_rule",
+      replyText: buildHandoffPendingReply("這類涉及既往病史、用藥或過敏狀況，需要由真人客服與醫師進一步確認。", now),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 

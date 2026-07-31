@@ -611,6 +611,69 @@ TEST_CASES.push({
   replyExcludes: ["門診時間如下", "以下為目前公告的"],
 });
 
+TEST_CASES.push(
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我有癲癇可以打肉毒嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我有蟹足腫可以做皮秒嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我在吃A酸可以做雷射嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我有心臟病可以做電波嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我對麻藥過敏",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我有高血壓病史能做雷射嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我開過刀可以做電波嗎",
+  },
+  {
+    expectedDecisionType: "handoff_pending",
+    expectedMatchedKey: "contraindication_or_medical_history",
+    message: "我正在用抗凝血藥可以打肉毒嗎",
+  },
+  {
+    expectedDecisionType: "medical_guidance_reply",
+    expectedMatchedKey: "pregnancy_caution",
+    message: "我有孕可以打肉毒嗎",
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_intro:botox",
+    message: "肉毒可以維持多久",
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_intro:pico",
+    message: "皮秒需要做幾次",
+  },
+  {
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_intro:botox",
+    message: "我想了解肉毒",
+  },
+);
+
 TEST_CASES.push({
   conversationContext: {
     bookingDraft: {
