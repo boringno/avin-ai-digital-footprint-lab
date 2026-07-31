@@ -37,9 +37,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify type safety and release rules
+      - name: Build and verify release rules
         run: |
+          npm run build
           npm run check
+          npm run validate:post-procedure-safety
           npm run validate:router
           npm run validate:conversation-guard
           npm run validate:intent-classify
@@ -54,6 +56,3 @@ jobs:
           npm run validate:admin-notifications
           npm run validate:handoff-digest
           npm run validate:handoff-notification
-
-      - name: Build production application
-        run: npm run build

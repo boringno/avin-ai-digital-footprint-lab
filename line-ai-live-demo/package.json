@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "validate:conversation-guard": "tsx scripts/validate-conversation-guard.ts",
+    "validate:post-procedure-safety": "tsx scripts/validate-post-procedure-safety.ts",
     "dev": "next dev",
     "build": "next build",
     "backfill:intent-labels": "tsx scripts/backfill-intent-labels.ts",

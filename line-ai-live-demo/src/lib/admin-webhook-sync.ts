@@ -34,6 +34,14 @@ type SyncAdminWebhookInput = {
   results: ProcessedWebhookResult[];
 };
 
+export type HandoffTaskUpdateClient = {
+  from: (table: "handoff_tasks") => {
+    update: (patch: { updated_at: string }) => {
+      eq: (column: string, value: string) => Promise<{ error: null | { message: string } }>;
+    };
+  };
+};
+
 export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) {
   if (!hasSupabaseServerConfig() || input.results.length === 0) {
     return;
@@ -306,6 +314,17 @@ async function safelyStoreIntentLabel(messageId: string, result: ProcessedWebhoo
   }
 }
 
+export async function refreshExistingHandoffTask(
+  supabase: HandoffTaskUpdateClient,
+  taskId: string,
+  refreshedAt = new Date().toISOString(),
+) {
+  const { error } = await supabase.from("handoff_tasks").update({ updated_at: refreshedAt }).eq("id", taskId);
+  if (error) {
+    throw new Error(`Failed to refresh handoff task: ${error.message}`);
+  }
+}
+
 async function maybeCreateHandoffTask(conversationId: string, result: ProcessedWebhookResult) {
   if (!shouldCreateHandoffTask(result)) {
     return;
@@ -325,6 +344,9 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   }
 
   if (existing && existing.length > 0) {
+    // The original customer message is already stored above. Refresh the active
+    // task so a repeated safety escalation returns to the top of the workbench.
+    await refreshExistingHandoffTask(supabase as unknown as HandoffTaskUpdateClient, existing[0].id);
     return;
   }
 

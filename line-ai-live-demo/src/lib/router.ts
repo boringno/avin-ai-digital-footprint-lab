@@ -152,6 +152,21 @@ const PREGNANCY_TERMS = {
 } satisfies Record<PregnancyContext, string[]>;
 
 const POST_PROCEDURE_TERMS = clinicConfig.escalationPolicy.postProcedureAlertTerms;
+const POST_PROCEDURE_CONTEXT_TERMS = ["打完", "做完", "術後", "剛做", "剛打", "昨天打", "前天打", "回去後"];
+const POST_PROCEDURE_ABNORMALITY_TERMS = [
+  ...POST_PROCEDURE_TERMS,
+  "歪",
+  "瘀青",
+  "有血",
+  "出血",
+  "刺",
+  "麻",
+  "硬塊",
+  "凹凸",
+  "不對稱",
+  "化膿",
+  "水泡",
+];
 const HUMAN_REQUEST_TERMS = clinicConfig.escalationPolicy.humanRequestTerms;
 const PERSONALIZED_CONSULT_TERMS = clinicConfig.escalationPolicy.personalizedConsultTerms;
 const SERIOUS_COMPLAINT_TERMS = clinicConfig.escalationPolicy.seriousComplaintTerms;
@@ -1636,6 +1651,17 @@ function buildHandoffPendingReply(extraGuidance: string | null, now: Date) {
 }
 
 function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountLookup = false) {
+  // A procedure word alone (for example, asking when Botox takes effect) is not
+  // a safety signal. Escalate only when it is paired with an abnormal symptom.
+  if (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) {
+    return {
+      decisionType: "handoff_pending",
+      matchedKey: "post_procedure_issue",
+      matchedType: "handoff_rule",
+      replyText: `如果您現在有明顯疼痛、發燒、持續惡化的紅腫，或任何讓您不安的異常反應，建議盡快聯繫診所或就醫。${buildHandoffPendingReply("這類術後反應需要真人客服與現場進一步確認。", now)}`,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
   if (includesAnyTerm(message, POST_PROCEDURE_TERMS)) {
     return {
       decisionType: "handoff_pending",

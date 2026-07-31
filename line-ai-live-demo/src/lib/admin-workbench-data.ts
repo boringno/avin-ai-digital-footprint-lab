@@ -80,6 +80,7 @@ type HandoffTaskRow = {
   id: string;
   reason: string;
   status: "open" | "resolved" | "taken";
+  updated_at: string;
 };
 
 type MessageRow = {
@@ -309,10 +310,10 @@ async function loadWorkbenchQueue(staff: AdminStaffUser) {
   const supabase = getSupabaseServerClient();
   const { data: tasks, error: tasksError } = await supabase
     .from("handoff_tasks")
-    .select("id, conversation_id, reason, status, assigned_to, created_at")
+    .select("id, conversation_id, reason, status, assigned_to, created_at, updated_at")
     .eq("tenant_id", staff.tenantId)
     .in("status", ["open", "taken"])
-    .order("created_at", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(50);
 
   if (tasksError) {

@@ -62,6 +62,20 @@ type ClassifiedDecision = {
   usedAiReplyGenerator: boolean;
 };
 
+const HIGH_RISK_HANDOFF_REASONS = new Set(["post_procedure_issue", "serious_complaint"]);
+
+export function isHighRiskHandoffReason(reason: string) {
+  return HIGH_RISK_HANDOFF_REASONS.has(reason);
+}
+
+export function getRepeatedHandoffAcknowledgement() {
+  return "我們已收到您補充的訊息，真人客服會一併確認並接續協助。";
+}
+
+export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
+  return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
+}
+
 export class InvalidWebhookPayloadError extends Error {
   constructor(message: string) {
     super(message);
@@ -311,7 +325,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   if (routedDecision.decisionType === "handoff_pending") {
     const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
 
-    if (shouldSuppressRepeatedHandoff(conversationState, routedDecision.matchedKey)) {
+    if (shouldSuppressHandoffReply(conversationState, routedDecision.matchedKey)) {
       conversationState = nextState;
       if (sourceUserId) {
         await saveConversationContext(routedDecision.nextContext);
@@ -324,7 +338,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         matchedKey: `handoff_suppressed:${routedDecision.matchedKey}`,
         matchedType: "handoff_rule",
         nextContext: routedDecision.nextContext,
-        replyText: "",
+        replyText: getRepeatedHandoffAcknowledgement(),
         shouldIntroduce: false,
         usedAiHumanizer: false,
         usedAiReplyGenerator: false,
