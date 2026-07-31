@@ -227,7 +227,19 @@ function hasContraindicationOrMedicalHistorySignal(message: string) {
 }
 
 function isTreatmentLikeMessage(message: string) {
-  return includesAnyTerm(message, [...ALL_TREATMENT_TERMS, ...TREATMENT_DISCOVERY_TERMS]);
+  return (
+    includesAnyTerm(message, [...ALL_TREATMENT_TERMS, ...TREATMENT_DISCOVERY_TERMS]) ||
+    isUnsupportedTreatmentAvailabilityQuestion(message)
+  );
+}
+
+function isUnsupportedTreatmentAvailabilityQuestion(message: string) {
+  if (findTreatmentByMessage(message)) {
+    return false;
+  }
+
+  const normalizedMessage = normalizeText(message);
+  return /(?:有做|有沒有做|有提供).{1,16}/.test(normalizedMessage);
 }
 
 function isGenericTreatmentInquiry(message: string) {
@@ -1312,6 +1324,15 @@ function getBranchListReply() {
 function extractUnknownBranchLikeTerm(message: string) {
   if (findAnyBranchByMessage(message)) {
     return null;
+  }
+
+  const locationStoreCandidate = message.match(/([\u4e00-\u9fffA-Za-z0-9]{2,3}?)(?:有)?(?:分店|據點|分館|門市|診所)/u)?.[1];
+  if (
+    locationStoreCandidate &&
+    !["你們", "我們", "目前", "這裡", "附近", "哪些", "所有", "各地"].includes(locationStoreCandidate) &&
+    !/[有幾間]/u.test(locationStoreCandidate)
+  ) {
+    return locationStoreCandidate;
   }
 
   if (includesAnyTerm(message, BRANCH_LIST_TERMS)) {

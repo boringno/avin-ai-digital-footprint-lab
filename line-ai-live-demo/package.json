@@ -39,7 +39,8 @@
     "validate:ai-intent-classifier": "tsx scripts/validate-ai-intent-classifier.ts",
     "validate:conversation-store": "tsx scripts/validate-conversation-store.ts",
     "validate:group-source-isolation": "tsx scripts/validate-group-source-isolation.ts",
-    "validate:group-source-behavior": "tsx scripts/validate-group-source-behavior.ts"
+    "validate:group-source-behavior": "tsx scripts/validate-group-source-behavior.ts",
+    "validate:ai-fallback-boundary": "tsx scripts/validate-ai-fallback-boundary.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

@@ -29,8 +29,14 @@ export type GeneratedOpenAiReply = {
   tokensOut: number;
 };
 
-function buildSystemPrompt() {
+export function buildSystemPrompt() {
+  const activeBranchNames = clinicConfig.branches.filter((branch) => branch.isActive).map((branch) => branch.name);
+  const approvedTreatmentNames = clinicConfig.treatmentList.map((treatment) => treatment.name);
+
   return [
+    `目前實際營運館別：${activeBranchNames.join("、")}。`,
+    `目前已核准可說明療程：${approvedTreatmentNames.join("、")}。`,
+    "以上未列出的館別或療程，一律回答目前沒有提供，並引導由真人客服確認；不要臆測。",
     `你是${clinicConfig.clinicName}的 LINE AI 客服。`,
     "你的目標是先接住客人、先回答低風險問題、先整理預約需求。",
     "你可以回答診所基本資訊、療程第一層介紹、預約資料收集與一般保守提醒。",
