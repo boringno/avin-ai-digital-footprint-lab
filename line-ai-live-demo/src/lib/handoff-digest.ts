@@ -617,6 +617,13 @@ export async function sendLineGroupDigestPush(
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const reportError = dependencies.reportError ?? reportOperationalError;
 
+  function recipientDebugMetadata(target: string) {
+    return {
+      target_length: target.length,
+      target_prefix: target.slice(0, 1),
+    };
+  }
+
   const failedTargets: string[] = [];
   for (const target of input.recipients) {
     if (!isLineGroupId(target)) {
@@ -626,7 +633,7 @@ export async function sendLineGroupDigestPush(
         error: new Error("Blocked invalid LINE group notification target"),
         extra: {
           branch: input.branch,
-          target,
+          ...recipientDebugMetadata(target),
         },
         source: "handoff_digest_line_group_recipient_guard",
       });
@@ -653,7 +660,7 @@ export async function sendLineGroupDigestPush(
           error: new Error(`Handoff digest LINE push failed: ${response.status} ${await response.text()}`),
           extra: {
             branch: input.branch,
-            target,
+            ...recipientDebugMetadata(target),
           },
           source: "handoff_digest_line_group",
         });
@@ -665,7 +672,7 @@ export async function sendLineGroupDigestPush(
         error,
         extra: {
           branch: input.branch,
-          target,
+          ...recipientDebugMetadata(target),
         },
         source: "handoff_digest_line_group",
       });

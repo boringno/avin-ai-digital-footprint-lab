@@ -44,6 +44,7 @@ expect(agentRejected, "agent cannot manage notification recipients");
 
 const validGroupId = `C${"1".repeat(32)}`;
 const customerUserId = `U${"2".repeat(32)}`;
+const uppercaseHexGroupId = `C${"A".repeat(32)}`;
 
 let customerIdRejected = false;
 try {
@@ -52,6 +53,14 @@ try {
   customerIdRejected = true;
 }
 expect(customerIdRejected, "customer U ID cannot be saved as a LINE group recipient");
+
+let uppercaseGroupRejected = false;
+try {
+  validateTargets("clinic", "line_group", [uppercaseHexGroupId]);
+} catch {
+  uppercaseGroupRejected = true;
+}
+expect(uppercaseGroupRejected, "LINE group ID must use the canonical lowercase hex format");
 
 async function main() {
   let unknownGroupRejected = false;

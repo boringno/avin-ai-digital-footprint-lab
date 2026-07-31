@@ -67,7 +67,10 @@ expect(!email.text.includes("LINE ID") && !email.text.includes("電話") && !ema
 
 async function main() {
   let fetchCount = 0;
-  const reportError = async () => undefined;
+  const reportedErrors: unknown[] = [];
+  const reportError = async (input: unknown) => {
+    reportedErrors.push(input);
+  };
   const blockedResult = await sendLineGroupDigestPush(
     {
       accessToken: "test-token",
@@ -84,6 +87,12 @@ async function main() {
     },
   );
   expect(!blockedResult.ok && fetchCount === 0, "polluted U recipient is blocked before LINE push");
+  const blockedErrorJson = JSON.stringify(reportedErrors[0]);
+  expect(!blockedErrorJson.includes(customerUserId), "invalid recipient ID is redacted from error reporting");
+  expect(
+    blockedErrorJson.includes('\"target_prefix\":\"U\"') && blockedErrorJson.includes('\"target_length\":33'),
+    "error reporting retains only recipient prefix and length",
+  );
 
   const allowedResult = await sendLineGroupDigestPush(
     {
