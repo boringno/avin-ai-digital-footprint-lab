@@ -176,6 +176,24 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [AVIN GitHub Pages 首頁](docs/index.html)
 - [AVIN AI Digital Footprint OS LLM Guide](docs/llms.txt)
 
+## line-ai-live-demo
+
+- [Google Sheets Setup](line-ai-live-demo/GOOGLE_SHEETS_SETUP.md)
+- [LINE AI Live Demo App](line-ai-live-demo/README.md)
+- [新客戶導入 SOP](line-ai-live-demo/docs/CLIENT_SETUP.md)
+- [客戶 Production 部署檢查表](line-ai-live-demo/docs/DEPLOYMENT_CHECKLIST.md)
+- [Internal Admin Backend v1.1](line-ai-live-demo/docs/admin-backend-v1.1-spec.md)
+- [Admin Backend v1.2 規格 — 訊息分類、月報彙總、AI 建議、內容版本管理](line-ai-live-demo/docs/admin-backend-v1.2-spec.md)
+- [Client Demo Readiness Checklist](line-ai-live-demo/docs/client-demo-readiness-checklist.md)
+- [Client Demo Test Script](line-ai-live-demo/docs/client-demo-test-script.md)
+- [順風醫美 LINE AI 客服後台操作說明](line-ai-live-demo/docs/clinic-staff-operating-guide.md)
+- [活動價格資料規格](line-ai-live-demo/docs/pricing-campaigns-spec.md)
+- [R1 Reporting Notes](line-ai-live-demo/docs/r1-reporting-implementation-notes.md)
+- [Runtime 回覆發布與回退](line-ai-live-demo/docs/runtime-release-operations.md)
+- [門診班表月版作業](line-ai-live-demo/docs/schedule-month-operations.md)
+- [Sentry 設定說明](line-ai-live-demo/docs/sentry-setup.md)
+- [LINE AI Live Demo - Vercel Deploy Checklist](line-ai-live-demo/docs/vercel-deploy-checklist-2026-06-24.md)
+
 ## open-source-vault
 
 - [Open Source Vault｜開源能力觀察庫](open-source-vault/README.md)
