@@ -1,6 +1,7 @@
 import type { AdminStaffUser } from "@/lib/admin-auth";
 import type { ConversationState } from "@/lib/conversation-state";
 import { createEmptyConversationState } from "@/lib/conversation-state";
+import { hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 import { loadConversationDetail, type WorkbenchConversationDetail } from "./admin-workbench-data";
@@ -12,6 +13,7 @@ export type ConversationInboxItem = {
   lastMessage: string;
   lastSeenAt: string;
   lineUserId: string;
+  pregnancyRisk: boolean;
   status: ConversationState["status"];
 };
 
@@ -30,6 +32,7 @@ type ConversationRow = {
 type LeadRow = {
   conversation_id: string;
   customer_name: string | null;
+  notes: string | null;
 };
 
 type MessageRow = {
@@ -66,7 +69,7 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
     conversationIds.length
       ? supabase
           .from("booking_leads_db")
-          .select("conversation_id, customer_name")
+          .select("conversation_id, customer_name, notes")
           .eq("tenant_id", staff.tenantId)
           .in("conversation_id", conversationIds)
       : Promise.resolve({ data: [] as LeadRow[] }),
@@ -88,7 +91,7 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
       : Promise.resolve({ data: [] as RuntimeStateRow[] }),
   ]);
 
-  const customerNameByConversation = new Map(((leads ?? []) as LeadRow[]).map((lead) => [lead.conversation_id, lead.customer_name]));
+  const leadByConversation = new Map(((leads ?? []) as LeadRow[]).map((lead) => [lead.conversation_id, lead]));
   const lastMessageByConversation = new Map<string, string>();
   for (const message of (messages ?? []) as MessageRow[]) {
     if (!lastMessageByConversation.has(message.conversation_id)) {
@@ -100,7 +103,8 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
   const items = conversations
     .map((conversation) => {
       const displayName = conversation.display_name || shortLineUserId(conversation.line_user_id);
-      const customerName = customerNameByConversation.get(conversation.id) ?? null;
+      const lead = leadByConversation.get(conversation.id);
+      const customerName = lead?.customer_name ?? null;
       return {
         conversationId: conversation.id,
         customerName,
@@ -108,6 +112,7 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
         lastMessage: lastMessageByConversation.get(conversation.id) ?? "尚未擷取到訊息",
         lastSeenAt: conversation.last_seen_at,
         lineUserId: conversation.line_user_id,
+        pregnancyRisk: hasPregnancyRiskMarker({ notes: lead?.notes }),
         status: normalizeState(conversation.line_user_id, runtimeByLineUser.get(conversation.line_user_id)).status,
       } satisfies ConversationInboxItem;
     })

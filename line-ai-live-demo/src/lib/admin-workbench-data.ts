@@ -4,6 +4,7 @@ import type { ConversationState } from "@/lib/conversation-state";
 import { createEmptyConversationState } from "@/lib/conversation-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
+import { hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 export type WorkbenchQueueItem = {
@@ -17,6 +18,7 @@ export type WorkbenchQueueItem = {
   lastSeenAt: string;
   lineUserId: string;
   phoneTail: string | null;
+  pregnancyRisk: boolean;
   preferredBranch: string | null;
   status: ConversationState["status"];
   taskAssignedTo: string | null;
@@ -33,6 +35,7 @@ export type WorkbenchLeadSummary = {
   interestedTreatments: string[];
   lineUserId: string;
   phone: string | null;
+  pregnancyRisk: boolean;
   preferredBranch: string | null;
   preferredTimeSlots: string[];
   updatedAt: string;
@@ -54,6 +57,7 @@ export type WorkbenchConversationDetail = {
     customerName: string | null;
     interestedTreatments: string[];
     phone: string | null;
+    pregnancyRisk: boolean;
     preferredBranch: string | null;
     preferredTimeSlots: string[];
   };
@@ -104,6 +108,7 @@ type BookingLeadRow = {
   customer_name: string | null;
   id: string;
   interested_treatments: unknown;
+  notes: string | null;
   phone: string | null;
   preferred_branch: string | null;
   preferred_time_slots: unknown;
@@ -170,7 +175,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
       .maybeSingle<RuntimeStateRow>(),
     supabase
       .from("booking_leads_db")
-      .select("booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone")
+      .select("booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone, notes")
       .eq("tenant_id", staff.tenantId)
       .eq("conversation_id", conversation.id)
       .maybeSingle<BookingLeadRow>(),
@@ -187,6 +192,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
           customerName: bookingLead.customer_name,
           interestedTreatments: normalizeStringArray(bookingLead.interested_treatments),
           phone: bookingLead.phone,
+          pregnancyRisk: hasPregnancyRiskMarker({ notes: bookingLead.notes }),
           preferredBranch: bookingLead.preferred_branch,
           preferredTimeSlots: normalizeStringArray(bookingLead.preferred_time_slots),
         }
@@ -367,6 +373,10 @@ async function loadWorkbenchQueue(staff: AdminStaffUser) {
         lastSeenAt: conversation.last_seen_at,
         lineUserId: conversation.line_user_id,
         phoneTail: queueLeadInfo.get(conversation.id)?.phoneTail ?? null,
+        pregnancyRisk: hasPregnancyRiskMarker({
+          handoffReason: task.reason,
+          notes: queueLeadInfo.get(conversation.id)?.notes,
+        }),
         preferredBranch: queueLeadInfo.get(conversation.id)?.preferredBranch ?? null,
         status: state.status,
         taskAssignedTo: task.assigned_to,
@@ -381,7 +391,7 @@ async function loadWorkbenchLeadSummaries(staff: AdminStaffUser) {
   const supabase = getSupabaseServerClient();
   const { data: leadRows, error: leadsError } = await supabase
     .from("booking_leads_db")
-    .select("id, conversation_id, booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone, updated_at")
+    .select("id, conversation_id, booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone, notes, updated_at")
     .eq("tenant_id", staff.tenantId)
     .in("booking_status", ["new", "contacted"])
     .order("updated_at", { ascending: false })
@@ -410,6 +420,7 @@ async function loadWorkbenchLeadSummaries(staff: AdminStaffUser) {
         interestedTreatments: normalizeStringArray(lead.interested_treatments),
         lineUserId: conversation.line_user_id,
         phone: lead.phone,
+        pregnancyRisk: hasPregnancyRiskMarker({ notes: lead.notes }),
         preferredBranch: lead.preferred_branch,
         preferredTimeSlots: normalizeStringArray(lead.preferred_time_slots),
         updatedAt: lead.updated_at,
@@ -460,13 +471,13 @@ async function loadLatestCustomerMessages(staff: AdminStaffUser, conversationIds
 
 async function loadQueueLeadInfo(staff: AdminStaffUser, conversationIds: string[]) {
   if (conversationIds.length === 0) {
-    return new Map<string, { customerName: string | null; interestedTreatments: string[]; phoneTail: string | null; preferredBranch: string | null }>();
+    return new Map<string, { customerName: string | null; interestedTreatments: string[]; notes: string | null; phoneTail: string | null; preferredBranch: string | null }>();
   }
 
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("booking_leads_db")
-    .select("conversation_id, customer_name, interested_treatments, preferred_branch, phone")
+    .select("conversation_id, customer_name, interested_treatments, preferred_branch, phone, notes")
     .eq("tenant_id", staff.tenantId)
     .in("conversation_id", conversationIds);
 
@@ -475,11 +486,12 @@ async function loadQueueLeadInfo(staff: AdminStaffUser, conversationIds: string[
   }
 
   return new Map(
-    ((data ?? []) as Array<{ conversation_id: string; customer_name: string | null; interested_treatments: unknown; phone: string | null; preferred_branch: string | null }>).map((row) => [
+    ((data ?? []) as Array<{ conversation_id: string; customer_name: string | null; interested_treatments: unknown; notes: string | null; phone: string | null; preferred_branch: string | null }>).map((row) => [
       row.conversation_id,
       {
         customerName: row.customer_name,
         interestedTreatments: normalizeStringArray(row.interested_treatments),
+        notes: row.notes,
         phoneTail: lastPhoneDigits(row.phone),
         preferredBranch: row.preferred_branch,
       },

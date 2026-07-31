@@ -21,6 +21,7 @@ type QueueItem = {
   lastCustomerMessage: string;
   lineUserId: string;
   phoneTail: string | null;
+  pregnancyRisk: boolean;
   preferredBranch: string | null;
   status: string;
   taskAssignedTo: string | null;
@@ -37,6 +38,7 @@ type WorkbenchLeadSummary = {
   interestedTreatments: string[];
   lineUserId: string;
   phone: string | null;
+  pregnancyRisk: boolean;
   preferredBranch: string | null;
   preferredTimeSlots: string[];
   updatedAt: string;
@@ -58,6 +60,7 @@ type Detail = {
     customerName: string | null;
     interestedTreatments: string[];
     phone: string | null;
+    pregnancyRisk: boolean;
     preferredBranch: string | null;
     preferredTimeSlots: string[];
   };
@@ -409,10 +412,18 @@ export function WorkbenchClient({
                   <p style={detailCaptionStyle}>{formatLineIdentity(detail.lineUserId, isCompact)}</p>
                 </div>
                 <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                  {detail.bookingLead?.pregnancyRisk ? <PregnancyRiskBadge /> : null}
                   <StatusBadge label={formatRuntimeStatus(detail.state.status)} tone={detail.state.status === "human_active" ? "green" : "red"} />
                   {detail.state.assignedTo ? <span style={metaChipStyle}>目前由 {detail.state.assignedTo} 處理</span> : null}
                 </div>
               </header>
+
+              {detail.bookingLead?.pregnancyRisk ? (
+                <div style={pregnancyRiskAlertStyle} role="alert">
+                  <strong>孕期／哺乳／備孕風險</strong>
+                  <span>回覆或安排療程前，請先由真人確認身體狀況與醫師評估。</span>
+                </div>
+              ) : null}
 
               <div style={detailMetaGridStyle}>
                 <InfoTile label="對話狀態" value={leadStageLabel(detail.leadStage)} />
@@ -661,10 +672,13 @@ function ConversationCard({
           {hasDistinctCustomerName(item.customerName, item.displayName) ? <span style={customerNameStyle}>客人姓名：{item.customerName}</span> : null}
           <span style={waitTextStyle}>{getWorkbenchQueueStatusText(mode, item.status, waitMinutes)}</span>
         </div>
-        <StatusBadge
-          label={getWorkbenchQueueStatusLabel(mode, item.status)}
-          tone={isUrgent || item.status === "handoff_pending" ? "red" : "green"}
-        />
+        <div style={{ alignItems: "flex-end", display: "flex", flexDirection: "column", gap: 6 }}>
+          {item.pregnancyRisk ? <PregnancyRiskBadge /> : null}
+          <StatusBadge
+            label={getWorkbenchQueueStatusLabel(mode, item.status)}
+            tone={isUrgent || item.status === "handoff_pending" ? "red" : "green"}
+          />
+        </div>
       </div>
 
       <p style={quoteStyle}>{item.lastCustomerMessage || "尚未擷取到客人最新訊息"}</p>
@@ -710,7 +724,10 @@ function LeadSummaryCard({
           {hasDistinctCustomerName(lead.customerName, lead.displayName) ? <span style={customerNameStyle}>客人姓名：{lead.customerName}</span> : null}
           <span style={waitTextStyle}>{formatTime(lead.updatedAt)} 更新</span>
         </div>
-        <span style={leadStatusPillStyle}>{bookingStatusLabels[lead.bookingStatus]}</span>
+        <div style={{ alignItems: "flex-end", display: "flex", flexDirection: "column", gap: 6 }}>
+          {lead.pregnancyRisk ? <PregnancyRiskBadge /> : null}
+          <span style={leadStatusPillStyle}>{bookingStatusLabels[lead.bookingStatus]}</span>
+        </div>
       </div>
 
       <div style={{ display: "grid", gap: 5 }}>
@@ -846,6 +863,10 @@ function StatusBadge({ label, tone }: { label: string; tone: "green" | "red" }) 
       {label}
     </span>
   );
+}
+
+function PregnancyRiskBadge() {
+  return <span style={pregnancyRiskBadgeStyle}>孕期風險・真人確認</span>;
 }
 
 function summarizeNextStep(item: QueueItem) {
@@ -1032,6 +1053,27 @@ const customerNameStyle = {
   fontSize: 13,
   fontWeight: 700,
   lineHeight: 1.4,
+} satisfies CSSProperties;
+
+const pregnancyRiskBadgeStyle = {
+  background: "#991b1b",
+  borderRadius: 999,
+  color: "#ffffff",
+  fontSize: 12,
+  fontWeight: 800,
+  padding: "6px 10px",
+  whiteSpace: "nowrap",
+} satisfies CSSProperties;
+
+const pregnancyRiskAlertStyle = {
+  background: "#fff1f0",
+  border: "1px solid #ef9a95",
+  borderRadius: 12,
+  color: "#861f1a",
+  display: "grid",
+  gap: 4,
+  lineHeight: 1.5,
+  padding: 12,
 } satisfies CSSProperties;
 
 const quoteStyle = {

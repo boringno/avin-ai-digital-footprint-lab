@@ -17,6 +17,7 @@ const sample: ConversationInboxItem = {
   lastMessage: "想詢問高雄館的預約時間",
   lastSeenAt: "2026-07-22T10:00:00.000Z",
   lineUserId: "U1234567890abcdef",
+  pregnancyRisk: false,
   status: "ai_active",
 };
 
