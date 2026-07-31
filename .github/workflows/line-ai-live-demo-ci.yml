@@ -43,22 +43,35 @@ jobs:
           npm run check
           npm run validate:post-procedure-safety
           npm run validate:group-source-behavior
+          npm run validate:group-source-isolation
           npm run validate:ai-fallback-boundary
+          npm run validate:ai-intent-classifier
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation
           npm run validate:chat-timeline-scroll
           npm run validate:chat-timeline-behavior
           npm run validate:router
+          npm run validate:context
           npm run validate:conversation-guard
+          npm run validate:conversation-inbox
+          npm run validate:conversation-store
           npm run validate:intent-classify
           npm run validate:admin-reports
+          npm run validate:admin-team
           npm run validate:reporting-privacy
           npm run validate:reporting-time
+          npm run validate:google-sheets
+          npm run validate:monitoring
+          npm run validate:operational-privacy
+          npm run validate:webhook-reliability
+          npm run validate:sample
           npm run validate:content-versioning
+          npm run validate:runtime-releases
           npm run validate:schedule-month
           npm run validate:retention-sweep
           npm run validate:admin-login-protection
           npm run validate:tenant-scope
           npm run validate:admin-notifications
+          npm run validate:handoff-recipient-settings
           npm run validate:handoff-digest
           npm run validate:handoff-notification
