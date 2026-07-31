@@ -8,6 +8,13 @@ type TimelineScrollMetrics = {
   scrollTop: number;
 };
 
+type TimelineScrollElement = TimelineScrollMetrics;
+
+type TimelineScrollControllerDependencies = {
+  cancelFrame?: (frameId: number) => void;
+  scheduleFrame?: (callback: () => void) => number;
+};
+
 const STICK_TO_BOTTOM_THRESHOLD_PX = 80;
 
 export function isTimelineNearBottom(
@@ -17,41 +24,68 @@ export function isTimelineNearBottom(
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= thresholdPx;
 }
 
-export function useChatTimelineScroll(conversationId?: string, latestMessageId?: string) {
-  const timelineRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
-  const renderedConversationIdRef = useRef<string | undefined>(undefined);
+export function createChatTimelineScrollController(
+  dependencies: TimelineScrollControllerDependencies = {},
+) {
+  const cancelFrame = dependencies.cancelFrame ?? ((frameId: number) => window.cancelAnimationFrame(frameId));
+  const scheduleFrame = dependencies.scheduleFrame ?? ((callback: () => void) => window.requestAnimationFrame(callback));
+  let renderedConversationId: string | undefined;
+  let shouldStickToBottom = true;
 
-  useEffect(() => {
-    const timeline = timelineRef.current;
+  function syncTimeline(timeline: TimelineScrollElement | null, conversationId?: string) {
     if (!timeline || !conversationId) {
       return;
     }
 
-    const conversationChanged = renderedConversationIdRef.current !== conversationId;
-    renderedConversationIdRef.current = conversationId;
-    if (!conversationChanged && !shouldStickToBottomRef.current) {
+    const conversationChanged = renderedConversationId !== conversationId;
+    renderedConversationId = conversationId;
+    if (!conversationChanged && !shouldStickToBottom) {
       return;
     }
 
-    const animationFrame = window.requestAnimationFrame(() => {
+    const animationFrame = scheduleFrame(() => {
       timeline.scrollTop = timeline.scrollHeight;
-      shouldStickToBottomRef.current = true;
+      shouldStickToBottom = true;
     });
 
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [conversationId, latestMessageId]);
-
-  function prepareForConversationChange() {
-    shouldStickToBottomRef.current = true;
+    return () => cancelFrame(animationFrame);
   }
 
-  function handleTimelineScroll() {
-    const timeline = timelineRef.current;
+  function prepareForConversationChange() {
+    shouldStickToBottom = true;
+  }
+
+  function handleTimelineScroll(timeline: TimelineScrollElement | null) {
     if (!timeline) {
       return;
     }
-    shouldStickToBottomRef.current = isTimelineNearBottom(timeline);
+    shouldStickToBottom = isTimelineNearBottom(timeline);
+  }
+
+  return {
+    handleTimelineScroll,
+    prepareForConversationChange,
+    syncTimeline,
+  };
+}
+
+export function useChatTimelineScroll(conversationId?: string, latestMessageId?: string) {
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const controllerRef = useRef<ReturnType<typeof createChatTimelineScrollController> | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createChatTimelineScrollController();
+  }
+
+  useEffect(() => {
+    return controllerRef.current?.syncTimeline(timelineRef.current, conversationId);
+  }, [conversationId, latestMessageId]);
+
+  function prepareForConversationChange() {
+    controllerRef.current?.prepareForConversationChange();
+  }
+
+  function handleTimelineScroll() {
+    controllerRef.current?.handleTimelineScroll(timelineRef.current);
   }
 
   return {

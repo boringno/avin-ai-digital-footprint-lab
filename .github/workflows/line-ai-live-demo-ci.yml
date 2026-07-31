@@ -47,6 +47,7 @@ jobs:
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation
           npm run validate:chat-timeline-scroll
+          npm run validate:chat-timeline-behavior
           npm run validate:router
           npm run validate:conversation-guard
           npm run validate:intent-classify

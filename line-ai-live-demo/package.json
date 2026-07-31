@@ -43,7 +43,8 @@
     "validate:ai-fallback-boundary": "tsx scripts/validate-ai-fallback-boundary.ts",
     "validate:pregnancy-risk-handoff": "tsx scripts/validate-pregnancy-risk-handoff.ts",
     "validate:workbench-presentation": "tsx scripts/validate-workbench-presentation.ts",
-    "validate:chat-timeline-scroll": "tsx scripts/validate-chat-timeline-scroll.ts"
+    "validate:chat-timeline-scroll": "tsx scripts/validate-chat-timeline-scroll.ts",
+    "validate:chat-timeline-behavior": "tsx scripts/validate-chat-timeline-behavior.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",
