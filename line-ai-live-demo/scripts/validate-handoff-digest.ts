@@ -3,6 +3,7 @@ import {
   buildHandoffDigestEmail,
   getHandoffDigestKey,
   getHandoffDigestRecipients,
+  sendLineGroupDigestPush,
 } from "../src/lib/handoff-digest";
 
 let passed = 0;
@@ -15,8 +16,10 @@ function expect(condition: unknown, label: string) {
 }
 
 const branches = ["高雄館", "台中館", "桃園館", "林口館"];
+const validGroupId = `C${"1".repeat(32)}`;
+const customerUserId = `U${"2".repeat(32)}`;
 const config = {
-  adminNotifyTarget: "C-fallback-group",
+  adminNotifyTarget: validGroupId,
   handoffDigestKaohsiungTo: "kaohsiung@example.test, backup@example.test",
   handoffDigestLinkouTo: "",
   handoffDigestTaichungTo: "",
@@ -29,7 +32,7 @@ expect(
   "Kaohsiung email fallback recipients are resolved from config",
 );
 expect(
-  fallbackRecipients["高雄館"].line_group.join(",") === "C-fallback-group",
+  fallbackRecipients["高雄館"].line_group.join(",") === validGroupId,
   "LINE fallback target comes from ADMIN_NOTIFY_TARGET",
 );
 
@@ -38,7 +41,7 @@ const mergedRecipients = buildDigestRecipientsFromRows({
   fallbackRecipients,
   rows: [
     { branch: "高雄館", channel: "email", recipient_scope: "clinic", target: "ops-kaohsiung@example.test" },
-    { branch: "林口館", channel: "line_group", recipient_scope: "clinic", target: "C-linkou-group" },
+    { branch: "林口館", channel: "line_group", recipient_scope: "clinic", target: validGroupId },
   ],
 });
 expect(
@@ -46,7 +49,7 @@ expect(
   "Saved clinic email recipients override branch fallback",
 );
 expect(
-  mergedRecipients["林口館"].line_group.join(",") === "C-linkou-group",
+  mergedRecipients["林口館"].line_group.join(",") === validGroupId,
   "Saved LINE group recipients override branch fallback",
 );
 
@@ -62,4 +65,49 @@ expect(email.subject.includes("2 位客人"), "digest subject contains aggregate
 expect(email.text.includes("/admin/workbench") && !email.text.includes("conversation_id"), "digest links only to the workbench landing page");
 expect(!email.text.includes("LINE ID") && !email.text.includes("電話") && !email.text.includes("姓名"), "digest text contains no customer identifiers");
 
-console.log(`handoff digest validation passed (${passed} checks)`);
+async function main() {
+  let fetchCount = 0;
+  const reportError = async () => undefined;
+  const blockedResult = await sendLineGroupDigestPush(
+    {
+      accessToken: "test-token",
+      branch: "高雄館",
+      recipients: [customerUserId],
+      text: "test digest",
+    },
+    {
+      fetchImpl: (async () => {
+        fetchCount += 1;
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+      reportError,
+    },
+  );
+  expect(!blockedResult.ok && fetchCount === 0, "polluted U recipient is blocked before LINE push");
+
+  const allowedResult = await sendLineGroupDigestPush(
+    {
+      accessToken: "test-token",
+      branch: "高雄館",
+      recipients: [validGroupId],
+      text: "test digest",
+    },
+    {
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        fetchCount += 1;
+        const payload = JSON.parse(String(init?.body)) as { to?: string };
+        expect(payload.to === validGroupId, "valid group ID is preserved as the LINE push target");
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+      reportError,
+    },
+  );
+  expect(allowedResult.ok && fetchCount === 1, "known C recipient can reach LINE push");
+
+  console.log(`handoff digest validation passed (${passed} checks)`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

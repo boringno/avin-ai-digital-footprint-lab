@@ -1,5 +1,10 @@
 import type { AdminStaffUser } from "../src/lib/admin-auth";
-import { getNotificationRecipientLimit, getNotificationRecipientScope } from "../src/lib/admin-handoff-notification-settings";
+import {
+  assertKnownLineGroupTargets,
+  getNotificationRecipientLimit,
+  getNotificationRecipientScope,
+  validateTargets,
+} from "../src/lib/admin-handoff-notification-settings";
 
 let passed = 0;
 
@@ -37,4 +42,45 @@ try {
 }
 expect(agentRejected, "agent cannot manage notification recipients");
 
-console.log(`handoff recipient settings validation passed (${passed} checks)`);
+const validGroupId = `C${"1".repeat(32)}`;
+const customerUserId = `U${"2".repeat(32)}`;
+
+let customerIdRejected = false;
+try {
+  validateTargets("clinic", "line_group", [customerUserId]);
+} catch {
+  customerIdRejected = true;
+}
+expect(customerIdRejected, "customer U ID cannot be saved as a LINE group recipient");
+
+async function main() {
+  let unknownGroupRejected = false;
+  try {
+    await assertKnownLineGroupTargets("tenant_001", [validGroupId], async () => []);
+  } catch {
+    unknownGroupRejected = true;
+  }
+  expect(unknownGroupRejected, "unknown group ID cannot be saved");
+
+  let observedTenantId = "";
+  let otherTenantGroupRejected = false;
+  try {
+    await assertKnownLineGroupTargets("tenant_001", [validGroupId], async (tenantId) => {
+      observedTenantId = tenantId;
+      return [];
+    });
+  } catch {
+    otherTenantGroupRejected = true;
+  }
+  expect(observedTenantId === "tenant_001" && otherTenantGroupRejected, "group lookup must use the current tenant");
+
+  await assertKnownLineGroupTargets("tenant_001", [validGroupId], async () => [validGroupId]);
+  expect(true, "known group ID can be saved");
+
+  console.log(`handoff recipient settings validation passed (${passed} checks)`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

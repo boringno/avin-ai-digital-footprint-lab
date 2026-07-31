@@ -2,6 +2,7 @@ import type { AdminStaffUser } from "@/lib/admin-auth";
 import { canManageClinicHandoffNotifications, canManagePlatformHandoffNotifications } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
 import { activeDigestBranches, type HandoffDigestBranch, type HandoffNotificationChannel } from "@/lib/handoff-digest";
+import { isLineGroupId } from "@/lib/line-recipient-id";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type NotificationRecipientScope = "clinic" | "platform";
@@ -35,6 +36,8 @@ type PendingGroupRow = {
   group_name: string | null;
   last_seen_at: string;
 };
+
+type LineGroupSourceLookup = (tenantId: string, targets: string[]) => Promise<string[]>;
 
 export function getNotificationRecipientScope(staff: AdminStaffUser): NotificationRecipientScope {
   if (canManageClinicHandoffNotifications(staff.role)) {
@@ -115,6 +118,7 @@ export async function replaceHandoffNotificationRecipients(input: {
   const lineGroupTargets = normalizeTargets("line_group", input.lineGroups);
   validateTargets(scope, "email", emailTargets);
   validateTargets(scope, "line_group", lineGroupTargets);
+  await assertKnownLineGroupTargets(input.staff.tenantId, lineGroupTargets);
 
   const supabase = getSupabaseServerClient();
   for (const [channel, targets] of [
@@ -203,7 +207,7 @@ function normalizeTarget(channel: HandoffNotificationChannel, value: string) {
   return channel === "email" ? trimmed.toLowerCase() : trimmed;
 }
 
-function validateTargets(scope: NotificationRecipientScope, channel: HandoffNotificationChannel, targets: string[]) {
+export function validateTargets(scope: NotificationRecipientScope, channel: HandoffNotificationChannel, targets: string[]) {
   const limit = getNotificationRecipientLimit(scope, channel);
   if (targets.length > limit) {
     throw new Error(channel === "line_group" ? "每個館別目前只能綁定 1 個 LINE 群組" : `收件 Email 最多只能設定 ${limit} 組`);
@@ -213,7 +217,37 @@ function validateTargets(scope: NotificationRecipientScope, channel: HandoffNoti
     throw new Error("Email 格式不正確");
   }
 
-  if (channel === "line_group" && targets.some((target) => target.length < 10)) {
+  if (channel === "line_group" && targets.some((target) => !isLineGroupId(target))) {
     throw new Error("LINE 群組 ID 格式不正確");
   }
+}
+
+export async function assertKnownLineGroupTargets(
+  tenantId: string,
+  targets: string[],
+  lookup: LineGroupSourceLookup = loadKnownLineGroupIds,
+) {
+  if (targets.length === 0) {
+    return;
+  }
+
+  const knownTargets = new Set(await lookup(tenantId, targets));
+  if (targets.some((target) => !knownTargets.has(target))) {
+    throw new Error("LINE 群組尚未由本診所 webhook 偵測，請先在群組傳送訊息後再綁定");
+  }
+}
+
+async function loadKnownLineGroupIds(tenantId: string, targets: string[]) {
+  const { data, error } = await getSupabaseServerClient()
+    .from("line_group_sources")
+    .select("group_id")
+    .eq("tenant_id", tenantId)
+    .in("group_id", targets)
+    .returns<Array<{ group_id: string }>>();
+
+  if (error) {
+    throw new Error(`Failed to verify LINE group sources: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => row.group_id);
 }
