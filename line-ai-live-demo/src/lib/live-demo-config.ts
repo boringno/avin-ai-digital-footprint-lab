@@ -104,7 +104,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
 
   return {
-    adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? process.env.LIVE_DEMO_ALERT_LINE_USER_ID ?? "",
+    adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
     aiProvider: (process.env.AI_PROVIDER ?? "anthropic").toLowerCase() === "openai" ? "openai" : "anthropic",
     appBaseUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_BASE_URL ?? (vercelHost ? `https://${vercelHost}` : "https://line-ai-live-demo.vercel.app"),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
