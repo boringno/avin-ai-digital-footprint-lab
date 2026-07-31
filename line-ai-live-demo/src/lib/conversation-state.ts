@@ -247,6 +247,8 @@ export function applyAutoResumeIfDue(state: ConversationState, now = new Date())
 }
 
 export function shouldSuppressRepeatedHandoff(state: ConversationState, nextReason: string) {
+  // This only identifies a repeated reason. Do not use it as a reply decision:
+  // callers must use shouldSuppressHandoffReply so high-risk handoffs are never silenced.
   return state.status === "handoff_pending" && Boolean(state.lastHandoffPromptAt) && state.handoffReason === nextReason;
 }
 

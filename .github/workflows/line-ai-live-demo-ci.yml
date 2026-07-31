@@ -42,6 +42,7 @@ jobs:
           npm run build
           npm run check
           npm run validate:post-procedure-safety
+          npm run validate:group-source-behavior
           npm run validate:router
           npm run validate:conversation-guard
           npm run validate:intent-classify
