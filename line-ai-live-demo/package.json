@@ -41,7 +41,8 @@
     "validate:group-source-isolation": "tsx scripts/validate-group-source-isolation.ts",
     "validate:group-source-behavior": "tsx scripts/validate-group-source-behavior.ts",
     "validate:ai-fallback-boundary": "tsx scripts/validate-ai-fallback-boundary.ts",
-    "validate:pregnancy-risk-handoff": "tsx scripts/validate-pregnancy-risk-handoff.ts"
+    "validate:pregnancy-risk-handoff": "tsx scripts/validate-pregnancy-risk-handoff.ts",
+    "validate:workbench-presentation": "tsx scripts/validate-workbench-presentation.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

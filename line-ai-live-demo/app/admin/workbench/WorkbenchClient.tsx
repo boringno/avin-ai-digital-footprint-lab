@@ -4,6 +4,12 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { bookingStatusLabels, type BookingStatusKey } from "@/lib/admin-display-maps";
+import {
+  getWorkbenchQueueControlAction,
+  getWorkbenchQueuePrimaryLabel,
+  getWorkbenchQueueStatusLabel,
+  getWorkbenchQueueStatusText,
+} from "@/lib/admin-workbench-presentation";
 
 type QueueItem = {
   conversationId: string;
@@ -350,7 +356,7 @@ export function WorkbenchClient({
                   mode="active"
                   onOpen={() => selectConversation(item.conversationId)}
                   onPrimary={() =>
-                    void postControl("resume_ai", {
+                    void postControl(getWorkbenchQueueControlAction("active", item.status), {
                       conversationId: item.conversationId,
                       userId: item.lineUserId,
                     })
@@ -634,6 +640,7 @@ function ConversationCard({
 }) {
   const waitMinutes = minutesSince(item.createdAt);
   const isUrgent = mode === "pending" && waitMinutes >= 10;
+  const primaryAction = getWorkbenchQueueControlAction(mode, item.status);
   const summaryParts = [
     item.interestedTreatments.length > 0 ? item.interestedTreatments.join("、") : "",
     item.preferredBranch ?? "",
@@ -652,11 +659,12 @@ function ConversationCard({
         <div style={{ display: "grid", gap: 4 }}>
           <strong>{item.displayName}</strong>
           {hasDistinctCustomerName(item.customerName, item.displayName) ? <span style={customerNameStyle}>客人姓名：{item.customerName}</span> : null}
-          <span style={waitTextStyle}>
-            {mode === "pending" ? `等待 ${waitMinutes} 分鐘` : item.status === "ai_active" ? "AI 協助中，真人持續追蹤" : "真人服務中"}
-          </span>
+          <span style={waitTextStyle}>{getWorkbenchQueueStatusText(mode, item.status, waitMinutes)}</span>
         </div>
-        <StatusBadge label={mode === "pending" ? "待接手" : item.status === "ai_active" ? "AI 協助" : "服務中"} tone={isUrgent ? "red" : "green"} />
+        <StatusBadge
+          label={getWorkbenchQueueStatusLabel(mode, item.status)}
+          tone={isUrgent || item.status === "handoff_pending" ? "red" : "green"}
+        />
       </div>
 
       <p style={quoteStyle}>{item.lastCustomerMessage || "尚未擷取到客人最新訊息"}</p>
@@ -665,11 +673,9 @@ function ConversationCard({
 
       <div style={{ display: "flex", flexDirection: isCompact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
         <button disabled={Boolean(controlAction)} onClick={onPrimary} style={primaryButtonStyle} type="button">
-          {controlAction === (mode === "pending" ? "mark_human_active" : "resume_ai")
+          {controlAction === primaryAction
             ? "處理中..."
-            : mode === "pending"
-              ? "接手回覆"
-              : "交由 AI 協助"}
+            : getWorkbenchQueuePrimaryLabel(mode, item.status)}
         </button>
         <button disabled={Boolean(controlAction)} onClick={onOpen} style={secondaryButtonStyle} type="button">
           {mode === "pending" ? "查看對話" : "繼續回覆"}
