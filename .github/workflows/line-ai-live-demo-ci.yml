@@ -45,6 +45,7 @@ jobs:
           npm run validate:group-source-behavior
           npm run validate:ai-fallback-boundary
           npm run validate:pregnancy-risk-handoff
+          npm run validate:workbench-presentation
           npm run validate:router
           npm run validate:conversation-guard
           npm run validate:intent-classify

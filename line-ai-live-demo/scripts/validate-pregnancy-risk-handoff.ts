@@ -1,4 +1,5 @@
 import { buildBookingLeadNotes, buildHandoffReason } from "../src/lib/admin-webhook-sync";
+import { hasPregnancyRiskMarker } from "../src/lib/admin-risk-flags";
 import { createEmptyConversationContext } from "../src/lib/conversation-context";
 import { routeCustomerMessage } from "../src/lib/router";
 
@@ -16,14 +17,19 @@ async function main() {
   const third = await route("我叫王小美 0912345678 初診", second.nextContext);
   assert(third.nextContext.pregnancyRiskFlag, "G3: flag must survive intake details");
   const riskResult = { bookingDraft: { pregnancyRiskFlag: true }, decision: { matchedKey: "booking_intake" } } as never;
-  assert(buildHandoffReason(riskResult).endsWith(":pregnancy_risk"), "G6: handoff reason must expose pregnancy risk");
-  assert(buildBookingLeadNotes("", true).includes("孕期／哺乳／備孕風險"), "G3: lead notes must expose pregnancy risk");
+  const riskReason = buildHandoffReason(riskResult);
+  const riskNotes = buildBookingLeadNotes("", true);
+  assert(riskReason.endsWith(":pregnancy_risk"), "G6: handoff reason must expose pregnancy risk");
+  assert(riskNotes.includes("孕期／哺乳／備孕風險"), "G3: lead notes must expose pregnancy risk");
+  assert(hasPregnancyRiskMarker({ handoffReason: riskReason }), "G7: queue must detect pregnancy risk from handoff reason");
+  assert(hasPregnancyRiskMarker({ notes: riskNotes }), "G8: inbox must detect pregnancy risk from lead notes");
+  assert(!hasPregnancyRiskMarker({ handoffReason: "booking_intake", notes: "一般預約" }), "G9: ordinary leads must not be risk-tagged");
   const ordinary = await route("我想預約肉毒");
   assert(!ordinary.nextContext.pregnancyRiskFlag && !buildBookingLeadNotes("", false).includes("孕期"), "G5: ordinary booking must not be risk-tagged");
   for (const message of ["我在哺乳想預約", "我在備孕想預約"]) {
     const decision = await route(message);
     assert(decision.nextContext.pregnancyRiskFlag, `G4: ${message} must set risk flag`);
   }
-  console.log("Pregnancy risk handoff validation passed: G1-G6");
+  console.log("Pregnancy risk handoff validation passed: G1-G9");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

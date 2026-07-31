@@ -138,7 +138,10 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
               >
                 <span style={nameRowStyle}>
                   <strong>{item.displayName}</strong>
-                  <span style={statusStyle}>{formatStatus(item.status)}</span>
+                  <span style={{ alignItems: "flex-end", display: "flex", flexDirection: "column", gap: 5 }}>
+                    {item.pregnancyRisk ? <PregnancyRiskBadge /> : null}
+                    <span style={statusStyle}>{formatStatus(item.status)}</span>
+                  </span>
                 </span>
                 {hasDistinctCustomerName(item.customerName, item.displayName) ? <span style={customerNameStyle}>客人姓名：{item.customerName}</span> : null}
                 <span style={messagePreviewStyle}>{item.lastMessage}</span>
@@ -161,6 +164,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
                   <p style={hintStyle}>{maskLineUserId(detail.lineUserId)}</p>
                 </div>
                 <div style={actionRowStyle}>
+                  {detail.bookingLead?.pregnancyRisk ? <PregnancyRiskBadge /> : null}
                   {detail.state.status === "human_active" ? (
                     <button disabled={Boolean(controlAction)} onClick={() => void controlConversation("resume_ai")} style={secondaryButtonStyle} type="button">
                       {controlAction === "resume_ai" ? "處理中..." : "交由 AI 協助"}
@@ -172,6 +176,13 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
                   )}
                 </div>
               </header>
+
+              {detail.bookingLead?.pregnancyRisk ? (
+                <div style={pregnancyRiskAlertStyle} role="alert">
+                  <strong>孕期／哺乳／備孕風險</strong>
+                  <span>回覆或安排療程前，請先由真人確認身體狀況與醫師評估。</span>
+                </div>
+              ) : null}
 
               <div style={noticeStyle}>
                 {detail.state.status === "human_active"
@@ -209,6 +220,10 @@ function formatStatus(status: string) {
   return { ai_active: "AI 協助", handoff_pending: "待接手", human_active: "真人處理中" }[status] ?? "已結束";
 }
 
+function PregnancyRiskBadge() {
+  return <span style={pregnancyRiskBadgeStyle}>孕期風險・真人確認</span>;
+}
+
 function formatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-TW", { hour: "2-digit", minute: "2-digit", month: "numeric", day: "numeric" });
@@ -232,6 +247,8 @@ const secondaryButtonStyle = { background: "#fff", border: "1px solid #b9cbc5", 
 const conversationButtonStyle = { background: "#fbfdfc", border: "1px solid #d4e2dc", borderRadius: 12, cursor: "pointer", display: "grid", gap: 5, padding: 12, textAlign: "left", width: "100%" } satisfies React.CSSProperties;
 const nameRowStyle = { alignItems: "center", display: "flex", gap: 8, justifyContent: "space-between" } satisfies React.CSSProperties;
 const statusStyle = { background: "#e7f5ed", borderRadius: 999, color: "#147a3b", fontSize: 12, padding: "3px 7px" } satisfies React.CSSProperties;
+const pregnancyRiskBadgeStyle = { background: "#991b1b", borderRadius: 999, color: "#fff", fontSize: 12, fontWeight: 800, padding: "5px 8px", whiteSpace: "nowrap" } satisfies React.CSSProperties;
+const pregnancyRiskAlertStyle = { background: "#fff1f0", border: "1px solid #ef9a95", borderRadius: 10, color: "#861f1a", display: "grid", gap: 4, lineHeight: 1.5, padding: 12 } satisfies React.CSSProperties;
 const customerNameStyle = { color: "#335563", fontSize: 13, fontWeight: 700, margin: 0 } satisfies React.CSSProperties;
 const messagePreviewStyle = { color: "#3e554d", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } satisfies React.CSSProperties;
 const timeStyle = { color: "#6c8078", fontSize: 12 } satisfies React.CSSProperties;

@@ -1,5 +1,6 @@
 import { isGroupSourceResult, type ProcessedWebhookResult, type ReplySendResult } from "@/lib/line-webhook";
 import { notifyAdminHandoffCreated } from "@/lib/admin-handoff-notifications";
+import { PREGNANCY_RISK_NOTE, PREGNANCY_RISK_REASON_SUFFIX } from "@/lib/admin-risk-flags";
 import { storeRuleIntentLabel } from "@/lib/intent-label-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
@@ -28,11 +29,9 @@ type BookingLeadRow = {
   staff_owner: string | null;
 };
 
-const PREGNANCY_RISK_NOTE = "[孕期／哺乳／備孕風險：真人確認]";
-
 export function buildHandoffReason(result: ProcessedWebhookResult) {
   const baseReason = result.decision.matchedKey || "unknown";
-  return result.bookingDraft.pregnancyRiskFlag ? `${baseReason}:pregnancy_risk` : baseReason;
+  return result.bookingDraft.pregnancyRiskFlag ? `${baseReason}${PREGNANCY_RISK_REASON_SUFFIX}` : baseReason;
 }
 
 export function buildBookingLeadNotes(existingNotes: string | undefined, hasPregnancyRisk: boolean) {
