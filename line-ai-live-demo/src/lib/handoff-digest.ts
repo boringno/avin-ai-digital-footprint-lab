@@ -1,6 +1,7 @@
 import { listActiveBranches } from "@/lib/clinic-config";
 import { DEFAULT_TENANT_ID } from "@/lib/conversation-store";
 import { getRuntimeConfig, type RuntimeConfig } from "@/lib/live-demo-config";
+import { isLineGroupId } from "@/lib/line-recipient-id";
 import { reportOperationalError } from "@/lib/monitoring";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
@@ -593,16 +594,60 @@ async function sendHandoffDigestLineGroup(input: SendDigestInput): Promise<SendD
     test: input.test,
   });
 
+  return sendLineGroupDigestPush({
+    accessToken: config.lineAccessToken,
+    branch: input.branch,
+    recipients: input.recipients,
+    text,
+  });
+}
+
+export async function sendLineGroupDigestPush(
+  input: {
+    accessToken: string;
+    branch: HandoffDigestBranch;
+    recipients: string[];
+    text: string;
+  },
+  dependencies: {
+    fetchImpl?: typeof fetch;
+    reportError?: typeof reportOperationalError;
+  } = {},
+): Promise<SendDigestResult> {
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const reportError = dependencies.reportError ?? reportOperationalError;
+
+  function recipientDebugMetadata(target: string) {
+    return {
+      target_length: target.length,
+      target_prefix: target.slice(0, 1),
+    };
+  }
+
   const failedTargets: string[] = [];
   for (const target of input.recipients) {
+    if (!isLineGroupId(target)) {
+      failedTargets.push(target);
+      await reportError({
+        alert: false,
+        error: new Error("Blocked invalid LINE group notification target"),
+        extra: {
+          branch: input.branch,
+          ...recipientDebugMetadata(target),
+        },
+        source: "handoff_digest_line_group_recipient_guard",
+      });
+      continue;
+    }
+
     try {
-      const response = await fetch("https://api.line.me/v2/bot/message/push", {
+      const response = await fetchImpl("https://api.line.me/v2/bot/message/push", {
         body: JSON.stringify({
-          messages: [{ text, type: "text" }],
+          messages: [{ text: input.text, type: "text" }],
           to: target,
         }),
         headers: {
-          Authorization: `Bearer ${config.lineAccessToken}`,
+          Authorization: `Bearer ${input.accessToken}`,
           "Content-Type": "application/json",
         },
         method: "POST",
@@ -610,24 +655,24 @@ async function sendHandoffDigestLineGroup(input: SendDigestInput): Promise<SendD
 
       if (!response.ok) {
         failedTargets.push(target);
-        await reportOperationalError({
+        await reportError({
           alert: false,
           error: new Error(`Handoff digest LINE push failed: ${response.status} ${await response.text()}`),
           extra: {
             branch: input.branch,
-            target,
+            ...recipientDebugMetadata(target),
           },
           source: "handoff_digest_line_group",
         });
       }
     } catch (error) {
       failedTargets.push(target);
-      await reportOperationalError({
+      await reportError({
         alert: false,
         error,
         extra: {
           branch: input.branch,
-          target,
+          ...recipientDebugMetadata(target),
         },
         source: "handoff_digest_line_group",
       });
@@ -714,7 +759,7 @@ function splitLineTargets(value: string) {
     value
       .split(",")
       .map((item) => item.trim())
-      .filter(Boolean),
+      .filter(isLineGroupId),
   );
 }
 

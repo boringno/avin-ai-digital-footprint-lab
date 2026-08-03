@@ -215,6 +215,6 @@ Off-hours handoffs stay in queue. A future cron can send a next-business-day sum
 Implementation note:
 
 - `ADMIN_NOTIFY_TARGET` can be a LINE user/group/room id that the clinic notification channel can push to.
-- If `ADMIN_NOTIFY_TARGET` is missing, the system falls back to `LIVE_DEMO_ALERT_LINE_USER_ID`.
+- If `ADMIN_NOTIFY_TARGET` is missing, the handoff notification is skipped. Operational alerts use `LIVE_DEMO_ALERT_LINE_USER_ID` independently and never act as a handoff-recipient fallback.
 - Notification failure is best-effort and must not break webhook post-processing.
 - v1 does not send off-hours notifications; staff can review accumulated tasks in `/admin/workbench`.
