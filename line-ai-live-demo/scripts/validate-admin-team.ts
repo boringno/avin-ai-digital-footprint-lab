@@ -1,4 +1,5 @@
 import { canRemoveTeamMember, getTeamAccessEmailMode, isSelfTeamInvitation } from "../src/lib/admin-team-data";
+import { canViewTeam } from "../src/lib/admin-auth";
 
 let passed = 0;
 
@@ -51,5 +52,11 @@ expect(
   !canRemoveTeamMember({ actorStaffId: "owner-id", targetRole: "agent", targetStaffId: "owner-id" }),
   "owner cannot remove themselves",
 );
+
+expect(canViewTeam("owner"), "owner can view team management");
+expect(canViewTeam("manager"), "manager can view team management");
+expect(canViewTeam("maintainer"), "maintainer can view team management");
+expect(!canViewTeam("agent"), "agent cannot view team management");
+expect(!canViewTeam("analyst"), "analyst cannot view team management");
 
 console.log(`admin team validation passed (${passed} checks)`);
