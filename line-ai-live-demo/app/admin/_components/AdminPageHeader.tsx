@@ -6,6 +6,7 @@ import {
   canViewHandoffNotifications,
   canViewLeads,
   canViewReports,
+  canViewTeam,
   type AdminStaffUser,
 } from "@/lib/admin-auth";
 import { staffRoleLabels } from "@/lib/admin-display-maps";
@@ -32,7 +33,6 @@ type NavigationGroup = {
 };
 
 export function AdminPageHeader({ activeHref, description, eyebrow, staff, title }: AdminPageHeaderProps) {
-  const canViewTeam = staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer";
   const groups: NavigationGroup[] = [
     {
       label: "客服作業",
@@ -57,7 +57,7 @@ export function AdminPageHeader({ activeHref, description, eyebrow, staff, title
         { href: "/admin/schedules", label: "門診班表", visible: canViewContent(staff.role) },
         { href: "/admin/notifications", label: "通知設定", visible: canViewHandoffNotifications(staff.role) },
         { href: "/admin/reports", label: "月報", visible: canViewReports(staff.role) },
-        { href: "/admin/team", label: "團隊管理", visible: canViewTeam },
+        { href: "/admin/team", label: "團隊管理", visible: canViewTeam(staff.role) },
       ],
     },
   ];

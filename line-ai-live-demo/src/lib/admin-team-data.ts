@@ -1,4 +1,4 @@
-import type { AdminStaffUser, StaffRole } from "@/lib/admin-auth";
+import { canViewTeam, type AdminStaffUser, type StaffRole } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -35,10 +35,6 @@ const clientManagedRoles: ClientManagedRole[] = ["manager", "agent", "analyst"];
 
 export function canManageTeam(staff: AdminStaffUser) {
   return staff.role === "owner";
-}
-
-export function canViewTeam(staff: AdminStaffUser) {
-  return staff.role === "owner" || staff.role === "manager" || staff.role === "maintainer";
 }
 
 function normalizeEmail(email: string) {
@@ -128,7 +124,7 @@ function toMember(row: StaffUserRow, fallbackEmail: string): TeamMember {
 }
 
 export async function loadAdminTeam(staff: AdminStaffUser) {
-  if (!canViewTeam(staff)) {
+  if (!canViewTeam(staff.role)) {
     throw new Error("You do not have permission to view the team.");
   }
 

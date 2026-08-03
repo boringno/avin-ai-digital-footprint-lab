@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
-import { getAdminStaffFromCookies } from "@/lib/admin-auth";
-import { canViewTeam, loadAdminTeam } from "@/lib/admin-team-data";
+import { canViewTeam, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { loadAdminTeam } from "@/lib/admin-team-data";
 
 import { TeamClient } from "./TeamClient";
 
@@ -10,7 +10,7 @@ export default async function AdminTeamPage() {
   if (!staff) {
     redirect("/admin/login");
   }
-  if (!canViewTeam(staff)) {
+  if (!canViewTeam(staff.role)) {
     redirect("/admin/forbidden");
   }
 

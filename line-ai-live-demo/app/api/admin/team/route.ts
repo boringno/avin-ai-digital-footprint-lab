@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { canViewTeam, loadAdminTeam } from "@/lib/admin-team-data";
-import { requireAdminStaff } from "@/lib/admin-auth";
+import { canViewTeam, requireAdminStaff } from "@/lib/admin-auth";
+import { loadAdminTeam } from "@/lib/admin-team-data";
 
 export const runtime = "nodejs";
 
@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   if (!staff) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  if (!canViewTeam(staff)) {
+  if (!canViewTeam(staff.role)) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
