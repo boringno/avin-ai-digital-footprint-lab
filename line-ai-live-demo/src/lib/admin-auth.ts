@@ -127,6 +127,10 @@ export function canViewLeads(role: StaffRole) {
   return role === "owner" || role === "manager" || role === "agent" || role === "maintainer";
 }
 
+export function canViewTeam(role: StaffRole) {
+  return role === "owner" || role === "manager" || role === "maintainer";
+}
+
 export function canEditLeads(role: StaffRole) {
   return role === "owner" || role === "manager" || role === "agent" || role === "maintainer";
 }

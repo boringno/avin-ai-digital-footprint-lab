@@ -1,0 +1,195 @@
+.header {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #d5e2dd;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(22, 48, 43, 0.06);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+
+.headingRow {
+  align-items: flex-start;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 20px 22px 16px;
+}
+
+.headingCopy {
+  min-width: 0;
+}
+
+.eyebrow {
+  color: #52736a;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+.title {
+  font-size: clamp(24px, 3vw, 32px);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 5px 0 0;
+}
+
+.description {
+  color: #60736d;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 7px 0 0;
+  max-width: 760px;
+}
+
+.account {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.accountName {
+  color: #16302b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.role {
+  background: #eaf7f0;
+  border-radius: 999px;
+  color: #17613f;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+
+.navigation {
+  align-items: stretch;
+  background: #f3f8f6;
+  border-top: 1px solid #dce7e3;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 11px 14px;
+  scrollbar-width: thin;
+}
+
+.group {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.group + .group {
+  border-left: 1px solid #d5e2dd;
+  padding-left: 16px;
+}
+
+.groupLabel {
+  color: #6a7d77;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.links {
+  display: flex;
+  gap: 5px;
+}
+
+.link,
+.logoutButton {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #284b42;
+  display: inline-flex;
+  font: inherit;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link:hover,
+.logoutButton:hover {
+  background: #fff;
+  border-color: #bdd0c9;
+}
+
+.link:focus-visible,
+.logoutButton:focus-visible {
+  outline: 3px solid rgba(22, 125, 79, 0.28);
+  outline-offset: 1px;
+}
+
+.activeLink {
+  background: #176d49;
+  border-color: #176d49;
+  color: #fff;
+  font-weight: 700;
+}
+
+.activeLink:hover {
+  background: #125b3d;
+  border-color: #125b3d;
+}
+
+.logoutForm {
+  align-items: center;
+  border-left: 1px solid #d5e2dd;
+  display: flex;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.logoutButton {
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .header {
+    border-radius: 16px;
+  }
+
+  .headingRow {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .accountName {
+    max-width: 116px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .navigation {
+    gap: 10px;
+    padding: 9px 10px;
+  }
+
+  .group + .group {
+    padding-left: 10px;
+  }
+
+  .groupLabel {
+    display: none;
+  }
+
+  .logoutForm {
+    padding-left: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link,
+  .logoutButton {
+    scroll-behavior: auto;
+  }
+}
