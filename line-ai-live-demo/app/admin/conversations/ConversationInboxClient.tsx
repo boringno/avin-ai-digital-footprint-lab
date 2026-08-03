@@ -16,6 +16,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
   const [isSending, setIsSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isCompact, setIsCompact] = useState(false);
+  const [compactPane, setCompactPane] = useState<"detail" | "list">(initialData.detail ? "detail" : "list");
   const {
     handleTimelineScroll,
     prepareForConversationChange,
@@ -58,6 +59,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
   async function selectConversation(item: ConversationInboxItem) {
     prepareForConversationChange();
     setSelectedConversationId(item.conversationId);
+    setCompactPane("detail");
     await refresh(item.conversationId);
   }
 
@@ -123,6 +125,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          setCompactPane("list");
           void refresh("", searchText);
         }}
         style={searchPanelStyle}
@@ -134,7 +137,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
       </form>
 
       <div style={{ ...layoutStyle, gridTemplateColumns: isCompact ? "minmax(0, 1fr)" : layoutStyle.gridTemplateColumns }}>
-        <aside style={panelStyle}>
+        {!isCompact || compactPane === "list" ? <aside style={panelStyle}>
           <strong>全部對話</strong>
           <p style={hintStyle}>最近 100 位有互動的客人。手動接手後會出現在接手工作台追蹤。</p>
           <div style={{ display: "grid", gap: 8 }}>
@@ -159,13 +162,21 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
               </button>
             ))}
           </div>
-        </aside>
+        </aside> : null}
 
-        <section style={panelStyle}>
+        {!isCompact || compactPane === "detail" ? <section style={panelStyle}>
           {!detail ? (
-            <p style={hintStyle}>從左側選擇一位客人，即可查看完整對話並安全接手。</p>
+            <div style={{ display: "grid", gap: 10 }}>
+              <p style={hintStyle}>請先選擇一位客人，即可查看完整對話並安全接手。</p>
+              {isCompact ? <button onClick={() => setCompactPane("list")} style={secondaryButtonStyle} type="button">返回對話列表</button> : null}
+            </div>
           ) : (
             <div style={{ display: "grid", gap: 14 }}>
+              {isCompact ? (
+                <button aria-label="返回全部對話列表" onClick={() => setCompactPane("list")} style={compactBackButtonStyle} type="button">
+                  ← 返回對話列表
+                </button>
+              ) : null}
               <header style={detailHeaderStyle}>
                 <div>
                   <p style={eyebrowStyle}>LINE 對話</p>
@@ -220,7 +231,7 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
               </div>
             </div>
           )}
-        </section>
+        </section> : null}
       </div>
     </section>
   );
@@ -275,3 +286,4 @@ const staffMessageStyle = { background: "#e1f7e9", justifySelf: "end" } satisfie
 const aiMessageStyle = { background: "#e6f1f8", justifySelf: "start" } satisfies React.CSSProperties;
 const composerStyle = { borderTop: "1px solid #dce9e3", display: "grid", gap: 8, paddingTop: 14 } satisfies React.CSSProperties;
 const errorStyle = { background: "#fff0ef", border: "1px solid #f3b8b3", borderRadius: 10, color: "#9f3025", padding: 12 } satisfies React.CSSProperties;
+const compactBackButtonStyle = { alignItems: "center", background: "transparent", border: 0, color: "#176d49", cursor: "pointer", display: "inline-flex", font: "inherit", fontWeight: 700, justifySelf: "start", minHeight: 40, padding: "4px 0" } satisfies React.CSSProperties;
