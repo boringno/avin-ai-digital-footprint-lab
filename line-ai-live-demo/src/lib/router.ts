@@ -426,8 +426,8 @@ function getContextualPricingTerms(message: string, context: ConversationContext
     .filter(Boolean) ?? [];
 
   [
-    ...bookingTreatments,
     context.lastReferencedTreatment,
+    ...bookingTreatments,
   ]
     .filter((term): term is string => Boolean(term))
     .forEach((term) => {
@@ -468,9 +468,18 @@ function matchPricing(
     return null;
   }
 
-  return activeCampaigns.find((campaign) =>
-    getCampaignSearchTerms(campaign).some((term) => contextualTerms.includes(term)),
-  );
+  // Contextual terms are ordered by recency: the current conversation topic
+  // must win over an older booking draft from the same customer.
+  for (const contextualTerm of contextualTerms) {
+    const campaign = activeCampaigns.find((candidate) =>
+      getCampaignSearchTerms(candidate).includes(contextualTerm),
+    );
+    if (campaign) {
+      return campaign;
+    }
+  }
+
+  return null;
 }
 
 function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
