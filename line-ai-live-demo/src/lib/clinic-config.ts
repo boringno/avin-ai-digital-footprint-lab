@@ -303,7 +303,7 @@ export const clinicConfig: ClinicConfig = {
         ],
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "ONDA PRO 可先用於了解局部輪廓與體態線條的規劃。",
+      intro: "您想改善的部位，ONDA PRO 可作為局部輪廓與體態管理的評估方向。",
       key: "onda_pro",
       name: "ONDA PRO",
     },

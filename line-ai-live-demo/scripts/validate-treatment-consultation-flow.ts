@@ -61,6 +61,7 @@ async function main() {
   const intro = await route("想了解 ONDA PRO");
   assert(intro.decisionType === "treatment_intro_reply", "T8: ONDA introduction must stay a treatment reply");
   assert(intro.matchedKey === "treatment_intro:onda_pro", "T8: ONDA introduction must retain its treatment intent");
+  assert(intro.replyText.includes("局部輪廓與體態管理"), "T8: ONDA introduction must use the approved short opening");
   assert(intro.replyText.includes("雙下巴、下顎線"), "T8: ONDA introduction must ask a needs-discovery question");
   assert(intro.replyText.length <= 88, "T8: ONDA introduction must stay concise for LINE");
 
