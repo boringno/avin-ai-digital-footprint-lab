@@ -1,6 +1,7 @@
 import {
   canManageRuntimeContentReleases,
   canReviewFaqMiss,
+  canViewEngineeringKnowledge,
   canUseWorkbench,
   canViewContent,
   canViewHandoffNotifications,
@@ -58,6 +59,7 @@ export function AdminPageHeader({ activeHref, description, eyebrow, staff, title
         { href: "/admin/notifications", label: "通知設定", visible: canViewHandoffNotifications(staff.role) },
         { href: "/admin/reports", label: "月報", visible: canViewReports(staff.role) },
         { href: "/admin/team", label: "團隊管理", visible: canViewTeam(staff.role) },
+        { href: "/admin/engineering/knowledge", label: "AI 知識地圖", visible: canViewEngineeringKnowledge(staff.role) },
       ],
     },
   ];

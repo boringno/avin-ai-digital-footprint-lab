@@ -27,6 +27,12 @@ export type TreatmentConfig = {
     discoveryPrompt: string;
     featureSummary: string;
     followupPrompt: string;
+    quickReplies?: Array<{
+      followupPrompt: string;
+      key: string;
+      reply: string;
+      terms: string[];
+    }>;
   };
   evaluationNote: string;
   intro: string;
@@ -275,9 +281,29 @@ export const clinicConfig: ClinicConfig = {
         featureSummary:
           "療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
         followupPrompt: "如果有偏好的館別，也可以一併告訴我。",
+        quickReplies: [
+          {
+            key: "benefits",
+            terms: ["功效", "改善什麼", "可以改善", "適合什麼"],
+            reply: "ONDA PRO 可作為局部脂肪感、輪廓線與緊實需求的評估方向；實際規劃與效果仍需依個人狀況由醫師判斷。",
+            followupPrompt: "您較在意臉部輪廓，還是手臂、腹部等身體局部呢？",
+          },
+          {
+            key: "features",
+            terms: ["特色", "原理", "怎麼做", "儀器"],
+            reply: "ONDA PRO 是非侵入式的局部輪廓與體態管理評估方向，會依施作部位、脂肪與緊實需求規劃。",
+            followupPrompt: "您想先了解雙下巴／嘴邊肉，還是身體局部呢？",
+          },
+          {
+            key: "comfort_and_recovery",
+            terms: ["會痛", "痛嗎", "敷麻", "修復期", "恢復期", "瘀青"],
+            reply: "施作感受與術後照護會依部位及個人狀況不同，現場會先由醫師評估並說明。",
+            followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢。",
+          },
+        ],
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "ONDA PRO 可先用於了解局部輪廓與體態線條的規劃。",
+      intro: "您想改善的部位，ONDA PRO 可作為局部輪廓與體態管理的評估方向。",
       key: "onda_pro",
       name: "ONDA PRO",
     },

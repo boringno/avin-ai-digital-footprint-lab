@@ -135,9 +135,10 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_intro:onda_pro",
+    expectedMatchedKey: "treatment_consult:onda_pro:benefits",
     message: "Onda 功效是什麼？",
     replyExcludes: ["保證", "一定有效"],
+    replyIncludes: ["局部脂肪感", "醫師判斷"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",

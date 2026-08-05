@@ -1,5 +1,5 @@
 import { canRemoveTeamMember, getTeamAccessEmailMode, isSelfTeamInvitation } from "../src/lib/admin-team-data";
-import { canViewTeam } from "../src/lib/admin-auth";
+import { canViewEngineeringKnowledge, canViewTeam } from "../src/lib/admin-auth";
 
 let passed = 0;
 
@@ -58,5 +58,11 @@ expect(canViewTeam("manager"), "manager can view team management");
 expect(canViewTeam("maintainer"), "maintainer can view team management");
 expect(!canViewTeam("agent"), "agent cannot view team management");
 expect(!canViewTeam("analyst"), "analyst cannot view team management");
+
+expect(canViewEngineeringKnowledge("owner"), "owner can view engineering knowledge");
+expect(canViewEngineeringKnowledge("maintainer"), "maintainer can view engineering knowledge");
+expect(!canViewEngineeringKnowledge("manager"), "manager cannot view engineering knowledge");
+expect(!canViewEngineeringKnowledge("agent"), "agent cannot view engineering knowledge");
+expect(!canViewEngineeringKnowledge("analyst"), "analyst cannot view engineering knowledge");
 
 console.log(`admin team validation passed (${passed} checks)`);

@@ -147,6 +147,12 @@ export function canViewOperationalDebug(role: StaffRole) {
   return role === "owner" || role === "maintainer";
 }
 
+// Engineering knowledge includes internal routing and source metadata. It is
+// intentionally narrower than ordinary content management.
+export function canViewEngineeringKnowledge(role: StaffRole) {
+  return role === "owner" || role === "maintainer";
+}
+
 export function canReviewFaqMiss(role: StaffRole) {
   return role === "owner" || role === "manager";
 }

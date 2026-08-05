@@ -426,8 +426,8 @@ function getContextualPricingTerms(message: string, context: ConversationContext
     .filter(Boolean) ?? [];
 
   [
-    ...bookingTreatments,
     context.lastReferencedTreatment,
+    ...bookingTreatments,
   ]
     .filter((term): term is string => Boolean(term))
     .forEach((term) => {
@@ -468,9 +468,18 @@ function matchPricing(
     return null;
   }
 
-  return activeCampaigns.find((campaign) =>
-    getCampaignSearchTerms(campaign).some((term) => contextualTerms.includes(term)),
-  );
+  // Contextual terms are ordered by recency: the current conversation topic
+  // must win over an older booking draft from the same customer.
+  for (const contextualTerm of contextualTerms) {
+    const campaign = activeCampaigns.find((candidate) =>
+      getCampaignSearchTerms(candidate).includes(contextualTerm),
+    );
+    if (campaign) {
+      return campaign;
+    }
+  }
+
+  return null;
 }
 
 function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
@@ -1293,6 +1302,30 @@ function getConsultationTreatment(context: ConversationContext) {
   return treatment?.consultationGuide ? treatment : null;
 }
 
+function findConsultationQuickReply(
+  treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  message: string,
+) {
+  return treatment.consultationGuide?.quickReplies?.find((item) => includesAnyTerm(message, item.terms)) ?? null;
+}
+
+function buildConsultationQuickReply(
+  treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  message: string,
+) {
+  const quickReply = findConsultationQuickReply(treatment, message);
+  if (!quickReply) {
+    return null;
+  }
+
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}:${quickReply.key}`,
+    matchedType: "guided_reply",
+    replyText: `${quickReply.reply}\n${quickReply.followupPrompt}`,
+  } satisfies Omit<RouterDecision, "nextContext">;
+}
+
 function buildConsultationConcernReply(
   treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
   concernKey: string,
@@ -1629,7 +1662,6 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
   const approvedIntroReply = matchedTreatment.approvedContent.introReplies[0];
   const approvedBrandReply = matchedTreatment.approvedContent.brandReplies[0];
   const consultationGuide = matchedTreatment.consultationGuide;
-  const asksForTreatmentFeature = includesAnyTerm(message, ["特色", "功效", "原理", "怎麼做"]);
 
   if (isBrandQuestion) {
     if (approvedBrandReply) {
@@ -1662,11 +1694,18 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
+  const consultationQuickReply = consultationGuide
+    ? buildConsultationQuickReply(matchedTreatment, message)
+    : null;
+  if (consultationQuickReply) {
+    return consultationQuickReply;
+  }
+
   return {
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply}${consultationGuide && asksForTreatmentFeature ? ` ${consultationGuide.featureSummary}` : consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? consultationGuide.discoveryPrompt : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+    replyText: `${approvedIntroReply}${consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? consultationGuide.discoveryPrompt : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
@@ -1685,6 +1724,11 @@ function getTreatmentConsultationFollowup(message: string, context: Conversation
   }
 
   const guide = treatment.consultationGuide;
+  const consultationQuickReply = buildConsultationQuickReply(treatment, message);
+  if (consultationQuickReply) {
+    return consultationQuickReply;
+  }
+
   return {
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_consult:${treatment.key}`,
