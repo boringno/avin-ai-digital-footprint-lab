@@ -1295,6 +1295,7 @@ function getConsultationTreatment(context: ConversationContext) {
 
 function buildConsultationConcernReply(
   treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  concernKey: string,
   concernKeyword: string,
 ) {
   const guide = treatment.consultationGuide;
@@ -1302,7 +1303,14 @@ function buildConsultationConcernReply(
     return null;
   }
 
-  return `了解，您提到的 ${concernKeyword} 是不少客人會想先了解的方向。${guide.discoveryPrompt}\n${treatment.intro} ${guide.featureSummary}\n${treatment.evaluationNote} ${guide.followupPrompt}`;
+  const discoveryPrompt =
+    concernKey === "jawline_looseness"
+      ? "您較在意脂肪感、輪廓線，還是鬆弛感呢？"
+      : concernKey === "local_contour"
+        ? "您較在意腹部、手臂或大腿哪個部位呢？"
+        : guide.discoveryPrompt;
+
+  return `${concernKeyword} 可先了解 ${treatment.name}。${discoveryPrompt}`;
 }
 
 function getConcernReply(message: string, context: ConversationContext) {
@@ -1319,12 +1327,16 @@ function getConcernReply(message: string, context: ConversationContext) {
   }
 
   const consultationTreatment = getConsultationTreatment(context);
-  if (consultationTreatment) {
-    const consultationReply = buildConsultationConcernReply(consultationTreatment, matchedKeyword);
+  const recommendedConsultationTreatment = matchedConcern.recommendedTreatmentKeys
+    .map((treatmentKey) => findTreatmentByKey(treatmentKey))
+    .find((treatment) => treatment?.consultationGuide);
+  const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
+  if (guidedTreatment) {
+    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedConcern.key, matchedKeyword);
     if (consultationReply) {
       return {
         decisionType: "treatment_intro_reply",
-        matchedKey: `treatment_consult:${consultationTreatment.key}`,
+        matchedKey: `treatment_consult:${guidedTreatment.key}`,
         matchedType: "guided_reply",
         replyText: consultationReply,
       } satisfies Omit<RouterDecision, "nextContext">;
@@ -1617,6 +1629,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
   const approvedIntroReply = matchedTreatment.approvedContent.introReplies[0];
   const approvedBrandReply = matchedTreatment.approvedContent.brandReplies[0];
   const consultationGuide = matchedTreatment.consultationGuide;
+  const asksForTreatmentFeature = includesAnyTerm(message, ["特色", "功效", "原理", "怎麼做"]);
 
   if (isBrandQuestion) {
     if (approvedBrandReply) {
@@ -1653,7 +1666,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply}${consultationGuide ? ` ${consultationGuide.featureSummary}` : ""} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? `${consultationGuide.discoveryPrompt} ${consultationGuide.followupPrompt}` : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+    replyText: `${approvedIntroReply}${consultationGuide && asksForTreatmentFeature ? ` ${consultationGuide.featureSummary}` : consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? consultationGuide.discoveryPrompt : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
@@ -2055,6 +2068,11 @@ export async function routeCustomerMessage({
 
   const concernReply = getConcernReply(trimmedMessage, nextContext);
   if (concernReply) {
+    const guidedTreatmentKey = concernReply.matchedKey.match(/^treatment_consult:(.+)$/u)?.[1];
+    const guidedTreatment = guidedTreatmentKey ? findTreatmentByKey(guidedTreatmentKey) : null;
+    if (guidedTreatment) {
+      nextContext.lastReferencedTreatment = guidedTreatment.name;
+    }
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
       ? "booking_intake"
       : concernReply.matchedKey;

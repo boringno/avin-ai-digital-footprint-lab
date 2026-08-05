@@ -436,9 +436,9 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "concern:jawline_looseness",
+    expectedMatchedKey: "treatment_consult:onda_pro",
     message: "我想改善嘴邊肉",
-    replyIncludes: ["嘴邊肉", "ONDA", "醫師評估"],
+    replyIncludes: ["嘴邊肉", "ONDA", "脂肪感"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",

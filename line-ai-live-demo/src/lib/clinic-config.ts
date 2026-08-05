@@ -224,9 +224,15 @@ export const clinicConfig: ClinicConfig = {
     },
     {
       key: "jawline_looseness",
-      keywords: ["嘴邊肉", "下顎線", "輪廓線", "雙下巴", "下巴線條", "臉部鬆弛"],
+      keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "下巴線條", "臉部鬆弛"],
       recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
+    },
+    {
+      key: "local_contour",
+      keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "手臂", "大腿", "體態", "身體線條", "贅肉"],
+      recommendedTreatmentKeys: ["onda_pro"],
+      summary: "這類可先從局部線條、脂肪型困擾與緊實需求整理諮詢方向。",
     },
     {
       key: "nasolabial_fold",
@@ -265,13 +271,13 @@ export const clinicConfig: ClinicConfig = {
       category: "energy",
       consultationGuide: {
         discoveryPrompt:
-          "想先了解您想改善的是臉部輪廓、雙下巴，還是腹部、手臂或大腿等局部線條？",
+          "您較在意雙下巴、下顎線，還是腹部、手臂或大腿哪個部位呢？",
         featureSummary:
-          "ONDA PRO 的療程特色會以局部輪廓、脂肪型困擾與緊實需求的評估方向來做討論；實際施作範圍與規劃仍需依現場評估確認。",
-        followupPrompt: "您也可以告訴我較在意的部位與方便的館別，我先幫您整理諮詢方向。",
+          "療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
+        followupPrompt: "如果有偏好的館別，也可以一併告訴我。",
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "ONDA PRO 可先理解為局部輪廓與體態管理的評估方向之一，常見會拿來討論局部線條、脂肪型困擾與緊實需求。",
+      intro: "ONDA PRO 可先用於了解局部輪廓與體態線條的規劃。",
       key: "onda_pro",
       name: "ONDA PRO",
     },
