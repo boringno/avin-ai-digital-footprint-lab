@@ -1295,6 +1295,7 @@ function getConsultationTreatment(context: ConversationContext) {
 
 function buildConsultationConcernReply(
   treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  concernKey: string,
   concernKeyword: string,
 ) {
   const guide = treatment.consultationGuide;
@@ -1302,7 +1303,14 @@ function buildConsultationConcernReply(
     return null;
   }
 
-  return `如果您想改善 ${concernKeyword}，${treatment.name} 是可以優先了解的療程選項之一。${guide.featureSummary}\n${guide.discoveryPrompt} ${guide.followupPrompt}`;
+  const discoveryPrompt =
+    concernKey === "jawline_looseness"
+      ? "您較在意脂肪感、輪廓線，還是鬆弛感呢？"
+      : concernKey === "local_contour"
+        ? "您較在意腹部、手臂或大腿哪個部位呢？"
+        : guide.discoveryPrompt;
+
+  return `${concernKeyword} 可先了解 ${treatment.name}。${discoveryPrompt}`;
 }
 
 function getConcernReply(message: string, context: ConversationContext) {
@@ -1324,7 +1332,7 @@ function getConcernReply(message: string, context: ConversationContext) {
     .find((treatment) => treatment?.consultationGuide);
   const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
   if (guidedTreatment) {
-    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedKeyword);
+    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedConcern.key, matchedKeyword);
     if (consultationReply) {
       return {
         decisionType: "treatment_intro_reply",
@@ -1621,6 +1629,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
   const approvedIntroReply = matchedTreatment.approvedContent.introReplies[0];
   const approvedBrandReply = matchedTreatment.approvedContent.brandReplies[0];
   const consultationGuide = matchedTreatment.consultationGuide;
+  const asksForTreatmentFeature = includesAnyTerm(message, ["特色", "功效", "原理", "怎麼做"]);
 
   if (isBrandQuestion) {
     if (approvedBrandReply) {
@@ -1657,7 +1666,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply}${consultationGuide ? ` ${consultationGuide.featureSummary}` : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? `${consultationGuide.discoveryPrompt} ${consultationGuide.followupPrompt}` : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+    replyText: `${approvedIntroReply}${consultationGuide && asksForTreatmentFeature ? ` ${consultationGuide.featureSummary}` : consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? consultationGuide.discoveryPrompt : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 

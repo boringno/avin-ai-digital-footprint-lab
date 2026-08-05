@@ -438,7 +438,7 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "treatment_intro_reply",
     expectedMatchedKey: "treatment_consult:onda_pro",
     message: "我想改善嘴邊肉",
-    replyIncludes: ["嘴邊肉", "ONDA", "療程諮詢"],
+    replyIncludes: ["嘴邊肉", "ONDA", "脂肪感"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",

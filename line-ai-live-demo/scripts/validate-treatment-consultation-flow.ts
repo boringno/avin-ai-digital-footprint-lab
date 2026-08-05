@@ -23,6 +23,7 @@ async function main() {
   assert(proactiveRecommendation.decisionType === "treatment_intro_reply", "T1: an ONDA concern must receive a guided treatment reply");
   assert(proactiveRecommendation.matchedKey === "treatment_consult:onda_pro", "T1: double-chin concern must proactively recommend ONDA");
   assert(proactiveRecommendation.replyText.includes("ONDA PRO"), "T1: proactive recommendation must name ONDA PRO");
+  assert(proactiveRecommendation.replyText.length <= 72, "T1: proactive recommendation must stay concise for LINE");
   assert(proactiveRecommendation.nextContext.lastReferencedTreatment === "ONDA PRO", "T1: proactive recommendation must preserve ONDA context");
 
   const contextualPrice = await route("多少錢", proactiveRecommendation.nextContext);
@@ -40,18 +41,18 @@ async function main() {
   assert(intro.decisionType === "treatment_intro_reply", "T4: ONDA introduction must stay a treatment reply");
   assert(intro.matchedKey === "treatment_intro:onda_pro", "T4: ONDA introduction must retain its treatment intent");
   assert(intro.replyText.includes("雙下巴、下顎線"), "T4: ONDA introduction must ask a needs-discovery question");
-  assert(intro.replyText.includes("療程諮詢"), "T4: ONDA introduction must include the approved feature framing");
+  assert(intro.replyText.length <= 88, "T4: ONDA introduction must stay concise for LINE");
 
   const concern = await route("我想改善雙下巴，想了解 ONDA", intro.nextContext);
   assert(concern.decisionType === "treatment_intro_reply", "T5: ONDA concern response must remain an approved treatment reply");
   assert(concern.matchedKey === "treatment_consult:onda_pro", "T5: ONDA concern must use the reusable consultation path");
   assert(concern.replyText.includes("雙下巴"), "T5: ONDA concern response must acknowledge the stated concern");
-  assert(concern.replyText.includes("療程諮詢"), "T5: ONDA concern response must include the approved feature framing");
+  assert(concern.replyText.length <= 72, "T5: ONDA concern response must stay concise for LINE");
   assert(!/保證|一定有效/.test(concern.replyText), "T5: ONDA concern response must not promise an outcome");
 
   const followup = await route("我覺得脂肪感比較明顯", concern.nextContext);
   assert(followup.matchedKey === "treatment_consult:onda_pro", "T6: ONDA follow-up must preserve the consultation path");
-  assert(followup.replyText.includes("偏好的館別"), "T6: ONDA follow-up must guide the next consultation step");
+  assert(followup.replyText.includes("腹部、手臂或大腿"), "T6: ONDA follow-up must guide the next consultation step");
 
   const price = await route("ONDA 體驗價", intro.nextContext);
   assert(price.decisionType === "pricing_auto_reply", "T7: ONDA experience-price question must use the controlled pricing path");

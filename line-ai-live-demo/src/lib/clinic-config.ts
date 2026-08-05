@@ -271,13 +271,13 @@ export const clinicConfig: ClinicConfig = {
       category: "energy",
       consultationGuide: {
         discoveryPrompt:
-          "想改善的部位是雙下巴、下顎線，還是腹部、手臂或大腿等局部線條呢？",
+          "您較在意雙下巴、下顎線，還是腹部、手臂或大腿哪個部位呢？",
         featureSummary:
           "療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
-        followupPrompt: "如果也有偏好的館別，也可以一併告訴我。",
+        followupPrompt: "如果有偏好的館別，也可以一併告訴我。",
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "ONDA PRO 是局部輪廓與體態線條的諮詢選項之一。",
+      intro: "ONDA PRO 可先用於了解局部輪廓與體態線條的規劃。",
       key: "onda_pro",
       name: "ONDA PRO",
     },
