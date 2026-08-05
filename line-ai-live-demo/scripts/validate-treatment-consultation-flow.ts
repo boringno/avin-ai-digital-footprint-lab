@@ -44,6 +44,7 @@ async function main() {
   const features = await route("ONDA 有什麼特色");
   assert(features.matchedKey === "treatment_consult:onda_pro:features", "T4: ONDA feature questions must use the concise approved answer");
   assert(features.replyText.includes("非侵入式"), "T4: ONDA feature questions must state the approved non-invasive description");
+  assert(features.replyText.includes("局部脂肪") && features.replyText.includes("肌膚緊實"), "T4: ONDA feature questions must state the supported treatment features");
   assert(features.replyText.length <= 100, "T4: ONDA feature answer must stay concise for LINE");
 
   const comfort = await route("ONDA 會痛嗎", features.nextContext);

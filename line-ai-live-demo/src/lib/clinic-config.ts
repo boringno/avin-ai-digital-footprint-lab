@@ -291,7 +291,7 @@ export const clinicConfig: ClinicConfig = {
           {
             key: "features",
             terms: ["特色", "原理", "怎麼做", "儀器"],
-            reply: "ONDA PRO 是非侵入式的局部輪廓與體態管理評估方向，會依施作部位、脂肪與緊實需求規劃。",
+            reply: "ONDA PRO 是非侵入式療程，可作為局部脂肪與肌膚緊實需求的評估方向；施作部位會由醫師依個人狀況規劃。",
             followupPrompt: "您想先了解雙下巴／嘴邊肉，還是身體局部呢？",
           },
           {
