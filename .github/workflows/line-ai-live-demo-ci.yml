@@ -50,6 +50,7 @@ jobs:
           npm run validate:workbench-presentation
           npm run validate:chat-timeline-scroll
           npm run validate:chat-timeline-behavior
+          npm run validate:treatment-consultation-flow
           npm run validate:router
           npm run validate:context
           npm run validate:conversation-guard
