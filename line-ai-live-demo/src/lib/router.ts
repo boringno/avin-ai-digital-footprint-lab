@@ -1552,7 +1552,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
       decisionType: "clinic_info_reply",
       matchedKey: "nearest_branch_clarify",
       matchedType: "guided_reply",
-      replyText: "如果您告訴我目前比較方便的城市或館別，我可以先幫您整理最近的分館資訊。",
+      replyText: "目前可安排高雄、台中、桃園與林口館。請告訴我您所在的縣市，我幫您整理較方便的館別與地址。",
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 

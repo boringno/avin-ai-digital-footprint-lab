@@ -50,6 +50,7 @@ async function main() {
     nearestClinic.matchedKey === "nearest_branch_clarify" && nearestClinic.decisionType === "clinic_info_reply",
     "A12: generic clinic wording must retain the existing nearest-branch clarification",
   );
+  assert(nearestClinic.replyText.includes("所在的縣市"), "A12: nearest-branch clarification must ask for the customer's city");
   console.log("PASS: A12 nearest-clinic wording retains the existing nearest-branch clarification");
 
   const recommendedClinic = await route("推薦的診所有哪些");
