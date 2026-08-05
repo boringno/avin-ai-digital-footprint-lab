@@ -1302,7 +1302,7 @@ function buildConsultationConcernReply(
     return null;
   }
 
-  return `了解，您提到的 ${concernKeyword} 是不少客人會想先了解的方向。${guide.discoveryPrompt}\n${treatment.intro} ${guide.featureSummary}\n${treatment.evaluationNote} ${guide.followupPrompt}`;
+  return `如果您想改善 ${concernKeyword}，${treatment.name} 是可以優先了解的療程選項之一。${guide.featureSummary}\n${guide.discoveryPrompt} ${guide.followupPrompt}`;
 }
 
 function getConcernReply(message: string, context: ConversationContext) {
@@ -1319,12 +1319,16 @@ function getConcernReply(message: string, context: ConversationContext) {
   }
 
   const consultationTreatment = getConsultationTreatment(context);
-  if (consultationTreatment) {
-    const consultationReply = buildConsultationConcernReply(consultationTreatment, matchedKeyword);
+  const recommendedConsultationTreatment = matchedConcern.recommendedTreatmentKeys
+    .map((treatmentKey) => findTreatmentByKey(treatmentKey))
+    .find((treatment) => treatment?.consultationGuide);
+  const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
+  if (guidedTreatment) {
+    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedKeyword);
     if (consultationReply) {
       return {
         decisionType: "treatment_intro_reply",
-        matchedKey: `treatment_consult:${consultationTreatment.key}`,
+        matchedKey: `treatment_consult:${guidedTreatment.key}`,
         matchedType: "guided_reply",
         replyText: consultationReply,
       } satisfies Omit<RouterDecision, "nextContext">;
@@ -1653,7 +1657,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply}${consultationGuide ? ` ${consultationGuide.featureSummary}` : ""} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? `${consultationGuide.discoveryPrompt} ${consultationGuide.followupPrompt}` : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+    replyText: `${approvedIntroReply}${consultationGuide ? ` ${consultationGuide.featureSummary}` : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? `${consultationGuide.discoveryPrompt} ${consultationGuide.followupPrompt}` : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
@@ -2055,6 +2059,11 @@ export async function routeCustomerMessage({
 
   const concernReply = getConcernReply(trimmedMessage, nextContext);
   if (concernReply) {
+    const guidedTreatmentKey = concernReply.matchedKey.match(/^treatment_consult:(.+)$/u)?.[1];
+    const guidedTreatment = guidedTreatmentKey ? findTreatmentByKey(guidedTreatmentKey) : null;
+    if (guidedTreatment) {
+      nextContext.lastReferencedTreatment = guidedTreatment.name;
+    }
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
       ? "booking_intake"
       : concernReply.matchedKey;
