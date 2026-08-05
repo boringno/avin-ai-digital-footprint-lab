@@ -88,10 +88,30 @@
 }
 
 .groupLabel {
-  color: #6a7d77;
-  font-size: 12px;
-  font-weight: 700;
+  align-items: center;
+  background: #dcefe8;
+  border: 1px solid #b9d9ca;
+  border-radius: 999px;
+  color: #0f513b;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  min-height: 34px;
+  padding: 0 10px;
   white-space: nowrap;
+}
+
+.group:nth-child(2) .groupLabel {
+  background: #e9eefb;
+  border-color: #c8d3ee;
+  color: #334d83;
+}
+
+.group:nth-child(3) .groupLabel {
+  background: #fff1dc;
+  border-color: #efd2a4;
+  color: #85551e;
 }
 
 .links {
