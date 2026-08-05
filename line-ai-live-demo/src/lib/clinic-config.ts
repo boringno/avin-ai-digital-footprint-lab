@@ -23,6 +23,11 @@ export type TreatmentConfig = {
   availableBrands?: string[];
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
+  consultationGuide?: {
+    discoveryPrompt: string;
+    featureSummary: string;
+    followupPrompt: string;
+  };
   evaluationNote: string;
   intro: string;
   key: string;
@@ -258,6 +263,13 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["onda", "onda pro", "超微波"],
       category: "energy",
+      consultationGuide: {
+        discoveryPrompt:
+          "想先了解您想改善的是臉部輪廓、雙下巴，還是腹部、手臂或大腿等局部線條？",
+        featureSummary:
+          "ONDA PRO 的療程特色會以局部輪廓、脂肪型困擾與緊實需求的評估方向來做討論；實際施作範圍與規劃仍需依現場評估確認。",
+        followupPrompt: "您也可以告訴我較在意的部位與方便的館別，我先幫您整理諮詢方向。",
+      },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
       intro: "ONDA PRO 可先理解為局部輪廓與體態管理的評估方向之一，常見會拿來討論局部線條、脂肪型困擾與緊實需求。",
       key: "onda_pro",

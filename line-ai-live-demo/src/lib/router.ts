@@ -1285,7 +1285,27 @@ function formatConcernRecommendedTreatments(concernKey: string) {
     .map((treatment) => treatment.name);
 }
 
-function getConcernReply(message: string) {
+function getConsultationTreatment(context: ConversationContext) {
+  const treatment = context.lastReferencedTreatment
+    ? clinicConfig.treatmentList.find((item) => item.name === context.lastReferencedTreatment) ?? null
+    : null;
+
+  return treatment?.consultationGuide ? treatment : null;
+}
+
+function buildConsultationConcernReply(
+  treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  concernKeyword: string,
+) {
+  const guide = treatment.consultationGuide;
+  if (!guide) {
+    return null;
+  }
+
+  return `了解，您提到的 ${concernKeyword} 是不少客人會想先了解的方向。${guide.discoveryPrompt}\n${treatment.intro} ${guide.featureSummary}\n${treatment.evaluationNote} ${guide.followupPrompt}`;
+}
+
+function getConcernReply(message: string, context: ConversationContext) {
   const matchedConcern = findConcernByMessage(message);
   if (!matchedConcern) {
     return null;
@@ -1296,6 +1316,19 @@ function getConcernReply(message: string) {
   const recommendedTreatments = formatConcernRecommendedTreatments(matchedConcern.key);
   if (recommendedTreatments.length === 0) {
     return null;
+  }
+
+  const consultationTreatment = getConsultationTreatment(context);
+  if (consultationTreatment) {
+    const consultationReply = buildConsultationConcernReply(consultationTreatment, matchedKeyword);
+    if (consultationReply) {
+      return {
+        decisionType: "treatment_intro_reply",
+        matchedKey: `treatment_consult:${consultationTreatment.key}`,
+        matchedType: "guided_reply",
+        replyText: consultationReply,
+      } satisfies Omit<RouterDecision, "nextContext">;
+    }
   }
 
   if (matchedConcern.informationalReply) {
@@ -1583,6 +1616,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     normalizeText(message).includes("什麼探頭");
   const approvedIntroReply = matchedTreatment.approvedContent.introReplies[0];
   const approvedBrandReply = matchedTreatment.approvedContent.brandReplies[0];
+  const consultationGuide = matchedTreatment.consultationGuide;
 
   if (isBrandQuestion) {
     if (approvedBrandReply) {
@@ -1619,7 +1653,30 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。`,
+    replyText: `${approvedIntroReply}${consultationGuide ? ` ${consultationGuide.featureSummary}` : ""} ${matchedTreatment.evaluationNote}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? `${consultationGuide.discoveryPrompt} ${consultationGuide.followupPrompt}` : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+  } satisfies Omit<RouterDecision, "nextContext">;
+}
+
+function getTreatmentConsultationFollowup(message: string, context: ConversationContext) {
+  if (
+    includesAnyTerm(message, [...PRICE_OR_PROMOTION_TERMS, ...APPOINTMENT_TERMS, ...BOOKING_CANCEL_TERMS, ...BOOKING_MODIFY_TERMS]) ||
+    findConcernByMessage(message) ||
+    findTreatmentByMessage(message)
+  ) {
+    return null;
+  }
+
+  const treatment = getConsultationTreatment(context);
+  if (!treatment?.consultationGuide) {
+    return null;
+  }
+
+  const guide = treatment.consultationGuide;
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}`,
+    matchedType: "guided_reply",
+    replyText: `了解，我先記下您想進一步了解 ${treatment.name}。${guide.featureSummary}\n${treatment.evaluationNote} ${guide.followupPrompt}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
@@ -1629,11 +1686,18 @@ function buildPricingReply(campaign: PricingCampaign) {
     ? ` ${normalizedFallbackMessage}`
     : "";
   const campaignLabel = `${campaign.treatment_name} 目前可參考`;
+  const branchScope = campaign.branch_scope.trim();
+  const branchScopeLabel =
+    branchScope.toLowerCase() === "all"
+      ? "全館適用。"
+      : branchScope
+        ? `適用館別：${branchScope.replace(/[|,，、/]+/g, "、")}。`
+        : "";
   const detailLabel = campaign.price_text.trim()
     ? `：${campaign.price_text}。`
     : "；詳細內容可直接參考活動圖片。";
 
-  return `${campaignLabel}${detailLabel}${fallbackSuffix}`.trim();
+  return `${campaignLabel}${detailLabel} ${branchScopeLabel}${fallbackSuffix}`.trim();
 }
 
 function getPricingReply(
@@ -1649,10 +1713,13 @@ function getPricingReply(
 
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
   const explicitPricingMatch = findExplicitPricingMatch(message, activeCampaigns);
+  const namedTreatment = findTreatmentByMessage(message);
 
   // A broad campaign question must not inherit the prior treatment context.
-  // Only a treatment named in this message itself may narrow the response.
-  if (isPromotionIntent(message) && !explicitPricingMatch && activeCampaigns.length > 0) {
+  // Only a treatment named in this message itself may narrow the response. If
+  // that treatment has no active approved campaign, keep the question on the
+  // controlled pricing-followup path rather than showing unrelated offers.
+  if (isPromotionIntent(message) && !explicitPricingMatch && !namedTreatment && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
     const carouselCards = buildPromotionCarouselCards(activeCampaigns);
     return {
@@ -1679,7 +1746,7 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  if (isPromotionIntent(message) && activeCampaigns.length > 0) {
+  if (isPromotionIntent(message) && !namedTreatment && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
     const carouselCards = buildPromotionCarouselCards(activeCampaigns);
     return {
@@ -1986,13 +2053,22 @@ export async function routeCustomerMessage({
     };
   }
 
-  const concernReply = getConcernReply(trimmedMessage);
+  const concernReply = getConcernReply(trimmedMessage, nextContext);
   if (concernReply) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
       ? "booking_intake"
       : concernReply.matchedKey;
     return {
       ...concernReply,
+      nextContext,
+    };
+  }
+
+  const treatmentConsultationFollowup = getTreatmentConsultationFollowup(trimmedMessage, nextContext);
+  if (treatmentConsultationFollowup) {
+    nextContext.lastIntent = treatmentConsultationFollowup.matchedKey;
+    return {
+      ...treatmentConsultationFollowup,
       nextContext,
     };
   }
