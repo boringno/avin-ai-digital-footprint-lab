@@ -27,6 +27,8 @@ export type ConversationContext = {
   pregnancyRiskFlag?: boolean;
   treatmentConsultation?: {
     concernKeys: string[];
+    primaryConcernKey?: string;
+    stage?: "needs_discovery" | "priority_selected";
     treatmentKey: string;
   };
   userId: string;

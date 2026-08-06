@@ -235,7 +235,7 @@ export const clinicConfig: ClinicConfig = {
     },
     {
       key: "jawline_looseness",
-      keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "下巴肉", "肉肉下巴", "下巴線條", "臉部鬆弛"],
+      keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "雙下八", "下巴肉", "肉肉下巴", "下巴線條", "臉部鬆弛"],
       recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
     },
