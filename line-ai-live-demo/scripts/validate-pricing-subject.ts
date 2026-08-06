@@ -78,6 +78,13 @@ async function main() {
   assert(!ps7.replyText.includes("16,888"), "PS7: an explicit Botox price request must not return ONDA pricing");
   console.log("PASS: PS7 explicitly named treatment overrides active consultation");
 
+  const ondaThenHours = await getActiveOndaConsultation("pricing-subject-ps9");
+  const ps9Hours = await route("高雄館營業時間", ondaThenHours.context);
+  assert(ps9Hours.matchedKey.startsWith("branch_hours:"), "PS9: an intervening clinic-info question must replace the latest intent");
+  const ps9 = await route("多少錢", ps9Hours.nextContext);
+  assertOndaPrice(ps9, "PS9");
+  console.log("PASS: PS9 active consultation survives an intervening clinic-info question for pricing");
+
   const booking = await runTurns(["我想預約皮秒"], "pricing-subject-ps8-booking");
   const ps8a = await route("多少錢", booking.context);
   assert(ps8a.matchedKey.includes("皮秒"), "PS8a: an active booking flow may retain its booking treatment as the price subject");
@@ -102,7 +109,7 @@ async function main() {
   assert(ps11.matchedKey === "pricing_followup", "PS11: expired consultation context must not answer a generic price question");
   console.log("PASS: PS11 stale treatment context expires before generic price handling");
 
-  console.log("pricing subject validation passed (11 scenarios)");
+  console.log("pricing subject validation passed (12 scenarios)");
 }
 
 main().catch((error) => {
