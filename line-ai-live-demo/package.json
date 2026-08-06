@@ -49,7 +49,8 @@
     "validate:chat-timeline-behavior": "tsx scripts/validate-chat-timeline-behavior.ts",
     "validate:reply-tone": "tsx scripts/validate-reply-tone.ts",
     "validate:booking-session-expiry": "tsx scripts/validate-booking-session-expiry.ts",
-    "validate:booking-topic-switch": "tsx scripts/validate-booking-topic-switch.ts"
+    "validate:booking-topic-switch": "tsx scripts/validate-booking-topic-switch.ts",
+    "validate:conversation-flows": "tsx scripts/validate-conversation-flows.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

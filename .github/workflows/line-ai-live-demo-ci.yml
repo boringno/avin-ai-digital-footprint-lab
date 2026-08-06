@@ -80,3 +80,4 @@ jobs:
           npm run validate:reply-tone
           npm run validate:booking-session-expiry
           npm run validate:booking-topic-switch
+          npm run validate:conversation-flows
