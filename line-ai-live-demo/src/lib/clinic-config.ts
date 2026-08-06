@@ -12,6 +12,30 @@ export type BranchConfig = {
   transportationNote: string;
 };
 
+export type TreatmentConversationPack = {
+  concernReplies?: Array<{
+    concernKey: string;
+    followupPrompt: string;
+    reply: string;
+  }>;
+  detailReplies?: Array<{
+    aspectKey: string;
+    concernKey: string;
+    followupPrompt: string;
+    reply: string;
+    terms: string[];
+  }>;
+  discoveryPrompt: string;
+  featureSummary: string;
+  followupPrompt: string;
+  quickReplies?: Array<{
+    followupPrompt: string;
+    key: string;
+    reply: string;
+    terms: string[];
+  }>;
+};
+
 export type TreatmentConfig = {
   aliases: string[];
   approvedContent: {
@@ -23,28 +47,7 @@ export type TreatmentConfig = {
   availableBrands?: string[];
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
-  consultationGuide?: {
-    concernReplies?: Array<{
-      concernKey: string;
-      followupPrompt: string;
-      reply: string;
-    }>;
-    detailReplies?: Array<{
-      concernKey: string;
-      followupPrompt: string;
-      reply: string;
-      terms: string[];
-    }>;
-    discoveryPrompt: string;
-    featureSummary: string;
-    followupPrompt: string;
-    quickReplies?: Array<{
-      followupPrompt: string;
-      key: string;
-      reply: string;
-      terms: string[];
-    }>;
-  };
+  consultationGuide?: TreatmentConversationPack;
   evaluationNote: string;
   intro: string;
   key: string;
@@ -89,8 +92,8 @@ export type ClinicConfig = {
     summary: string;
   };
   pricePolicy: {
+    browseTerms: string[];
     fallbackSummary: string;
-    inquiryAliases: string[];
     overviewPrefix: string;
   };
   concernList: ConcernConfig[];
@@ -205,29 +208,21 @@ export const clinicConfig: ClinicConfig = {
     summary: "目前可提供現金或線上轉帳；若單筆消費滿 3000 元，也可刷卡。",
   },
   pricePolicy: {
-    fallbackSummary:
-      "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
-    inquiryAliases: [
-      "活動",
-      "活動療程",
+    browseTerms: [
       "現在活動",
       "現在活動有哪些",
       "目前活動",
       "目前活動有哪些",
       "近期活動",
       "最近活動",
-      "優惠",
       "優惠有哪些",
       "有什麼優惠",
-      "優惠方案",
-      "優惠活動",
-      "方案",
-      "體驗價",
-      "折扣",
       "現在有什麼優惠",
       "最近有什麼活動",
       "現在有什麼活動",
     ],
+    fallbackSummary:
+      "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
     overviewPrefix: "目前可先參考的近期活動如下",
   },
   concernList: [
@@ -301,12 +296,22 @@ export const clinicConfig: ClinicConfig = {
         ],
         detailReplies: [
           {
+            aspectKey: "jawline_expectation",
             concernKey: "jawline_looseness",
-            terms: ["厚度", "消除", "介紹"],
+            terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
             followupPrompt:
               "✨ 實際改善幅度與安排仍會依脂肪厚度、皮膚鬆弛與下顎線狀況由醫師確認。您想先了解體驗價，還是安排免費諮詢呢？",
+          },
+          {
+            aspectKey: "jawline_intro",
+            concernKey: "jawline_looseness",
+            terms: ["介紹", "怎麼做", "原理", "特色"],
+            reply:
+              "🟢 針對雙下巴／嘴邊肉，ONDA Pro 會從局部脂肪感、下顎線與緊實需求做整體評估；療程規劃會依臉型與脂肪分布安排。",
+            followupPrompt:
+              "😊 您想先了解體驗價，還是直接安排免費諮詢讓醫師評估呢？",
           },
         ],
         discoveryPrompt:

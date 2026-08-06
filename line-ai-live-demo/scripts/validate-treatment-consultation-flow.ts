@@ -43,9 +43,9 @@ async function main() {
   staleBookingDraft.bookingDraft.treatment = "肉毒";
   staleBookingDraft.lastReferencedTreatment = "ONDA PRO";
   const priceAfterOlderBooking = await route("多少錢", staleBookingDraft);
-  assert(priceAfterOlderBooking.matchedKey === "ONDA PRO", "T3: the latest ONDA topic must win over an older Botox booking draft");
-  assert(priceAfterOlderBooking.replyText.includes("體驗價 16,888"), "T3: a conflicting stale booking draft must still return the ONDA amount");
-  assert(!priceAfterOlderBooking.replyText.includes("肉毒"), "T3: a conflicting stale booking draft must not send the Botox campaign");
+  assert(priceAfterOlderBooking.matchedKey === "pricing_followup", "T3: ambiguous stale treatment state must ask which treatment the customer means");
+  assert(!priceAfterOlderBooking.replyText.includes("16,888"), "T3: stale treatment context must not invent an ONDA price subject");
+  assert(!priceAfterOlderBooking.replyText.includes("肉毒"), "T3: stale booking data must not send the Botox campaign");
 
   const features = await route("ONDA 有什麼特色");
   assert(features.matchedKey === "treatment_consult:onda_pro:features", "T4: ONDA feature questions must use the concise approved answer");
@@ -107,7 +107,7 @@ async function main() {
   assert(!/保證|一定消除/.test(doubleChinDetail.replyText), "T9aa: a detail question must not promise a treatment outcome");
 
   const doubleChinIntroduction = await route("幫我介紹雙下巴的部分", concern.nextContext);
-  assert(doubleChinIntroduction.replyText.includes("肉感／厚度"), "T9ab: a repeated double-chin introduction request must answer instead of restarting discovery");
+  assert(doubleChinIntroduction.replyText.includes("針對雙下巴／嘴邊肉"), "T9ab: a repeated double-chin introduction request must use the unserved introduction aspect");
   assert(!doubleChinIntroduction.replyText.includes("雙下巴／嘴邊肉，還是身體局部脂肪"), "T9ab: a repeated double-chin introduction request must not repeat the first-turn choice");
 
   const armConcern = await route("蝴蝶袖想改善");

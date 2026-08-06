@@ -22,6 +22,11 @@ function createActiveBookingContext(): ConversationContext {
     },
     lastIntent: "booking_intake",
     lastReferencedTreatment: "肉毒",
+    lastSeenAt: NOW.toISOString(),
+    bookingSession: {
+      lastActiveAt: NOW.toISOString(),
+      status: "collecting",
+    },
   };
 }
 

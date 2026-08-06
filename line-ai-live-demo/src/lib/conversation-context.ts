@@ -23,6 +23,10 @@ export type BookingDraft = {
 };
 
 export type ConversationContext = {
+  bookingSession?: {
+    lastActiveAt: string;
+    status: "collecting" | "stale";
+  };
   bookingDraft: BookingDraft;
   introSent: boolean;
   lastIntent?: string;
@@ -33,6 +37,7 @@ export type ConversationContext = {
   preferredBranch?: string;
   pregnancyRiskFlag?: boolean;
   treatmentConsultation?: {
+    answeredAspectKeys?: string[];
     concernKeys: string[];
     primaryConcernKey?: string;
     stage?: "needs_discovery" | "priority_selected";
