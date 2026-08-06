@@ -24,6 +24,7 @@ import {
   type LineReplyMessage,
   type LineTextMessage,
 } from "@/lib/treatment-carousel";
+import type { ControlledTreatmentConcern, ControlledTreatmentKey } from "@/lib/ai-intent-classifier";
 
 type DecisionType =
   | "clinic_info_reply"
@@ -54,6 +55,10 @@ type RouteCustomerMessageInput = {
   now?: Date;
   runtimeAudienceKey?: string;
   runtimeContentOverlay?: RuntimeContentOverlay;
+  semanticTreatmentConsultation?: {
+    concern: ControlledTreatmentConcern;
+    treatmentKey: ControlledTreatmentKey;
+  };
   tenantId?: string;
 };
 
@@ -1398,6 +1403,28 @@ function getConcernReply(message: string, context: ConversationContext) {
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
+function getSemanticTreatmentConsultationReply(
+  consultation: NonNullable<RouteCustomerMessageInput["semanticTreatmentConsultation"]>,
+) {
+  const treatment = findTreatmentByKey(consultation.treatmentKey);
+  if (!treatment?.consultationGuide) {
+    return null;
+  }
+
+  const replyText = buildConsultationConcernReply(treatment, consultation.concern, treatment.name);
+  if (!replyText) {
+    return null;
+  }
+
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}:semantic:${consultation.concern}`,
+    matchedType: "guided_reply",
+    replyText,
+    treatment,
+  } as const;
+}
+
 function getBranchListReply() {
   const branches = listActiveBranches();
   const branchNames = branches.map((branch) => branch.name).join("、");
@@ -1944,6 +1971,7 @@ export async function routeCustomerMessage({
   now,
   runtimeAudienceKey = "",
   runtimeContentOverlay,
+  semanticTreatmentConsultation,
   tenantId,
 }: RouteCustomerMessageInput): Promise<RouterDecision> {
   const trimmedMessage = message.trim();
@@ -2129,6 +2157,21 @@ export async function routeCustomerMessage({
       ...concernReply,
       nextContext,
     };
+  }
+
+  if (semanticTreatmentConsultation) {
+    const semanticTreatmentReply = getSemanticTreatmentConsultationReply(semanticTreatmentConsultation);
+    if (semanticTreatmentReply) {
+      nextContext.lastReferencedTreatment = semanticTreatmentReply.treatment.name;
+      nextContext.lastIntent = semanticTreatmentReply.matchedKey;
+      return {
+        decisionType: semanticTreatmentReply.decisionType,
+        matchedKey: semanticTreatmentReply.matchedKey,
+        matchedType: semanticTreatmentReply.matchedType,
+        nextContext,
+        replyText: semanticTreatmentReply.replyText,
+      };
+    }
   }
 
   const treatmentConsultationFollowup = getTreatmentConsultationFollowup(trimmedMessage, nextContext);

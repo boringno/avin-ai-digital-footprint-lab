@@ -46,6 +46,7 @@ jobs:
           npm run validate:group-source-isolation
           npm run validate:ai-fallback-boundary
           npm run validate:ai-intent-classifier
+          npm run validate:onda-semantic-routing
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation
           npm run validate:chat-timeline-scroll

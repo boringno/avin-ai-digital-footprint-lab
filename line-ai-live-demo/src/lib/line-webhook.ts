@@ -386,6 +386,25 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         },
       };
       replyText = scheduleDecision.replyText;
+    } else if (
+      controlledIntent &&
+      isHighConfidenceControlledIntent(controlledIntent, config.openAiIntentClassifierMinConfidence) &&
+      controlledIntent.intent === "treatment_consultation" &&
+      controlledIntent.treatmentKey &&
+      controlledIntent.concern
+    ) {
+      routedDecision = await routeCustomerMessage({
+        conversationContext: existingContext,
+        includePending,
+        message: event.message.text ?? "",
+        now: currentTime,
+        runtimeAudienceKey: sourceUserId,
+        semanticTreatmentConsultation: {
+          concern: controlledIntent.concern,
+          treatmentKey: controlledIntent.treatmentKey,
+        },
+      });
+      replyText = routedDecision.replyText;
     }
   }
 
