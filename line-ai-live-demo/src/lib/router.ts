@@ -1447,6 +1447,7 @@ function buildConsultationConcernReply(
   concernKey: string,
   concernKeyword: string,
   context: ConversationContext,
+  message?: string,
 ) {
   const guide = treatment.consultationGuide;
   if (!guide) {
@@ -1455,6 +1456,14 @@ function buildConsultationConcernReply(
 
   const previousConcernKeys = getActiveTreatmentConsultationConcernKeys(context, treatment.key);
   if (previousConcernKeys.includes(concernKey)) {
+    const detailMessage = message ?? "";
+    const detailReply = guide.detailReplies?.find(
+      (item) => item.concernKey === concernKey && includesAnyTerm(detailMessage, item.terms),
+    );
+    if (detailReply) {
+      return `${detailReply.reply}\n${detailReply.followupPrompt}`;
+    }
+
     return `了解😊 已記下您也在意 ${concernKeyword}。您目前最想先改善雙下巴／嘴邊肉，還是身體局部脂肪呢？`;
   }
 
@@ -1597,7 +1606,13 @@ function getConcernReply(message: string, context: ConversationContext) {
     .find((treatment) => treatment?.consultationGuide);
   const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
   if (guidedTreatment) {
-    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedConcern.key, matchedKeyword, context);
+    const consultationReply = buildConsultationConcernReply(
+      guidedTreatment,
+      matchedConcern.key,
+      matchedKeyword,
+      context,
+      message,
+    );
     if (consultationReply) {
       return {
         decisionType: "treatment_intro_reply",

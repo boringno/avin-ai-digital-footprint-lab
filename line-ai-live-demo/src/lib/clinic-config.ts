@@ -29,6 +29,12 @@ export type TreatmentConfig = {
       followupPrompt: string;
       reply: string;
     }>;
+    detailReplies?: Array<{
+      concernKey: string;
+      followupPrompt: string;
+      reply: string;
+      terms: string[];
+    }>;
     discoveryPrompt: string;
     featureSummary: string;
     followupPrompt: string;
@@ -291,6 +297,16 @@ export const clinicConfig: ClinicConfig = {
             concernKey: "local_contour",
             reply: "🔥 手臂、腹部或大腿等局部脂肪困擾，也可先從 ONDA Pro 的體態與緊實需求評估開始。\n❄️ 實際施作部位仍會依脂肪分布與個人狀況確認。",
             followupPrompt: "您最想改善哪個部位呢？😊",
+          },
+        ],
+        detailReplies: [
+          {
+            concernKey: "jawline_looseness",
+            terms: ["厚度", "消除", "介紹"],
+            reply:
+              "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
+            followupPrompt:
+              "✨ 實際改善幅度與安排仍會依脂肪厚度、皮膚鬆弛與下顎線狀況由醫師確認。您想先了解體驗價，還是安排免費諮詢呢？",
           },
         ],
         discoveryPrompt:

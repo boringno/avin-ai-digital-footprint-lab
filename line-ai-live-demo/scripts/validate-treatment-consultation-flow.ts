@@ -99,6 +99,17 @@ async function main() {
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");
   assert(naturalLanguageConcern.replyText.includes("肉肉的雙下巴"), "T9a: natural double-chin wording must receive a specific reply");
 
+  const doubleChinDetail = await route("我在意厚度，這個能消除雙下巴嗎？", concern.nextContext);
+  assert(doubleChinDetail.matchedKey === "treatment_consult:onda_pro", "T9aa: a detail question must stay in the ONDA consultation path");
+  assert(doubleChinDetail.replyText.includes("肉感／厚度"), "T9aa: a double-chin thickness question must answer the stated concern");
+  assert(doubleChinDetail.replyText.includes("體驗價") && doubleChinDetail.replyText.includes("免費諮詢"), "T9aa: a detail question must offer one useful next step");
+  assert(!doubleChinDetail.replyText.includes("雙下巴／嘴邊肉，還是身體局部脂肪"), "T9aa: a detail question must not repeat the first-turn choice");
+  assert(!/保證|一定消除/.test(doubleChinDetail.replyText), "T9aa: a detail question must not promise a treatment outcome");
+
+  const doubleChinIntroduction = await route("幫我介紹雙下巴的部分", concern.nextContext);
+  assert(doubleChinIntroduction.replyText.includes("肉感／厚度"), "T9ab: a repeated double-chin introduction request must answer instead of restarting discovery");
+  assert(!doubleChinIntroduction.replyText.includes("雙下巴／嘴邊肉，還是身體局部脂肪"), "T9ab: a repeated double-chin introduction request must not repeat the first-turn choice");
+
   const armConcern = await route("蝴蝶袖想改善");
   assert(armConcern.matchedKey === "treatment_consult:onda_pro", "T9b: natural arm-fat wording must use the ONDA scenario reply");
   assert(armConcern.replyText.includes("體態與緊實"), "T9b: natural arm-fat wording must receive a specific reply");
@@ -161,7 +172,7 @@ async function main() {
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
   assert(guarantee.matchedKey === "effect_guarantee_request", "T14: outcome guarantee must still route to human handoff");
 
-  console.log("treatment consultation flow validation passed (27 checks)");
+  console.log("treatment consultation flow validation passed (34 checks)");
 }
 
 main().catch((error) => {
