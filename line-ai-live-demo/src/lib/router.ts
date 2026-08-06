@@ -1336,6 +1336,11 @@ function buildConsultationConcernReply(
     return null;
   }
 
+  const configuredConcernReply = guide.concernReplies?.find((item) => item.concernKey === concernKey);
+  if (configuredConcernReply) {
+    return `${configuredConcernReply.reply}\n${configuredConcernReply.followupPrompt}`;
+  }
+
   const discoveryPrompt =
     concernKey === "jawline_looseness"
       ? "您較在意脂肪感、輪廓線，還是鬆弛感呢？"
