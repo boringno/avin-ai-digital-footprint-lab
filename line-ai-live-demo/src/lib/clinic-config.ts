@@ -12,6 +12,30 @@ export type BranchConfig = {
   transportationNote: string;
 };
 
+export type TreatmentConversationPack = {
+  concernReplies?: Array<{
+    concernKey: string;
+    followupPrompt: string;
+    reply: string;
+  }>;
+  detailReplies?: Array<{
+    aspectKey: string;
+    concernKey: string;
+    followupPrompt: string;
+    reply: string;
+    terms: string[];
+  }>;
+  discoveryPrompt: string;
+  featureSummary: string;
+  followupPrompt: string;
+  quickReplies?: Array<{
+    followupPrompt: string;
+    key: string;
+    reply: string;
+    terms: string[];
+  }>;
+};
+
 export type TreatmentConfig = {
   aliases: string[];
   approvedContent: {
@@ -23,28 +47,7 @@ export type TreatmentConfig = {
   availableBrands?: string[];
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
-  consultationGuide?: {
-    concernReplies?: Array<{
-      concernKey: string;
-      followupPrompt: string;
-      reply: string;
-    }>;
-    detailReplies?: Array<{
-      concernKey: string;
-      followupPrompt: string;
-      reply: string;
-      terms: string[];
-    }>;
-    discoveryPrompt: string;
-    featureSummary: string;
-    followupPrompt: string;
-    quickReplies?: Array<{
-      followupPrompt: string;
-      key: string;
-      reply: string;
-      terms: string[];
-    }>;
-  };
+  consultationGuide?: TreatmentConversationPack;
   evaluationNote: string;
   intro: string;
   key: string;
@@ -293,12 +296,22 @@ export const clinicConfig: ClinicConfig = {
         ],
         detailReplies: [
           {
+            aspectKey: "jawline_expectation",
             concernKey: "jawline_looseness",
-            terms: ["厚度", "消除", "介紹"],
+            terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
             followupPrompt:
               "✨ 實際改善幅度與安排仍會依脂肪厚度、皮膚鬆弛與下顎線狀況由醫師確認。您想先了解體驗價，還是安排免費諮詢呢？",
+          },
+          {
+            aspectKey: "jawline_intro",
+            concernKey: "jawline_looseness",
+            terms: ["介紹", "怎麼做", "原理", "特色"],
+            reply:
+              "🟢 針對雙下巴／嘴邊肉，ONDA Pro 會從局部脂肪感、下顎線與緊實需求做整體評估；療程規劃會依臉型與脂肪分布安排。",
+            followupPrompt:
+              "😊 您想先了解體驗價，還是直接安排免費諮詢讓醫師評估呢？",
           },
         ],
         discoveryPrompt:

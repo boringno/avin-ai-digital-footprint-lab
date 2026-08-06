@@ -83,3 +83,4 @@ jobs:
           npm run validate:conversation-flows
           npm run validate:conversation-sessions
           npm run validate:pricing-subject
+          npm run validate:treatment-packs

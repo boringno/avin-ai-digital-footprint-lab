@@ -484,7 +484,9 @@ function isActiveBookingConversation(context: ConversationContext | undefined, n
 
   const activityAt = getBookingSessionActivityAt(context);
   if (!activityAt) {
-    return false;
+    // Preserve compatibility for legacy persisted contexts that predate the
+    // session timestamp. New sessions always receive an explicit timestamp.
+    return true;
   }
 
   const activityTime = new Date(activityAt).getTime();
@@ -497,7 +499,13 @@ function clearStaleBookingDraft(context: ConversationContext, now: Date) {
   }
 
   const activityAt = getBookingSessionActivityAt(context);
-  const activityTime = activityAt ? new Date(activityAt).getTime() : Number.NaN;
+  if (!activityAt) {
+    // Legacy contexts created before timestamps were persisted cannot be
+    // reliably dated, so preserve their established behavior for this turn.
+    return;
+  }
+
+  const activityTime = new Date(activityAt).getTime();
   if (Number.isFinite(activityTime) && now.getTime() - activityTime <= BOOKING_SESSION_MS) {
     return;
   }
@@ -1462,27 +1470,59 @@ function buildConsultationConcernReply(
     return null;
   }
 
-  const previousConcernKeys = getActiveTreatmentConsultationConcernKeys(context, treatment.key);
+  const activeConsultation = getActiveTreatmentConsultation(context, treatment.key);
+  const previousConcernKeys = activeConsultation?.concernKeys ?? [];
+  const answeredAspectKeys = activeConsultation?.answeredAspectKeys ?? [];
+  const detailMessage = message ?? "";
+  const matchingDetailReplies = guide.detailReplies?.filter(
+    (item) => item.concernKey === concernKey && includesAnyTerm(detailMessage, item.terms),
+  ) ?? [];
+  const nextDetailReply = matchingDetailReplies.find(
+    (item) => !answeredAspectKeys.includes(`detail:${item.aspectKey}`),
+  );
+
+  if (nextDetailReply) {
+    return {
+      aspectKey: `detail:${nextDetailReply.aspectKey}`,
+      replyText: `${nextDetailReply.reply}\n${nextDetailReply.followupPrompt}`,
+    };
+  }
+
   if (previousConcernKeys.includes(concernKey)) {
-    const detailMessage = message ?? "";
-    const detailReply = guide.detailReplies?.find(
-      (item) => item.concernKey === concernKey && includesAnyTerm(detailMessage, item.terms),
-    );
-    if (detailReply) {
-      return `${detailReply.reply}\n${detailReply.followupPrompt}`;
+    if (matchingDetailReplies.length > 0) {
+      return {
+        aspectKey: "followup:consultation",
+        replyText: `😊 ${treatment.name} 關於 ${concernKeyword} 的重點已先為您整理。您想接著了解體驗價，還是安排免費諮詢呢？`,
+      };
     }
 
-    return `了解😊 已記下您也在意 ${concernKeyword}。您目前最想先改善雙下巴／嘴邊肉，還是身體局部脂肪呢？`;
+    if (activeConsultation?.primaryConcernKey === concernKey) {
+      return {
+        aspectKey: "followup:primary",
+        replyText: `了解😊 我們先以 ${concernKeyword} 為主安排。您想接著了解這個部位的體驗價，還是安排免費諮詢呢？`,
+      };
+    }
+
+    return {
+      aspectKey: "followup:priority",
+      replyText: `了解😊 已記下您也在意 ${concernKeyword}。您想先以哪個部位為主，我再幫您整理 ${treatment.name} 的諮詢方向？`,
+    };
   }
 
   if (previousConcernKeys.length > 0) {
     const previousConcernLabel = formatTreatmentConsultationConcerns(previousConcernKeys);
-    return `了解😊 已記下您在意 ${previousConcernLabel}，也想改善 ${concernKeyword}。ONDA Pro 可依臉部與身體局部需求分開評估；您想先以哪個部位為主呢？`;
+    return {
+      aspectKey: `concern:${concernKey}:overview`,
+      replyText: `了解😊 已記下您在意 ${previousConcernLabel}，也想改善 ${concernKeyword}。${treatment.name} 可依不同部位需求分開評估；您想先以哪個部位為主呢？`,
+    };
   }
 
   const configuredConcernReply = guide.concernReplies?.find((item) => item.concernKey === concernKey);
   if (configuredConcernReply) {
-    return `${configuredConcernReply.reply}\n${configuredConcernReply.followupPrompt}`;
+    return {
+      aspectKey: `concern:${concernKey}:overview`,
+      replyText: `${configuredConcernReply.reply}\n${configuredConcernReply.followupPrompt}`,
+    };
   }
 
   const discoveryPrompt =
@@ -1492,7 +1532,10 @@ function buildConsultationConcernReply(
         ? "您較在意腹部、手臂或大腿哪個部位呢？"
         : guide.discoveryPrompt;
 
-  return `${concernKeyword} 可先了解 ${treatment.name}。${discoveryPrompt}`;
+  return {
+    aspectKey: `concern:${concernKey}:overview`,
+    replyText: `${concernKeyword} 可先了解 ${treatment.name}。${discoveryPrompt}`,
+  };
 }
 
 function getActiveTreatmentConsultationConcernKeys(context: ConversationContext, treatmentKey: string) {
@@ -1511,6 +1554,9 @@ function getActiveTreatmentConsultation(context: ConversationContext, treatmentK
 
   return {
     ...context.treatmentConsultation,
+    answeredAspectKeys: Array.isArray(context.treatmentConsultation.answeredAspectKeys)
+      ? context.treatmentConsultation.answeredAspectKeys.filter((aspectKey) => typeof aspectKey === "string")
+      : [],
     concernKeys: Array.isArray(context.treatmentConsultation.concernKeys)
       ? context.treatmentConsultation.concernKeys.filter((concernKey) => typeof concernKey === "string")
       : [],
@@ -1533,10 +1579,19 @@ function formatTreatmentConsultationConcerns(concernKeys: string[]) {
   return labels.join("、") || "局部輪廓需求";
 }
 
-function recordTreatmentConsultationConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
+function recordTreatmentConsultationConcern(
+  context: ConversationContext,
+  treatmentKey: string,
+  concernKey: string,
+  answeredAspectKey?: string,
+) {
   const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
   const previousConcernKeys = activeConsultation?.concernKeys ?? [];
+  const previousAnsweredAspectKeys = activeConsultation?.answeredAspectKeys ?? [];
   context.treatmentConsultation = {
+    answeredAspectKeys: answeredAspectKey
+      ? Array.from(new Set([...previousAnsweredAspectKeys, answeredAspectKey]))
+      : previousAnsweredAspectKeys,
     concernKeys: Array.from(new Set([...previousConcernKeys, concernKey])),
     primaryConcernKey: activeConsultation?.primaryConcernKey,
     stage: activeConsultation?.stage ?? "needs_discovery",
@@ -1547,6 +1602,7 @@ function recordTreatmentConsultationConcern(context: ConversationContext, treatm
 function setTreatmentConsultationPrimaryConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
   const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
   context.treatmentConsultation = {
+    answeredAspectKeys: activeConsultation?.answeredAspectKeys ?? [],
     concernKeys: Array.from(new Set([...(activeConsultation?.concernKeys ?? []), concernKey])),
     primaryConcernKey: concernKey,
     stage: "priority_selected",
@@ -1596,7 +1652,11 @@ function getTreatmentConsultationPriorityReply(message: string, context: Convers
   } as const;
 }
 
-function getConcernReply(message: string, context: ConversationContext) {
+type ConsultationConcernDecision = Omit<RouterDecision, "nextContext"> & {
+  consultationAspectKey?: string;
+};
+
+function getConcernReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
   const matchedConcern = findConcernByMessage(message);
   if (!matchedConcern) {
     return null;
@@ -1626,8 +1686,9 @@ function getConcernReply(message: string, context: ConversationContext) {
         decisionType: "treatment_intro_reply",
         matchedKey: `treatment_consult:${guidedTreatment.key}`,
         matchedType: "guided_reply",
-        replyText: consultationReply,
-      } satisfies Omit<RouterDecision, "nextContext">;
+        replyText: consultationReply.replyText,
+        consultationAspectKey: consultationReply.aspectKey,
+      } satisfies ConsultationConcernDecision;
     }
   }
 
@@ -1673,8 +1734,8 @@ function getSemanticTreatmentConsultationReply(
     return null;
   }
 
-  const replyText = buildConsultationConcernReply(treatment, consultation.concern, treatment.name, context);
-  if (!replyText) {
+  const consultationReply = buildConsultationConcernReply(treatment, consultation.concern, treatment.name, context);
+  if (!consultationReply) {
     return null;
   }
 
@@ -1682,7 +1743,8 @@ function getSemanticTreatmentConsultationReply(
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_consult:${treatment.key}:semantic:${consultation.concern}`,
     matchedType: "guided_reply",
-    replyText,
+    consultationAspectKey: consultationReply.aspectKey,
+    replyText: consultationReply.replyText,
     treatment,
   } as const;
 }
@@ -2444,14 +2506,20 @@ export async function routeCustomerMessage({
       nextContext.lastReferencedTreatment = guidedTreatment.name;
       const matchedConcern = findConcernByMessage(trimmedMessage);
       if (matchedConcern) {
-        recordTreatmentConsultationConcern(nextContext, guidedTreatment.key, matchedConcern.key);
+        recordTreatmentConsultationConcern(
+          nextContext,
+          guidedTreatment.key,
+          matchedConcern.key,
+          concernReply.consultationAspectKey,
+        );
       }
     }
     nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : concernReply.matchedKey;
+    const { consultationAspectKey: _consultationAspectKey, ...decision } = concernReply;
     return {
-      ...concernReply,
+      ...decision,
       nextContext,
     };
   }
@@ -2464,6 +2532,7 @@ export async function routeCustomerMessage({
         nextContext,
         semanticTreatmentReply.treatment.key,
         semanticTreatmentConsultation.concern,
+        semanticTreatmentReply.consultationAspectKey,
       );
       nextContext.lastIntent = semanticTreatmentReply.matchedKey;
       return {
