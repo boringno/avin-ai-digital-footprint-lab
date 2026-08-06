@@ -9,12 +9,16 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
-async function route(message: string, conversationContext = createEmptyConversationContext("onda-consultation-test")) {
+async function route(
+  message: string,
+  conversationContext = createEmptyConversationContext("onda-consultation-test"),
+  now = NOW,
+) {
   return routeCustomerMessage({
     conversationContext,
     includePending: false,
     message,
-    now: NOW,
+    now,
   });
 }
 
@@ -109,6 +113,25 @@ async function main() {
   assert(primaryConcern.replyText.includes("先以 雙下巴") && primaryConcern.replyText.includes("肉肉厚度"), "T10d: an explicit primary concern must receive the next jawline-detail question");
   assert(primaryConcern.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T10d: the selected primary concern must persist in conversation state");
 
+  const staleConsultationContext = {
+    ...primaryConcern.nextContext,
+    lastSeenAt: new Date(NOW.getTime() - 21 * 60 * 1000).toISOString(),
+  };
+  const freshStartAfterIdle = await route("我想改善嘴邊肉", staleConsultationContext, NOW);
+  assert(freshStartAfterIdle.replyText.includes("可再依臉型"), "T10e: an expired ONDA consultation must restart with the first-turn reply");
+  assert(!freshStartAfterIdle.replyText.includes("已記下"), "T10e: an expired ONDA consultation must not inherit stale needs");
+
+  const partialConsultationContext = {
+    ...primaryConcern.nextContext,
+    treatmentConsultation: {
+      concernKeys: ["local_contour"],
+      treatmentKey: "onda_pro",
+    },
+  };
+  const primaryAfterPartialState = await route("主要是雙下巴", partialConsultationContext);
+  assert(primaryAfterPartialState.matchedKey === "treatment_consult:onda_pro:primary:jawline_looseness", "T10f: an explicit primary concern must work even when earlier concern state is incomplete");
+  assert(primaryAfterPartialState.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T10f: an explicit primary concern must repair incomplete consultation state");
+
   const price = await route("ONDA 體驗價", intro.nextContext);
   assert(price.decisionType === "pricing_auto_reply", "T11: ONDA experience-price question must use the controlled pricing path");
   assert(price.matchedKey === "ONDA PRO", "T11: ONDA experience price must use the approved ONDA campaign");
@@ -124,7 +147,7 @@ async function main() {
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
   assert(guarantee.matchedKey === "effect_guarantee_request", "T14: outcome guarantee must still route to human handoff");
 
-  console.log("treatment consultation flow validation passed (20 checks)");
+  console.log("treatment consultation flow validation passed (24 checks)");
 }
 
 main().catch((error) => {
