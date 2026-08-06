@@ -120,6 +120,7 @@ const SUPPORT_HOURS_TERMS = ["真人客服", "客服時間", "客服幾點", "�
 const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
 const EFFECT_GUARANTEE_TERMS = ["保證有效", "一定有效", "保證改善", "一定會改善", "保證有感", "一定有感", "效果保證"];
 const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
+const TREATMENT_CONSULTATION_SESSION_MS = 20 * 60 * 1000;
 const TREATMENT_DISCOVERY_TERMS = [
   "療程",
   "功效",
@@ -485,6 +486,23 @@ function matchPricing(
   }
 
   return null;
+}
+
+function clearStaleTreatmentConsultation(context: ConversationContext, now: Date) {
+  if (!context.treatmentConsultation || !context.lastSeenAt) {
+    return;
+  }
+
+  const lastSeenAt = new Date(context.lastSeenAt).getTime();
+  if (!Number.isFinite(lastSeenAt) || now.getTime() - lastSeenAt <= TREATMENT_CONSULTATION_SESSION_MS) {
+    return;
+  }
+
+  delete context.treatmentConsultation;
+  if (context.lastIntent?.startsWith("treatment_consult:")) {
+    delete context.lastIntent;
+  }
+  delete context.lastReferencedTreatment;
 }
 
 function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
@@ -1455,11 +1473,6 @@ function getTreatmentConsultationPriorityReply(message: string, context: Convers
     return null;
   }
 
-  const activeConsultation = getActiveTreatmentConsultation(context, treatment.key);
-  if (!activeConsultation || !activeConsultation.concernKeys.includes(matchedConcern.key)) {
-    return null;
-  }
-
   return {
     concernKey: matchedConcern.key,
     decisionType: "treatment_intro_reply",
@@ -2111,6 +2124,8 @@ export async function routeCustomerMessage({
   const currentTime = now ?? new Date();
   const previousContext = cloneContext(conversationContext);
   const nextContext = cloneContext(conversationContext);
+  clearStaleTreatmentConsultation(previousContext, currentTime);
+  clearStaleTreatmentConsultation(nextContext, currentTime);
   nextContext.lastSeenAt = currentTime.toISOString();
 
   if (!trimmedMessage) {
