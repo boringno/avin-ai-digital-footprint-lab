@@ -47,7 +47,8 @@
     "validate:workbench-presentation": "tsx scripts/validate-workbench-presentation.ts",
     "validate:chat-timeline-scroll": "tsx scripts/validate-chat-timeline-scroll.ts",
     "validate:chat-timeline-behavior": "tsx scripts/validate-chat-timeline-behavior.ts",
-    "validate:reply-tone": "tsx scripts/validate-reply-tone.ts"
+    "validate:reply-tone": "tsx scripts/validate-reply-tone.ts",
+    "validate:booking-session-expiry": "tsx scripts/validate-booking-session-expiry.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

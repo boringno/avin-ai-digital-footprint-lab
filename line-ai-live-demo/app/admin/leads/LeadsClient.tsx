@@ -84,6 +84,7 @@ export function LeadsClient({
   async function updateLead(
     leadId: string,
     payload: {
+      appointment_at?: string | null;
       assign_to_self?: boolean;
       booking_status?: BookingStatusKey;
       notes?: string;
@@ -192,6 +193,7 @@ export function LeadsClient({
                 key={lead.id}
                 lead={lead}
                 onAssignSelf={() => updateLead(lead.id, { assign_to_self: true })}
+                onSaveAppointmentAt={(appointmentAt) => updateLead(lead.id, { appointment_at: appointmentAt })}
                 onSaveNotes={(notes) => updateLead(lead.id, { notes })}
                 onStatusChange={(bookingStatus) => updateLead(lead.id, { booking_status: bookingStatus })}
               />
@@ -219,6 +221,7 @@ export function LeadsClient({
                       key={lead.id}
                       lead={lead}
                       onAssignSelf={() => updateLead(lead.id, { assign_to_self: true })}
+                      onSaveAppointmentAt={(appointmentAt) => updateLead(lead.id, { appointment_at: appointmentAt })}
                       onSaveNotes={(notes) => updateLead(lead.id, { notes })}
                       onStatusChange={(bookingStatus) => updateLead(lead.id, { booking_status: bookingStatus })}
                     />
@@ -239,6 +242,7 @@ function LeadCard({
   isSaving,
   lead,
   onAssignSelf,
+  onSaveAppointmentAt,
   onSaveNotes,
   onStatusChange,
 }: {
@@ -247,10 +251,12 @@ function LeadCard({
   isSaving: boolean;
   lead: AdminLeadCard;
   onAssignSelf: () => Promise<void>;
+  onSaveAppointmentAt: (appointmentAt: string | null) => Promise<void>;
   onSaveNotes: (notes: string) => Promise<void>;
   onStatusChange: (status: BookingStatusKey) => Promise<void>;
 }) {
   const [notesDraft, setNotesDraft] = useState(lead.notes);
+  const [appointmentAtDraft, setAppointmentAtDraft] = useState(toDateTimeLocalValue(lead.appointmentAt));
 
   return (
     <article style={cardStyle}>
@@ -295,6 +301,20 @@ function LeadCard({
         ))}
       </select>
 
+      <label style={{ color: "#31423d", display: "grid", fontSize: 13, gap: 5 }}>
+        已確認預約時間
+        <input
+          disabled={!canEdit || isSaving}
+          onChange={(event) => setAppointmentAtDraft(event.target.value)}
+          style={inputStyle}
+          type="datetime-local"
+          value={appointmentAtDraft}
+        />
+        <span style={{ color: "#60736c", fontSize: 12, lineHeight: 1.45 }}>
+          時間過後，客人下次訊息會開啟新的預約流程；不會自動標示已到店。
+        </span>
+      </label>
+
       <textarea
         disabled={!canEdit || isSaving}
         onChange={(event) => setNotesDraft(event.target.value)}
@@ -305,6 +325,14 @@ function LeadCard({
       />
 
       <div style={{ display: "flex", flexDirection: isCompact ? "column" : "row", flexWrap: "wrap", gap: 8 }}>
+        <button
+          disabled={!canEdit || isSaving || appointmentAtDraft === toDateTimeLocalValue(lead.appointmentAt)}
+          onClick={() => void onSaveAppointmentAt(appointmentAtDraft ? new Date(appointmentAtDraft).toISOString() : null)}
+          style={ghostButtonStyle}
+          type="button"
+        >
+          儲存預約時間
+        </button>
         <button disabled={!canEdit || isSaving || notesDraft === lead.notes} onClick={() => void onSaveNotes(notesDraft)} style={primaryButtonStyle} type="button">
           {isSaving ? "處理中..." : "儲存備註"}
         </button>
@@ -332,6 +360,20 @@ function formatTime(value: string) {
     minute: "2-digit",
     month: "2-digit",
   }).format(new Date(value));
+}
+
+function toDateTimeLocalValue(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
 }
 
 function hasDistinctCustomerName(customerName: string | null, displayName: string) {

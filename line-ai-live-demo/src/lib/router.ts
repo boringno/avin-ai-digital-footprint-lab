@@ -201,6 +201,7 @@ function cloneContext(context: ConversationContext | undefined) {
   return {
     ...baseContext,
     bookingDraft: {
+      appointmentAt: bookingDraft.appointmentAt,
       branch: bookingDraft.branch,
       isFirstVisit: bookingDraft.isFirstVisit,
       name: bookingDraft.name,
@@ -503,6 +504,29 @@ function clearStaleTreatmentConsultation(context: ConversationContext, now: Date
     delete context.lastIntent;
   }
   delete context.lastReferencedTreatment;
+}
+
+function clearExpiredBookingSession(context: ConversationContext, now: Date) {
+  const appointmentAt = context.bookingDraft.appointmentAt;
+  if (!appointmentAt) {
+    return;
+  }
+
+  const appointmentTime = new Date(appointmentAt).getTime();
+  if (!Number.isFinite(appointmentTime) || now.getTime() <= appointmentTime) {
+    return;
+  }
+
+  // This is not an arrival/no-show decision. Historical lead data stays in the
+  // database, while the next LINE enquiry begins with a fresh booking draft.
+  context.bookingDraft = createEmptyConversationContext("").bookingDraft;
+  delete context.lastIntent;
+  delete context.lastReferencedBranch;
+  delete context.lastReferencedTreatment;
+  delete context.locationPreference;
+  delete context.preferredBranch;
+  delete context.pregnancyRiskFlag;
+  delete context.treatmentConsultation;
 }
 
 function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
@@ -2141,6 +2165,8 @@ export async function routeCustomerMessage({
   const currentTime = now ?? new Date();
   const previousContext = cloneContext(conversationContext);
   const nextContext = cloneContext(conversationContext);
+  clearExpiredBookingSession(previousContext, currentTime);
+  clearExpiredBookingSession(nextContext, currentTime);
   clearStaleTreatmentConsultation(previousContext, currentTime);
   clearStaleTreatmentConsultation(nextContext, currentTime);
   nextContext.lastSeenAt = currentTime.toISOString();
