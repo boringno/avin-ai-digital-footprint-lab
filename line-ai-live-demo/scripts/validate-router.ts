@@ -443,16 +443,16 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "concern:dynamic_wrinkles",
+    expectedMatchedKey: "treatment_consult:botox",
     message: "我想解決魚尾紋",
     replyIncludes: ["魚尾紋", "肉毒", "動態紋路", "醫師現場評估"],
     replyExcludes: ["我可以先幫您整理館別資訊"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "concern:pores_texture",
+    expectedMatchedKey: "treatment_consult:pico",
     message: "我想改善膚質",
-    replyIncludes: ["膚質", "醫師評估"],
+    replyIncludes: ["膚質", "醫師現場評估"],
   },
   {
     conversationContext: {

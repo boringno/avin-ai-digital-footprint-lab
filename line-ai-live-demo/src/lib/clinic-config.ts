@@ -357,6 +357,58 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["探索皮秒", "皮秒", "蜂巢", "蜂巢皮秒"],
       category: "laser",
+      consultationGuide: {
+        concernReplies: [
+          {
+            concernKey: "pores_texture",
+            reply: "🌿 如果您在意毛孔、膚質粗糙或粉刺，探索皮秒可作為色素、膚質與整體膚況管理的評估方向；實際安排仍需醫師現場評估。",
+            followupPrompt: "您較在意毛孔粗大、膚色不均，還是痘疤／凹疤呢？😊",
+          },
+          {
+            concernKey: "acne_scar",
+            reply: "🌿 若主要困擾是痘疤、痘坑或凹疤，探索皮秒可先從膚況與痘疤深淺的評估方向了解。",
+            followupPrompt: "您是較在意凹疤、痘印，還是整體膚質不平整呢？😊",
+          },
+          {
+            concernKey: "dullness_brightening",
+            reply: "✨ 如果在意暗沉、膚色不均或想讓氣色更均勻，探索皮秒可作為整體膚況管理的評估方向。",
+            followupPrompt: "您比較在意暗沉、斑點，還是膚色不均呢？😊",
+          },
+        ],
+        detailReplies: [
+          {
+            aspectKey: "skin_intro",
+            concernKey: "pores_texture",
+            terms: ["介紹", "怎麼做", "原理", "特色"],
+            reply: "🟢 探索皮秒會依色素、膚質與整體膚況需求規劃；是否搭配蜂巢等安排，仍會由醫師依現場膚況判斷。",
+            followupPrompt: "您想先從毛孔／膚質，還是痘疤／色素問題開始了解呢？😊",
+          },
+          {
+            aspectKey: "scar_evaluation",
+            concernKey: "acne_scar",
+            terms: ["效果", "改善嗎", "適合", "可以做"],
+            reply: "🌿 痘疤的深淺、膚況穩定度與是否需要分段規劃，都會影響實際安排；可先由醫師評估後再說明適合的方向。",
+            followupPrompt: "您想先了解探索皮秒，還是直接安排免費諮詢評估呢？😊",
+          },
+        ],
+        discoveryPrompt: "😊 您想先改善哪個方向呢？\n① 毛孔／膚質\n② 痘疤／凹疤\n③ 暗沉／膚色不均",
+        featureSummary: "探索皮秒可作為色素、膚質與整體膚況管理的評估方向。",
+        followupPrompt: "您可以告訴我最在意的膚況，我先幫您整理諮詢方向😊",
+        quickReplies: [
+          {
+            key: "features",
+            terms: ["特色", "原理", "怎麼做", "探頭"],
+            reply: "🟢 探索皮秒會依色素、膚質與整體膚況需求評估；蜂巢探頭是可搭配的模式之一，是否需要會依現場膚況判斷。",
+            followupPrompt: "您目前較在意毛孔／膚質，還是痘疤／凹疤呢？😊",
+          },
+          {
+            key: "comfort_and_recovery",
+            terms: ["會痛", "痛嗎", "修復期", "恢復期", "術後"],
+            reply: "🌿 實際施作感受與術後照護會依膚況及規劃不同，現場會先由醫師評估並說明。",
+            followupPrompt: "您想先了解哪個膚況方向？我可以協助安排免費諮詢😊",
+          },
+        ],
+      },
       evaluationNote: "實際是否適合仍需依膚況與醫師評估為主。",
       intro: "探索皮秒可先理解為色素、膚質與整體膚況管理的評估方向之一；是否搭配蜂巢等規劃，通常會依膚況現場判斷。",
       key: "pico",
@@ -402,6 +454,48 @@ export const clinicConfig: ClinicConfig = {
       brandReply:
         "目前院內常見可評估的肉毒品牌包含 BOTOX、Neuronox 優力柔，以及 Dysport 儷緻；實際會依部位需求、醫師評估與現場安排為主。",
       category: "injectable",
+      consultationGuide: {
+        concernReplies: [
+          {
+            concernKey: "dynamic_wrinkles",
+            reply: "🌿 魚尾紋、表情紋等動態紋路常會先從表情肌活動方向了解；肉毒可作為動態紋路改善與評估的選項之一，實際是否適合仍需醫師現場評估。",
+            followupPrompt: "您較在意魚尾紋、抬頭紋，還是咀嚼肌／臉部輪廓呢？😊",
+          },
+        ],
+        detailReplies: [
+          {
+            aspectKey: "dynamic_wrinkles_intro",
+            concernKey: "dynamic_wrinkles",
+            terms: ["介紹", "怎麼做", "原理", "特色"],
+            reply: "🟢 肉毒通常會依表情肌活動、紋路位置與部位需求進行評估；實際施作部位與劑量仍由醫師現場判斷。",
+            followupPrompt: "您想先了解哪個部位的困擾呢？😊",
+          },
+          {
+            aspectKey: "dynamic_wrinkles_evaluation",
+            concernKey: "dynamic_wrinkles",
+            terms: ["效果", "改善嗎", "適合", "可以做"],
+            reply: "🌿 是否適合肉毒會依紋路、肌肉活動與個人需求評估；可先讓醫師確認後再安排較適合的方向。",
+            followupPrompt: "您想先了解體驗方案，還是安排免費諮詢呢？😊",
+          },
+        ],
+        discoveryPrompt: "😊 您想先改善哪個方向呢？\n① 魚尾紋／表情紋\n② 咀嚼肌／臉部輪廓\n③ 其他想改善的部位",
+        featureSummary: "肉毒可作為動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向的評估選項。",
+        followupPrompt: "您可以告訴我最在意的部位，我先幫您整理諮詢方向😊",
+        quickReplies: [
+          {
+            key: "features",
+            terms: ["特色", "原理", "怎麼做", "功效"],
+            reply: "🟢 肉毒常會依部位需求討論動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向；實際規劃仍需醫師評估。",
+            followupPrompt: "您最在意的是表情紋，還是咀嚼肌／臉部輪廓呢？😊",
+          },
+          {
+            key: "comfort_and_recovery",
+            terms: ["會痛", "痛嗎", "修復期", "恢復期", "術後"],
+            reply: "🌿 實際施作感受與術後照護會依部位及個人狀況不同，現場會先由醫師評估並說明。",
+            followupPrompt: "您想先了解哪個部位？我可以協助安排免費諮詢😊",
+          },
+        ],
+      },
       evaluationNote: "實際品項與劑量仍需依部位需求與醫師評估為主。",
       intro: "肉毒通常會拿來討論動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向，實際安排會依部位與需求評估。",
       key: "botox",

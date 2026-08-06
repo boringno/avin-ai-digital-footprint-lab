@@ -90,12 +90,66 @@ function validatePackSchema() {
   console.log("PASS: TP4 treatment pack schema has stable, unique detail aspect keys");
 }
 
+async function validateCrossCategoryPackReuse() {
+  const expectedPackKeys = ["onda_pro", "botox", "pico"];
+  const configuredPacks = clinicConfig.treatmentList.filter((treatment) => treatment.consultationGuide);
+
+  for (const treatmentKey of expectedPackKeys) {
+    assert(
+      configuredPacks.some((treatment) => treatment.key === treatmentKey),
+      `TP5: ${treatmentKey} must use the shared consultation pack engine`,
+    );
+  }
+
+  const configuredCategories = new Set(
+    configuredPacks
+      .filter((treatment) => expectedPackKeys.includes(treatment.key))
+      .map((treatment) => treatment.category),
+  );
+  assert(configuredCategories.size === 3, "TP5: Phase 4 must prove reuse across energy, injectable, and laser treatment categories");
+
+  const botoxConcern = await runTurns(["我想改善魚尾紋"]);
+  assert(botoxConcern.decisions[0].matchedKey === "treatment_consult:botox", "TP5: dynamic wrinkles must enter the Botox pack");
+  assert(botoxConcern.decisions[0].replyText.includes("肉毒"), "TP5: Botox concern reply must identify the selected treatment");
+
+  const botoxFeature = await runTurns(["肉毒有什麼特色"]);
+  assert(
+    botoxFeature.decisions[0].matchedKey === "treatment_consult:botox:features",
+    "TP5: Botox feature question must use its configured quick reply",
+  );
+
+  const picoConcern = await runTurns(["我在意毛孔粗大"]);
+  assert(picoConcern.decisions[0].matchedKey === "treatment_consult:pico", "TP5: pore concern must enter the Pico pack");
+  assert(picoConcern.decisions[0].replyText.includes("探索皮秒"), "TP5: Pico concern reply must identify the selected treatment");
+
+  const picoFeature = await runTurns(["探索皮秒有什麼特色"]);
+  assert(
+    picoFeature.decisions[0].matchedKey === "treatment_consult:pico:features",
+    "TP5: Pico feature question must use its configured quick reply",
+  );
+
+  const botoxThenJawline = await runTurns(["我想改善魚尾紋", "我想改善雙下巴"]);
+  assert(
+    botoxThenJawline.decisions[1].matchedKey === "treatment_consult:onda_pro",
+    "TP5: a new concern outside the active pack must switch to its recommended treatment",
+  );
+
+  const picoThenWrinkles = await runTurns(["我在意毛孔粗大", "我想改善魚尾紋"]);
+  assert(
+    picoThenWrinkles.decisions[1].matchedKey === "treatment_consult:botox",
+    "TP5: a new concern must not remain trapped in an unrelated active treatment pack",
+  );
+
+  console.log("PASS: TP5 three treatment categories reuse the same consultation pack engine and switch safely between concerns");
+}
+
 async function main() {
   await validateAspectProgression();
   await validateDirectDetailQuestion();
   await validatePrimaryConcernDoesNotLoop();
   validatePackSchema();
-  console.log("treatment pack validation passed (4 scenarios)");
+  await validateCrossCategoryPackReuse();
+  console.log("treatment pack validation passed (5 scenarios)");
 }
 
 main().catch((error) => {

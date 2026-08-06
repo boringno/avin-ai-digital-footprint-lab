@@ -1656,6 +1656,13 @@ type ConsultationConcernDecision = Omit<RouterDecision, "nextContext"> & {
   consultationAspectKey?: string;
 };
 
+function supportsConsultationConcern(
+  treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  concernKey: string,
+) {
+  return treatment.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ?? false;
+}
+
 function getConcernReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
   const matchedConcern = findConcernByMessage(message);
   if (!matchedConcern) {
@@ -1669,10 +1676,14 @@ function getConcernReply(message: string, context: ConversationContext): Consult
   }
 
   const consultationTreatment = getConsultationTreatment(context);
+  const compatibleConsultationTreatment =
+    consultationTreatment && supportsConsultationConcern(consultationTreatment, matchedConcern.key)
+      ? consultationTreatment
+      : null;
   const recommendedConsultationTreatment = matchedConcern.recommendedTreatmentKeys
     .map((treatmentKey) => findTreatmentByKey(treatmentKey))
     .find((treatment) => treatment?.consultationGuide);
-  const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
+  const guidedTreatment = compatibleConsultationTreatment ?? recommendedConsultationTreatment;
   if (guidedTreatment) {
     const consultationReply = buildConsultationConcernReply(
       guidedTreatment,
