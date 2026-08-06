@@ -77,3 +77,5 @@ jobs:
           npm run validate:handoff-recipient-settings
           npm run validate:handoff-digest
           npm run validate:handoff-notification
+          npm run validate:reply-tone
+          npm run validate:booking-session-expiry

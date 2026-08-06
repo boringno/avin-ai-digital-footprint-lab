@@ -6,6 +6,7 @@ import { updateAdminLead } from "@/lib/admin-leads-data";
 export const runtime = "nodejs";
 
 type UpdateLeadBody = {
+  appointment_at?: string | null;
   assign_to_self?: boolean;
   booking_status?: string;
   lead_id?: string;
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
 
   try {
     const lead = await updateAdminLead({
+      appointmentAt: body.appointment_at,
       assignToSelf: body.assign_to_self,
       bookingStatus: body.booking_status,
       leadId: body.lead_id,

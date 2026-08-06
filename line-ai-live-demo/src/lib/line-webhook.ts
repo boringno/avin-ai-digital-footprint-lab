@@ -23,6 +23,7 @@ import {
 } from "@/lib/conversation-state";
 import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
+import { addCustomerReplyTone } from "@/lib/reply-tone";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
@@ -444,7 +445,23 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     }
   }
 
-  replyText = formatReplyText(replyText);
+  const replyTone = {
+    decisionType: usedAiReplyGenerator ? "fallback_reply" : routedDecision.decisionType,
+    matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
+  };
+  replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
+  const replyMessages = usedAiReplyGenerator || usedAiHumanizer || !routedDecision.replyMessages
+    ? undefined
+    : formatReplyMessages(routedDecision.replyMessages.map((message) => {
+      if (message.type !== "text") {
+        return message;
+      }
+
+      return {
+        ...message,
+        text: addCustomerReplyTone(message.text, replyTone),
+      } satisfies LineTextMessage;
+    }));
 
   const introducedInReply = replyText.includes(clinicConfig.aiName);
   const nextContext = {
@@ -472,7 +489,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
     matchedType: usedAiReplyGenerator ? "guided_reply" : routedDecision.matchedType,
     nextContext,
-    replyMessages: usedAiReplyGenerator || usedAiHumanizer ? undefined : routedDecision.replyMessages,
+    replyMessages,
     replyText,
     // Keep the AI disclosure consistent on every customer-facing response.
     suppressAiFooter: false,

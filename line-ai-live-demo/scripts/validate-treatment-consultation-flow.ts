@@ -62,6 +62,20 @@ async function main() {
   assert(consultation.matchedKey === "booking_intake", "T6: an explicit ONDA consultation request must enter booking intake");
   assert(consultation.nextContext.bookingDraft.treatment === "ONDA PRO", "T6: booking intake must preserve the requested ONDA treatment");
 
+  const bookingAfterOlderTreatment = createEmptyConversationContext("onda-booking-after-botox-test");
+  bookingAfterOlderTreatment.bookingDraft.treatment = "肉毒";
+  bookingAfterOlderTreatment.lastReferencedTreatment = "ONDA PRO";
+  bookingAfterOlderTreatment.lastSeenAt = NOW.toISOString();
+  bookingAfterOlderTreatment.treatmentConsultation = {
+    concernKeys: ["jawline_looseness"],
+    stage: "priority_selected",
+    treatmentKey: "onda_pro",
+  };
+  const bookingForOnda = await route("我想安排預約", bookingAfterOlderTreatment);
+  assert(bookingForOnda.matchedKey === "booking_intake", "T6a: an ONDA booking request must stay in booking intake");
+  assert(bookingForOnda.nextContext.bookingDraft.treatment === "肉毒、ONDA PRO", "T6a: active ONDA consultation must be added to an earlier Botox booking draft");
+  assert(bookingForOnda.replyText.includes("肉毒＋ONDA PRO"), "T6a: booking summary must clearly show every treatment the customer wants to discuss");
+
   const bodyConcern = await route("我想改善腹部脂肪");
   assert(bodyConcern.matchedKey === "treatment_consult:onda_pro", "T7: local body-fat concern must proactively recommend ONDA");
   assert(bodyConcern.replyText.includes("ONDA Pro"), "T7: local body-fat recommendation must name ONDA Pro");
@@ -147,7 +161,7 @@ async function main() {
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
   assert(guarantee.matchedKey === "effect_guarantee_request", "T14: outcome guarantee must still route to human handoff");
 
-  console.log("treatment consultation flow validation passed (24 checks)");
+  console.log("treatment consultation flow validation passed (27 checks)");
 }
 
 main().catch((error) => {

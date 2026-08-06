@@ -4,6 +4,7 @@ import { bookingStatusLabels, type BookingStatusKey } from "@/lib/admin-display-
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 export type AdminLeadCard = {
+  appointmentAt: string | null;
   bookingStatus: BookingStatusKey;
   conversationId: string;
   customerName: string | null;
@@ -30,6 +31,7 @@ export type AdminLeadsData = {
 };
 
 type BookingLeadRow = {
+  appointment_at: string | null;
   booking_status: BookingStatusKey;
   conversation_id: string;
   customer_name: string | null;
@@ -70,7 +72,7 @@ export async function loadAdminLeadsData(staff: AdminStaffUser): Promise<AdminLe
   const [{ data: leadRows, error: leadsError }, { data: staffRows, error: staffError }] = await Promise.all([
     supabase
       .from("booking_leads_db")
-      .select("id, conversation_id, booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone, staff_owner, notes, updated_at")
+      .select("id, conversation_id, appointment_at, booking_status, interested_treatments, preferred_branch, preferred_time_slots, customer_name, phone, staff_owner, notes, updated_at")
       .eq("tenant_id", staff.tenantId)
       .order("updated_at", { ascending: false })
       .limit(200),
@@ -103,6 +105,7 @@ export async function loadAdminLeadsData(staff: AdminStaffUser): Promise<AdminLe
 
       return [
         {
+          appointmentAt: lead.appointment_at,
           bookingStatus: normalizeBookingStatus(lead.booking_status),
           conversationId: lead.conversation_id,
           customerName: lead.customer_name,
@@ -129,6 +132,7 @@ export async function loadAdminLeadsData(staff: AdminStaffUser): Promise<AdminLe
 }
 
 export async function updateAdminLead(input: {
+  appointmentAt?: string | null;
   assignToSelf?: boolean;
   bookingStatus?: string;
   leadId: string;
@@ -140,6 +144,9 @@ export async function updateAdminLead(input: {
   }
 
   const patch: Record<string, string | null> = {};
+  if (input.appointmentAt !== undefined) {
+    patch.appointment_at = normalizeAppointmentAt(input.appointmentAt);
+  }
   if (input.bookingStatus !== undefined) {
     if (!bookingStatusSet.has(input.bookingStatus)) {
       throw new Error(`Invalid booking_status: ${input.bookingStatus}`);
@@ -160,7 +167,7 @@ export async function updateAdminLead(input: {
   const supabase = getSupabaseServerClient();
   const { data: before, error: beforeError } = await supabase
     .from("booking_leads_db")
-    .select("id, booking_status, notes, staff_owner")
+    .select("id, appointment_at, booking_status, notes, staff_owner")
     .eq("tenant_id", input.staff.tenantId)
     .eq("id", input.leadId)
     .maybeSingle<Record<string, unknown>>();
@@ -177,7 +184,7 @@ export async function updateAdminLead(input: {
     .update(patch)
     .eq("tenant_id", input.staff.tenantId)
     .eq("id", input.leadId)
-    .select("id, booking_status, notes, staff_owner")
+    .select("id, appointment_at, booking_status, notes, staff_owner")
     .single<Record<string, unknown>>();
 
   if (updateError || !after) {
@@ -217,6 +224,19 @@ async function loadConversations(staff: AdminStaffUser, conversationIds: string[
 
 function normalizeBookingStatus(value: string) {
   return bookingStatusSet.has(value) ? (value as BookingStatusKey) : "new";
+}
+
+function normalizeAppointmentAt(value: string | null) {
+  if (value === null || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error("Invalid appointment_at");
+  }
+
+  return date.toISOString();
 }
 
 function normalizeStringArray(value: unknown) {
