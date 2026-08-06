@@ -44,7 +44,9 @@ async function main() {
   const paymentReply = result.results[0];
   assert(paymentReply.decision.replyText.startsWith("💳"), "webhook: payment decision must receive the payment emoji");
   assert(
-    paymentReply.replyPayload?.messages.some((message) => message.type === "text" && message.text.startsWith("💳")),
+    paymentReply.replyPayload?.messages.some(
+      (message) => message.type === "text" && message.text.split("\n").some((line) => line.startsWith("💳")),
+    ),
     "webhook: outgoing LINE text must keep the payment emoji",
   );
 
