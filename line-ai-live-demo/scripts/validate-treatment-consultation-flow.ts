@@ -22,8 +22,9 @@ async function main() {
   const proactiveRecommendation = await route("我想改善雙下巴");
   assert(proactiveRecommendation.decisionType === "treatment_intro_reply", "T1: an ONDA concern must receive a guided treatment reply");
   assert(proactiveRecommendation.matchedKey === "treatment_consult:onda_pro", "T1: double-chin concern must proactively recommend ONDA");
-  assert(proactiveRecommendation.replyText.includes("ONDA PRO"), "T1: proactive recommendation must name ONDA PRO");
+  assert(proactiveRecommendation.replyText.includes("ONDA Pro"), "T1: proactive recommendation must name ONDA Pro");
   assert(proactiveRecommendation.replyText.includes("肉肉的雙下巴"), "T1: double-chin concern must use its approved scenario reply");
+  assert(proactiveRecommendation.replyText.includes("🌿") && proactiveRecommendation.replyText.includes("😊"), "T1: ONDA concern reply must keep the approved friendly emoji style");
   assert(proactiveRecommendation.replyText.length <= 120, "T1: proactive recommendation must stay concise for LINE");
   assert(proactiveRecommendation.nextContext.lastReferencedTreatment === "ONDA PRO", "T1: proactive recommendation must preserve ONDA context");
 
@@ -44,9 +45,10 @@ async function main() {
 
   const features = await route("ONDA 有什麼特色");
   assert(features.matchedKey === "treatment_consult:onda_pro:features", "T4: ONDA feature questions must use the concise approved answer");
-  assert(features.replyText.includes("非侵入式"), "T4: ONDA feature questions must state the approved non-invasive description");
+  assert(features.replyText.includes("Coolwaves®"), "T4: ONDA feature questions must state the clinic-approved technology description");
   assert(features.replyText.includes("局部脂肪") && features.replyText.includes("肌膚緊實"), "T4: ONDA feature questions must state the supported treatment features");
-  assert(features.replyText.length <= 100, "T4: ONDA feature answer must stay concise for LINE");
+  assert(features.replyText.includes("🟢") && features.replyText.includes("❄️") && features.replyText.includes("😊"), "T4: ONDA feature answer must keep the approved friendly emoji style");
+  assert(features.replyText.length <= 150, "T4: ONDA feature answer must stay concise for LINE");
 
   const comfort = await route("ONDA 會痛嗎", features.nextContext);
   assert(comfort.matchedKey === "treatment_consult:onda_pro:comfort_and_recovery", "T5: ONDA comfort questions must use the approved short answer");
@@ -58,7 +60,7 @@ async function main() {
 
   const bodyConcern = await route("我想改善腹部脂肪");
   assert(bodyConcern.matchedKey === "treatment_consult:onda_pro", "T7: local body-fat concern must proactively recommend ONDA");
-  assert(bodyConcern.replyText.includes("ONDA PRO"), "T7: local body-fat recommendation must name ONDA PRO");
+  assert(bodyConcern.replyText.includes("ONDA Pro"), "T7: local body-fat recommendation must name ONDA Pro");
   assert(bodyConcern.replyText.includes("體態與緊實"), "T7: local body-fat concern must use its approved scenario reply");
 
   const intro = await route("想了解 ONDA PRO");
