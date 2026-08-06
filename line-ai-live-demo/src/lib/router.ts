@@ -1368,17 +1368,25 @@ function buildConsultationConcernReply(
 }
 
 function getActiveTreatmentConsultationConcernKeys(context: ConversationContext, treatmentKey: string) {
+  const consultation = getActiveTreatmentConsultation(context, treatmentKey);
+  return consultation?.concernKeys ?? [];
+}
+
+function getActiveTreatmentConsultation(context: ConversationContext, treatmentKey: string) {
   if (!context.lastIntent?.startsWith(`treatment_consult:${treatmentKey}`)) {
-    return [];
+    return null;
   }
 
   if (context.treatmentConsultation?.treatmentKey !== treatmentKey) {
-    return [];
+    return null;
   }
 
-  return Array.isArray(context.treatmentConsultation.concernKeys)
-    ? context.treatmentConsultation.concernKeys.filter((concernKey) => typeof concernKey === "string")
-    : [];
+  return {
+    ...context.treatmentConsultation,
+    concernKeys: Array.isArray(context.treatmentConsultation.concernKeys)
+      ? context.treatmentConsultation.concernKeys.filter((concernKey) => typeof concernKey === "string")
+      : [],
+  };
 }
 
 function formatTreatmentConsultationConcerns(concernKeys: string[]) {
@@ -1398,11 +1406,71 @@ function formatTreatmentConsultationConcerns(concernKeys: string[]) {
 }
 
 function recordTreatmentConsultationConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
-  const previousConcernKeys = getActiveTreatmentConsultationConcernKeys(context, treatmentKey);
+  const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
+  const previousConcernKeys = activeConsultation?.concernKeys ?? [];
   context.treatmentConsultation = {
     concernKeys: Array.from(new Set([...previousConcernKeys, concernKey])),
+    primaryConcernKey: activeConsultation?.primaryConcernKey,
+    stage: activeConsultation?.stage ?? "needs_discovery",
     treatmentKey,
   };
+}
+
+function setTreatmentConsultationPrimaryConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
+  const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
+  context.treatmentConsultation = {
+    concernKeys: Array.from(new Set([...(activeConsultation?.concernKeys ?? []), concernKey])),
+    primaryConcernKey: concernKey,
+    stage: "priority_selected",
+    treatmentKey,
+  };
+}
+
+function isPrimaryConcernSelection(message: string) {
+  return /(?:主要|最在意|優先|先以|先處理|重點).{0,8}(?:雙下巴|雙下八|嘴邊肉|下顎線|手臂|腹部|大腿|橘皮)/u.test(
+    normalizeText(message),
+  );
+}
+
+function buildPrimaryConcernReply(concernKey: string, concernPhrase: string) {
+  if (concernKey === "jawline_looseness") {
+    return `了解😊 那我們先以 ${concernPhrase} 的臉部輪廓需求為主。您比較在意肉肉厚度、下顎線不明顯，還是嘴邊肉一起改善呢？`;
+  }
+
+  if (concernKey === "local_contour") {
+    return `了解😊 那我們先以 ${concernPhrase} 的身體局部需求為主。您比較在意脂肪厚度、線條感，還是緊實需求呢？`;
+  }
+
+  return `了解😊 我先以 ${concernPhrase} 為主幫您整理諮詢方向。`;
+}
+
+function getTreatmentConsultationPriorityReply(message: string, context: ConversationContext) {
+  if (!isPrimaryConcernSelection(message)) {
+    return null;
+  }
+
+  const treatment = getConsultationTreatment(context);
+  const matchedConcern = findConcernByMessage(message);
+  if (!treatment?.consultationGuide || !matchedConcern) {
+    return null;
+  }
+
+  const activeConsultation = getActiveTreatmentConsultation(context, treatment.key);
+  if (!activeConsultation || !activeConsultation.concernKeys.includes(matchedConcern.key)) {
+    return null;
+  }
+
+  return {
+    concernKey: matchedConcern.key,
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}:primary:${matchedConcern.key}`,
+    matchedType: "guided_reply",
+    replyText: buildPrimaryConcernReply(
+      matchedConcern.key,
+      getCustomerConcernPhrase(message, matchedConcern.key, matchedConcern.keywords),
+    ),
+    treatment,
+  } as const;
 }
 
 function getConcernReply(message: string, context: ConversationContext) {
@@ -1454,7 +1522,7 @@ function getConcernReply(message: string, context: ConversationContext) {
 function getCustomerConcernPhrase(message: string, concernKey: string, fallbackKeywords: string[]) {
   const preferredPhrases =
     concernKey === "jawline_looseness"
-      ? ["肉肉的雙下巴", "雙下巴", "嘴邊肉", "下顎線"]
+      ? ["肉肉的雙下巴", "雙下巴", "雙下八", "嘴邊肉", "下顎線"]
       : concernKey === "local_contour"
         ? ["手臂脂肪", "腹部脂肪", "大腿脂肪", "局部脂肪", "橘皮", "手臂", "腹部", "大腿"]
         : [];
@@ -2205,6 +2273,24 @@ export async function routeCustomerMessage({
       nextContext,
       replyMessages: [buildTreatmentCarouselMessage()],
       replyText: getTreatmentCarouselReplyText(),
+    };
+  }
+
+  const consultationPriorityReply = getTreatmentConsultationPriorityReply(trimmedMessage, nextContext);
+  if (consultationPriorityReply) {
+    nextContext.lastReferencedTreatment = consultationPriorityReply.treatment.name;
+    setTreatmentConsultationPrimaryConcern(
+      nextContext,
+      consultationPriorityReply.treatment.key,
+      consultationPriorityReply.concernKey,
+    );
+    nextContext.lastIntent = consultationPriorityReply.matchedKey;
+    return {
+      decisionType: consultationPriorityReply.decisionType,
+      matchedKey: consultationPriorityReply.matchedKey,
+      matchedType: consultationPriorityReply.matchedType,
+      nextContext,
+      replyText: consultationPriorityReply.replyText,
     };
   }
 

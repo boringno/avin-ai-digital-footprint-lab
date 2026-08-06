@@ -100,6 +100,15 @@ async function main() {
   assert(combinedConcern.replyText.includes("臉部輪廓") && combinedConcern.replyText.includes("手臂脂肪"), "T10b: a second ONDA concern must combine prior and new needs");
   assert(combinedConcern.replyText.includes("先以哪個部位為主"), "T10b: a combined ONDA concern must advance toward one next question");
 
+  const typoConcern = await route("也想改善雙下八", combinedConcern.nextContext);
+  assert(typoConcern.matchedKey === "treatment_consult:onda_pro", "T10c: a common double-chin typo must remain in the ONDA consultation path");
+  assert(typoConcern.replyText.includes("雙下八") && typoConcern.replyText.includes("已記下"), "T10c: a common double-chin typo must be acknowledged without restarting the introduction");
+
+  const primaryConcern = await route("主要是雙下巴", typoConcern.nextContext);
+  assert(primaryConcern.matchedKey === "treatment_consult:onda_pro:primary:jawline_looseness", "T10d: an explicit primary concern must advance the ONDA consultation stage");
+  assert(primaryConcern.replyText.includes("先以 雙下巴") && primaryConcern.replyText.includes("肉肉厚度"), "T10d: an explicit primary concern must receive the next jawline-detail question");
+  assert(primaryConcern.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T10d: the selected primary concern must persist in conversation state");
+
   const price = await route("ONDA 體驗價", intro.nextContext);
   assert(price.decisionType === "pricing_auto_reply", "T11: ONDA experience-price question must use the controlled pricing path");
   assert(price.matchedKey === "ONDA PRO", "T11: ONDA experience price must use the approved ONDA campaign");
@@ -115,7 +124,7 @@ async function main() {
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
   assert(guarantee.matchedKey === "effect_guarantee_request", "T14: outcome guarantee must still route to human handoff");
 
-  console.log("treatment consultation flow validation passed (16 checks)");
+  console.log("treatment consultation flow validation passed (20 checks)");
 }
 
 main().catch((error) => {
