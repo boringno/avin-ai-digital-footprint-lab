@@ -951,7 +951,12 @@ function formatBookingKnownFields(context: ConversationContext) {
   const parts: string[] = [];
 
   if (context.bookingDraft.treatment) {
-    parts.push(`想了解的療程先記為 ${context.bookingDraft.treatment}`);
+    const treatmentLabel = context.bookingDraft.treatment
+      .split(/[、,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join("＋");
+    parts.push(`想了解的療程先記為 ${treatmentLabel}`);
   }
   if (context.bookingDraft.branch) {
     parts.push(`館別先記為 ${context.bookingDraft.branch}`);
@@ -1323,6 +1328,18 @@ function getConsultationTreatment(context: ConversationContext) {
     : null;
 
   return treatment?.consultationGuide ? treatment : null;
+}
+
+function preferActiveTreatmentConsultationForBooking(context: ConversationContext) {
+  const treatmentKey = context.treatmentConsultation?.treatmentKey;
+  const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
+
+  // A fresh guided consultation is also a current customer need. Keep any
+  // earlier treatment already collected for this booking and add this one.
+  if (treatment) {
+    context.bookingDraft.treatment = mergeBookingTreatment(context.bookingDraft.treatment, treatment.name);
+    context.lastReferencedTreatment = treatment.name;
+  }
 }
 
 function findConsultationQuickReply(
@@ -2190,6 +2207,7 @@ export async function routeCustomerMessage({
   }
 
   if (hasBookingFollowup || hasStructuredBookingMessage) {
+    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     const bookingIntent: "booking_intake" | "booking_modify_request" | "booking_cancel_request" =
       isBookingCancelRequest(trimmedMessage)
@@ -2218,6 +2236,7 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingCancelRequest(trimmedMessage)) {
+    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
     return {
@@ -2230,6 +2249,7 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingModifyRequest(trimmedMessage)) {
+    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_modify_request";
     return {
@@ -2244,6 +2264,7 @@ export async function routeCustomerMessage({
   // An appointment request remains an intake flow even when it names a doctor.
   // The monthly image is reference material, never an appointment confirmation.
   if (includesAnyTerm(trimmedMessage, APPOINTMENT_TERMS)) {
+    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_intake";
     return {
