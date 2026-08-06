@@ -121,6 +121,7 @@ const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
 const EFFECT_GUARANTEE_TERMS = ["保證有效", "一定有效", "保證改善", "一定會改善", "保證有感", "一定有感", "效果保證"];
 const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
 const TREATMENT_CONSULTATION_SESSION_MS = 20 * 60 * 1000;
+const BOOKING_SESSION_MS = 24 * 60 * 60 * 1000;
 const TREATMENT_DISCOVERY_TERMS = [
   "療程",
   "功效",
@@ -462,6 +463,7 @@ function clearExpiredBookingSession(context: ConversationContext, now: Date) {
   // This is not an arrival/no-show decision. Historical lead data stays in the
   // database, while the next LINE enquiry begins with a fresh booking draft.
   context.bookingDraft = createEmptyConversationContext("").bookingDraft;
+  delete context.bookingSession;
   delete context.lastIntent;
   delete context.lastReferencedBranch;
   delete context.lastReferencedTreatment;
@@ -469,6 +471,55 @@ function clearExpiredBookingSession(context: ConversationContext, now: Date) {
   delete context.preferredBranch;
   delete context.pregnancyRiskFlag;
   delete context.treatmentConsultation;
+}
+
+function getBookingSessionActivityAt(context: ConversationContext) {
+  return context.bookingSession?.lastActiveAt ?? context.lastSeenAt;
+}
+
+function isActiveBookingConversation(context: ConversationContext | undefined, now: Date) {
+  if (!context || !isBookingConversationIntent(context.lastIntent)) {
+    return false;
+  }
+
+  const activityAt = getBookingSessionActivityAt(context);
+  if (!activityAt) {
+    return false;
+  }
+
+  const activityTime = new Date(activityAt).getTime();
+  return Number.isFinite(activityTime) && now.getTime() - activityTime <= BOOKING_SESSION_MS;
+}
+
+function clearStaleBookingDraft(context: ConversationContext, now: Date) {
+  if (context.bookingDraft.appointmentAt || !hasBookingDraftValue(context)) {
+    return;
+  }
+
+  const activityAt = getBookingSessionActivityAt(context);
+  const activityTime = activityAt ? new Date(activityAt).getTime() : Number.NaN;
+  if (Number.isFinite(activityTime) && now.getTime() - activityTime <= BOOKING_SESSION_MS) {
+    return;
+  }
+
+  // An unfinished booking is only a short-lived working draft. This does not
+  // change any historical lead or appointment record; it prevents an old draft
+  // from becoming the subject of a later, unrelated customer question.
+  context.bookingDraft = createEmptyConversationContext("").bookingDraft;
+  context.bookingSession = {
+    lastActiveAt: now.toISOString(),
+    status: "stale",
+  };
+  if (isBookingConversationIntent(context.lastIntent)) {
+    delete context.lastIntent;
+  }
+}
+
+function markBookingSessionActive(context: ConversationContext, now: Date) {
+  context.bookingSession = {
+    lastActiveAt: now.toISOString(),
+    status: "collecting",
+  };
 }
 
 function buildPromotionOverviewReply(pricingCampaigns: PricingCampaign[]) {
@@ -901,7 +952,7 @@ function hasFreeTextBookingSignal(message: string) {
   return Boolean(findBranchByMessage(message)) || Boolean(findTreatmentByMessage(message));
 }
 
-function isBookingFollowupMessage(message: string, previousContext: ConversationContext | undefined) {
+function isBookingFollowupMessage(message: string, previousContext: ConversationContext | undefined, now: Date) {
   if (!previousContext) {
     return false;
   }
@@ -919,7 +970,7 @@ function isBookingFollowupMessage(message: string, previousContext: Conversation
     return false;
   }
 
-  if (isBookingConversationIntent(previousContext.lastIntent)) {
+  if (isActiveBookingConversation(previousContext, now)) {
     return hasBookingDraftProgress(message, previousContext);
   }
 
@@ -2190,6 +2241,8 @@ export async function routeCustomerMessage({
   const nextContext = cloneContext(conversationContext);
   clearExpiredBookingSession(previousContext, currentTime);
   clearExpiredBookingSession(nextContext, currentTime);
+  clearStaleBookingDraft(previousContext, currentTime);
+  clearStaleBookingDraft(nextContext, currentTime);
   clearStaleTreatmentConsultation(previousContext, currentTime);
   clearStaleTreatmentConsultation(nextContext, currentTime);
   nextContext.lastSeenAt = currentTime.toISOString();
@@ -2203,7 +2256,7 @@ export async function routeCustomerMessage({
 
   // Safety and human handoff rules always take precedence over booking follow-up.
   const hasStructuredBookingMessage = hasStructuredBookingForm(trimmedMessage);
-  const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext);
+  const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext, currentTime);
   const priorityHandoffReply = getHandoffPendingReply(
     trimmedMessage,
     currentTime,
@@ -2263,10 +2316,11 @@ export async function routeCustomerMessage({
         ? "booking_cancel_request"
         : isBookingModifyRequest(trimmedMessage)
           ? "booking_modify_request"
-          : isBookingConversationIntent(conversationContext?.lastIntent)
-            ? (conversationContext?.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
+          : isActiveBookingConversation(previousContext, currentTime)
+            ? (previousContext.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
             : "booking_intake";
     nextContext.lastIntent = bookingIntent;
+    markBookingSessionActive(nextContext, currentTime);
 
     const replyText =
       bookingIntent === "booking_modify_request"
@@ -2288,6 +2342,7 @@ export async function routeCustomerMessage({
     preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
+    markBookingSessionActive(nextContext, currentTime);
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_cancel_request",
@@ -2301,6 +2356,7 @@ export async function routeCustomerMessage({
     preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_modify_request";
+    markBookingSessionActive(nextContext, currentTime);
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_modify_request",
@@ -2316,6 +2372,7 @@ export async function routeCustomerMessage({
     preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_intake";
+    markBookingSessionActive(nextContext, currentTime);
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_intake",
@@ -2340,7 +2397,7 @@ export async function routeCustomerMessage({
 
   const basicInfoReply = getClinicBasicInfoReply(trimmedMessage, nextContext);
   if (basicInfoReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
+    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : basicInfoReply.matchedKey;
     return {
@@ -2390,7 +2447,7 @@ export async function routeCustomerMessage({
         recordTreatmentConsultationConcern(nextContext, guidedTreatment.key, matchedConcern.key);
       }
     }
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
+    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : concernReply.matchedKey;
     return {
@@ -2437,7 +2494,7 @@ export async function routeCustomerMessage({
     isBookingConversationIntent(previousContext.lastIntent),
   );
   if (pricingReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
+    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : pricingReply.matchedKey;
     return {
@@ -2448,7 +2505,7 @@ export async function routeCustomerMessage({
 
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);
   if (treatmentReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
+    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : treatmentReply.matchedKey;
     return {
@@ -2483,7 +2540,7 @@ export async function routeCustomerMessage({
 
   const matchedFaq = matchFaq(trimmedMessage, runtimeData.faqEntries, includePending);
   if (matchedFaq) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
+    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : matchedFaq.question_pattern;
     return {

@@ -23,6 +23,10 @@ export type BookingDraft = {
 };
 
 export type ConversationContext = {
+  bookingSession?: {
+    lastActiveAt: string;
+    status: "collecting" | "stale";
+  };
   bookingDraft: BookingDraft;
   introSent: boolean;
   lastIntent?: string;
