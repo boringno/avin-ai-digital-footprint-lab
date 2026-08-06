@@ -851,8 +851,56 @@ function getMissingBookingFields(context: ConversationContext): BookingFieldKey[
   return missing;
 }
 
-function shouldKeepBookingMode(previousContext: ConversationContext | undefined, nextContext: ConversationContext) {
-  return isBookingConversationIntent(previousContext?.lastIntent) && hasBookingDraftValue(nextContext);
+function isFreshTreatmentInquiry(message: string, previousContext: ConversationContext | undefined) {
+  if (!previousContext || !isBookingConversationIntent(previousContext.lastIntent)) {
+    return false;
+  }
+
+  // An existing booking must not trap a customer in that flow forever.  A
+  // clear new treatment question is answered as a parallel consultation while
+  // the original booking draft remains intact.
+  if (
+    hasStructuredBookingForm(message) ||
+    hasExplicitBookingDetails(message) ||
+    includesAnyTerm(message, APPOINTMENT_TERMS) ||
+    isBookingModifyRequest(message) ||
+    isBookingCancelRequest(message)
+  ) {
+    return false;
+  }
+
+  if (findConcernByMessage(message) || isGenericTreatmentInquiry(message)) {
+    return true;
+  }
+
+  const matchedTreatment = findTreatmentByMessage(message);
+  if (!matchedTreatment) {
+    return false;
+  }
+
+  return includesAnyTerm(message, [
+    "想了解",
+    "想問",
+    "介紹",
+    "功效",
+    "效果",
+    "特色",
+    "適合",
+    "可以做",
+    ...PRICE_OR_PROMOTION_TERMS,
+  ]);
+}
+
+function shouldKeepBookingMode(
+  previousContext: ConversationContext | undefined,
+  nextContext: ConversationContext,
+  message?: string,
+) {
+  return (
+    isBookingConversationIntent(previousContext?.lastIntent) &&
+    hasBookingDraftValue(nextContext) &&
+    !(message && isFreshTreatmentInquiry(message, previousContext))
+  );
 }
 
 function isFreeTextBookingInfoQuestion(message: string) {
@@ -904,6 +952,10 @@ function isBookingFollowupMessage(message: string, previousContext: Conversation
   const structuredBookingForm = hasStructuredBookingForm(message);
   if (structuredBookingForm || isBookingModifyRequest(message) || isBookingCancelRequest(message)) {
     return true;
+  }
+
+  if (isFreshTreatmentInquiry(message, previousContext)) {
+    return false;
   }
 
   if (isFreeTextBookingInfoQuestion(message) && !hasExplicitBookingDetails(message)) {
@@ -2317,7 +2369,7 @@ export async function routeCustomerMessage({
 
   const basicInfoReply = getClinicBasicInfoReply(trimmedMessage, nextContext);
   if (basicInfoReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : basicInfoReply.matchedKey;
     return {
@@ -2367,7 +2419,7 @@ export async function routeCustomerMessage({
         recordTreatmentConsultationConcern(nextContext, guidedTreatment.key, matchedConcern.key);
       }
     }
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : concernReply.matchedKey;
     return {
@@ -2413,7 +2465,7 @@ export async function routeCustomerMessage({
     currentTime,
   );
   if (pricingReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : pricingReply.matchedKey;
     return pricingReply;
@@ -2421,7 +2473,7 @@ export async function routeCustomerMessage({
 
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);
   if (treatmentReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : treatmentReply.matchedKey;
     return {
@@ -2456,7 +2508,7 @@ export async function routeCustomerMessage({
 
   const matchedFaq = matchFaq(trimmedMessage, runtimeData.faqEntries, includePending);
   if (matchedFaq) {
-    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
+    nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : matchedFaq.question_pattern;
     return {
