@@ -24,6 +24,11 @@ export type TreatmentConfig = {
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
   consultationGuide?: {
+    concernReplies?: Array<{
+      concernKey: string;
+      followupPrompt: string;
+      reply: string;
+    }>;
     discoveryPrompt: string;
     featureSummary: string;
     followupPrompt: string;
@@ -230,13 +235,13 @@ export const clinicConfig: ClinicConfig = {
     },
     {
       key: "jawline_looseness",
-      keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "下巴線條", "臉部鬆弛"],
+      keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "下巴肉", "肉肉下巴", "下巴線條", "臉部鬆弛"],
       recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
     },
     {
       key: "local_contour",
-      keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "手臂", "大腿", "體態", "身體線條", "贅肉"],
+      keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "手臂", "蝴蝶袖", "大腿", "腰側", "橘皮", "體態", "身體線條", "贅肉"],
       recommendedTreatmentKeys: ["onda_pro"],
       summary: "這類可先從局部線條、脂肪型困擾與緊實需求整理諮詢方向。",
     },
@@ -276,34 +281,46 @@ export const clinicConfig: ClinicConfig = {
       aliases: ["onda", "onda pro", "超微波"],
       category: "energy",
       consultationGuide: {
+        concernReplies: [
+          {
+            concernKey: "jawline_looseness",
+            reply: "🌿 如果您在意肉肉的雙下巴、嘴邊肉或下顎線不明顯，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。\n✨ 可再依臉型、脂肪分布與緊實需求安排。",
+            followupPrompt: "您比較在意雙下巴厚度，還是嘴邊肉／下顎線呢？😊",
+          },
+          {
+            concernKey: "local_contour",
+            reply: "🔥 手臂、腹部或大腿等局部脂肪困擾，也可先從 ONDA Pro 的體態與緊實需求評估開始。\n❄️ 實際施作部位仍會依脂肪分布與個人狀況確認。",
+            followupPrompt: "您最想改善哪個部位呢？😊",
+          },
+        ],
         discoveryPrompt:
-          "您較在意雙下巴、下顎線，還是腹部、手臂或大腿哪個部位呢？",
+          "😊 您想先了解哪個方向呢？\n①雙下巴／嘴邊肉\n②手臂、腹部、大腿等身體局部",
         featureSummary:
-          "療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
-        followupPrompt: "如果有偏好的館別，也可以一併告訴我。",
+          "✨ 療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
+        followupPrompt: "如果有偏好的館別，也可以一併告訴我😊",
         quickReplies: [
           {
             key: "benefits",
             terms: ["功效", "改善什麼", "可以改善", "適合什麼"],
-            reply: "ONDA PRO 可作為局部脂肪感、輪廓線與緊實需求的評估方向；實際規劃與效果仍需依個人狀況由醫師判斷。",
-            followupPrompt: "您較在意臉部輪廓，還是手臂、腹部等身體局部呢？",
+            reply: "🔥 ONDA Pro 可作為局部脂肪感、輪廓線與緊實需求的評估方向；實際規劃仍需依個人狀況由醫師判斷。",
+            followupPrompt: "您較在意臉部輪廓，還是手臂、腹部等身體局部呢？😊",
           },
           {
             key: "features",
             terms: ["特色", "原理", "怎麼做", "儀器"],
-            reply: "ONDA PRO 是非侵入式療程，可作為局部脂肪與肌膚緊實需求的評估方向；施作部位會由醫師依個人狀況規劃。",
-            followupPrompt: "您想先了解雙下巴／嘴邊肉，還是身體局部呢？",
+            reply: "🟢 ONDA Pro 採用 Coolwaves® 高頻能量技術，會依局部脂肪與肌膚緊實需求規劃。\n❄️ 搭配內建冷卻控溫設計，實際施作仍由醫師依個人狀況評估。",
+            followupPrompt: "您想先了解雙下巴／嘴邊肉，還是身體局部呢？😊",
           },
           {
             key: "comfort_and_recovery",
             terms: ["會痛", "痛嗎", "敷麻", "修復期", "恢復期", "瘀青"],
-            reply: "施作感受與術後照護會依部位及個人狀況不同，現場會先由醫師評估並說明。",
-            followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢。",
+            reply: "❄️ ONDA Pro 搭配冷卻控溫設計；施作感受與術後照護仍會依部位及個人狀況不同，現場會先由醫師評估並說明。",
+            followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢😊",
           },
         ],
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "您想改善的部位，ONDA PRO 可作為局部輪廓與體態管理的評估方向。",
+      intro: "可以呀😊\n🟢 ONDA Pro 超微波採用 Coolwaves® 高頻能量技術，可協助局部脂肪管理與緊緻拉提。\n❄️ 屬非侵入式療程，搭配冷卻控溫設計。",
       key: "onda_pro",
       name: "ONDA PRO",
     },

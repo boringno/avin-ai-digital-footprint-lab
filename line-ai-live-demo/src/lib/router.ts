@@ -24,6 +24,7 @@ import {
   type LineReplyMessage,
   type LineTextMessage,
 } from "@/lib/treatment-carousel";
+import type { ControlledTreatmentConcern, ControlledTreatmentKey } from "@/lib/ai-intent-classifier";
 
 type DecisionType =
   | "clinic_info_reply"
@@ -54,6 +55,10 @@ type RouteCustomerMessageInput = {
   now?: Date;
   runtimeAudienceKey?: string;
   runtimeContentOverlay?: RuntimeContentOverlay;
+  semanticTreatmentConsultation?: {
+    concern: ControlledTreatmentConcern;
+    treatmentKey: ControlledTreatmentKey;
+  };
   tenantId?: string;
 };
 
@@ -1336,6 +1341,11 @@ function buildConsultationConcernReply(
     return null;
   }
 
+  const configuredConcernReply = guide.concernReplies?.find((item) => item.concernKey === concernKey);
+  if (configuredConcernReply) {
+    return `${configuredConcernReply.reply}\n${configuredConcernReply.followupPrompt}`;
+  }
+
   const discoveryPrompt =
     concernKey === "jawline_looseness"
       ? "您較在意脂肪感、輪廓線，還是鬆弛感呢？"
@@ -1391,6 +1401,28 @@ function getConcernReply(message: string, context: ConversationContext) {
     matchedType: "guided_reply",
     replyText: `如果您想改善 ${matchedKeyword}，${matchedConcern.summary} 以院內目前可先評估的方向，常見會先從 ${recommendedTreatments.join("、")} 這幾類療程討論；實際仍要依您的部位條件、膚況與醫師評估為主。`,
   } satisfies Omit<RouterDecision, "nextContext">;
+}
+
+function getSemanticTreatmentConsultationReply(
+  consultation: NonNullable<RouteCustomerMessageInput["semanticTreatmentConsultation"]>,
+) {
+  const treatment = findTreatmentByKey(consultation.treatmentKey);
+  if (!treatment?.consultationGuide) {
+    return null;
+  }
+
+  const replyText = buildConsultationConcernReply(treatment, consultation.concern, treatment.name);
+  if (!replyText) {
+    return null;
+  }
+
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}:semantic:${consultation.concern}`,
+    matchedType: "guided_reply",
+    replyText,
+    treatment,
+  } as const;
 }
 
 function getBranchListReply() {
@@ -1939,6 +1971,7 @@ export async function routeCustomerMessage({
   now,
   runtimeAudienceKey = "",
   runtimeContentOverlay,
+  semanticTreatmentConsultation,
   tenantId,
 }: RouteCustomerMessageInput): Promise<RouterDecision> {
   const trimmedMessage = message.trim();
@@ -2124,6 +2157,21 @@ export async function routeCustomerMessage({
       ...concernReply,
       nextContext,
     };
+  }
+
+  if (semanticTreatmentConsultation) {
+    const semanticTreatmentReply = getSemanticTreatmentConsultationReply(semanticTreatmentConsultation);
+    if (semanticTreatmentReply) {
+      nextContext.lastReferencedTreatment = semanticTreatmentReply.treatment.name;
+      nextContext.lastIntent = semanticTreatmentReply.matchedKey;
+      return {
+        decisionType: semanticTreatmentReply.decisionType,
+        matchedKey: semanticTreatmentReply.matchedKey,
+        matchedType: semanticTreatmentReply.matchedType,
+        nextContext,
+        replyText: semanticTreatmentReply.replyText,
+      };
+    }
   }
 
   const treatmentConsultationFollowup = getTreatmentConsultationFollowup(trimmedMessage, nextContext);

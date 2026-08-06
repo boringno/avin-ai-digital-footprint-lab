@@ -10,6 +10,11 @@ const valid = parseControlledIntentOutput(
   metadata,
 );
 
+const validTreatmentConsultation = parseControlledIntentOutput(
+  '{"intent":"treatment_consultation","branch":null,"month":null,"treatment_key":"onda_pro","concern":"jawline_looseness","confidence":0.91}',
+  metadata,
+);
+
 const cases = [
   {
     name: "valid schedule classification is accepted",
@@ -72,6 +77,25 @@ const cases = [
   {
     name: "generic fallback message skips classifier",
     passed: !shouldUseControlledIntentClassifier("我想了解你們的服務"),
+  },
+  {
+    name: "semantic local-contour message is eligible for classification",
+    passed: shouldUseControlledIntentClassifier("側臉很肉想改善"),
+  },
+  {
+    name: "valid treatment consultation classification is accepted",
+    passed:
+      validTreatmentConsultation?.intent === "treatment_consultation" &&
+      validTreatmentConsultation.treatmentKey === "onda_pro" &&
+      validTreatmentConsultation.concern === "jawline_looseness",
+  },
+  {
+    name: "unknown treatment concern is reduced to null",
+    passed:
+      parseControlledIntentOutput(
+        '{"intent":"treatment_consultation","branch":null,"month":null,"treatment_key":"onda_pro","concern":"make_up_claim","confidence":0.91}',
+        metadata,
+      )?.concern === null,
   },
 ];
 
