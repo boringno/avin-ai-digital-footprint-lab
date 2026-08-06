@@ -87,7 +87,18 @@ async function main() {
 
   const followup = await route("我覺得脂肪感比較明顯", concern.nextContext);
   assert(followup.matchedKey === "treatment_consult:onda_pro", "T10: ONDA follow-up must preserve the consultation path");
-  assert(followup.replyText.includes("局部脂肪") && followup.replyText.includes("最想改善哪個部位"), "T10: ONDA follow-up must guide the next consultation step");
+  assert(followup.replyText.includes("臉部輪廓") && followup.replyText.includes("脂肪感") && followup.replyText.includes("先以哪個部位為主"), "T10: an ONDA follow-up must combine context and guide one next step");
+
+  const firstJawlineConcern = await route("我想改善嘴邊肉");
+  const repeatedJawlineConcern = await route("還有肉肉的雙下巴", firstJawlineConcern.nextContext);
+  assert(repeatedJawlineConcern.matchedKey === "treatment_consult:onda_pro", "T10a: a repeated ONDA concern must stay on the guided consultation path");
+  assert(repeatedJawlineConcern.replyText.includes("已記下") && repeatedJawlineConcern.replyText.includes("雙下巴"), "T10a: a repeated ONDA concern must acknowledge the added detail");
+  assert(!repeatedJawlineConcern.replyText.includes("可再依臉型"), "T10a: a repeated ONDA concern must not repeat the first-turn introduction");
+
+  const combinedConcern = await route("也想改善手臂脂肪", repeatedJawlineConcern.nextContext);
+  assert(combinedConcern.matchedKey === "treatment_consult:onda_pro", "T10b: a second ONDA body concern must stay on the guided consultation path");
+  assert(combinedConcern.replyText.includes("臉部輪廓") && combinedConcern.replyText.includes("手臂脂肪"), "T10b: a second ONDA concern must combine prior and new needs");
+  assert(combinedConcern.replyText.includes("先以哪個部位為主"), "T10b: a combined ONDA concern must advance toward one next question");
 
   const price = await route("ONDA 體驗價", intro.nextContext);
   assert(price.decisionType === "pricing_auto_reply", "T11: ONDA experience-price question must use the controlled pricing path");

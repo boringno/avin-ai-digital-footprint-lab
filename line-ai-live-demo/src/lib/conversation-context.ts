@@ -25,6 +25,10 @@ export type ConversationContext = {
   locationPreference?: string;
   preferredBranch?: string;
   pregnancyRiskFlag?: boolean;
+  treatmentConsultation?: {
+    concernKeys: string[];
+    treatmentKey: string;
+  };
   userId: string;
 };
 
