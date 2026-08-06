@@ -79,3 +79,4 @@ jobs:
           npm run validate:handoff-notification
           npm run validate:reply-tone
           npm run validate:booking-session-expiry
+          npm run validate:booking-topic-switch
