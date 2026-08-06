@@ -1335,10 +1335,21 @@ function buildConsultationConcernReply(
   treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
   concernKey: string,
   concernKeyword: string,
+  context: ConversationContext,
 ) {
   const guide = treatment.consultationGuide;
   if (!guide) {
     return null;
+  }
+
+  const previousConcernKeys = getActiveTreatmentConsultationConcernKeys(context, treatment.key);
+  if (previousConcernKeys.includes(concernKey)) {
+    return `了解😊 已記下您也在意 ${concernKeyword}。您目前最想先改善雙下巴／嘴邊肉，還是身體局部脂肪呢？`;
+  }
+
+  if (previousConcernKeys.length > 0) {
+    const previousConcernLabel = formatTreatmentConsultationConcerns(previousConcernKeys);
+    return `了解😊 已記下您在意 ${previousConcernLabel}，也想改善 ${concernKeyword}。ONDA Pro 可依臉部與身體局部需求分開評估；您想先以哪個部位為主呢？`;
   }
 
   const configuredConcernReply = guide.concernReplies?.find((item) => item.concernKey === concernKey);
@@ -1356,14 +1367,51 @@ function buildConsultationConcernReply(
   return `${concernKeyword} 可先了解 ${treatment.name}。${discoveryPrompt}`;
 }
 
+function getActiveTreatmentConsultationConcernKeys(context: ConversationContext, treatmentKey: string) {
+  if (!context.lastIntent?.startsWith(`treatment_consult:${treatmentKey}`)) {
+    return [];
+  }
+
+  if (context.treatmentConsultation?.treatmentKey !== treatmentKey) {
+    return [];
+  }
+
+  return Array.isArray(context.treatmentConsultation.concernKeys)
+    ? context.treatmentConsultation.concernKeys.filter((concernKey) => typeof concernKey === "string")
+    : [];
+}
+
+function formatTreatmentConsultationConcerns(concernKeys: string[]) {
+  const labels = concernKeys
+    .map((concernKey) => {
+      if (concernKey === "jawline_looseness") {
+        return "雙下巴／嘴邊肉等臉部輪廓";
+      }
+      if (concernKey === "local_contour") {
+        return "手臂、腹部或大腿等身體局部";
+      }
+      return null;
+    })
+    .filter((label) => label !== null);
+
+  return labels.join("、") || "局部輪廓需求";
+}
+
+function recordTreatmentConsultationConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
+  const previousConcernKeys = getActiveTreatmentConsultationConcernKeys(context, treatmentKey);
+  context.treatmentConsultation = {
+    concernKeys: Array.from(new Set([...previousConcernKeys, concernKey])),
+    treatmentKey,
+  };
+}
+
 function getConcernReply(message: string, context: ConversationContext) {
   const matchedConcern = findConcernByMessage(message);
   if (!matchedConcern) {
     return null;
   }
 
-  const matchedKeyword =
-    matchedConcern.keywords.find((keyword) => normalizeText(message).includes(normalizeText(keyword))) ?? matchedConcern.keywords[0];
+  const matchedKeyword = getCustomerConcernPhrase(message, matchedConcern.key, matchedConcern.keywords);
   const recommendedTreatments = formatConcernRecommendedTreatments(matchedConcern.key);
   if (recommendedTreatments.length === 0) {
     return null;
@@ -1375,7 +1423,7 @@ function getConcernReply(message: string, context: ConversationContext) {
     .find((treatment) => treatment?.consultationGuide);
   const guidedTreatment = consultationTreatment ?? recommendedConsultationTreatment;
   if (guidedTreatment) {
-    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedConcern.key, matchedKeyword);
+    const consultationReply = buildConsultationConcernReply(guidedTreatment, matchedConcern.key, matchedKeyword, context);
     if (consultationReply) {
       return {
         decisionType: "treatment_intro_reply",
@@ -1403,15 +1451,32 @@ function getConcernReply(message: string, context: ConversationContext) {
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
+function getCustomerConcernPhrase(message: string, concernKey: string, fallbackKeywords: string[]) {
+  const preferredPhrases =
+    concernKey === "jawline_looseness"
+      ? ["肉肉的雙下巴", "雙下巴", "嘴邊肉", "下顎線"]
+      : concernKey === "local_contour"
+        ? ["手臂脂肪", "腹部脂肪", "大腿脂肪", "局部脂肪", "橘皮", "手臂", "腹部", "大腿"]
+        : [];
+  const normalizedMessage = normalizeText(message);
+
+  return (
+    preferredPhrases.find((phrase) => normalizedMessage.includes(normalizeText(phrase))) ??
+    fallbackKeywords.find((keyword) => normalizedMessage.includes(normalizeText(keyword))) ??
+    fallbackKeywords[0]
+  );
+}
+
 function getSemanticTreatmentConsultationReply(
   consultation: NonNullable<RouteCustomerMessageInput["semanticTreatmentConsultation"]>,
+  context: ConversationContext,
 ) {
   const treatment = findTreatmentByKey(consultation.treatmentKey);
   if (!treatment?.consultationGuide) {
     return null;
   }
 
-  const replyText = buildConsultationConcernReply(treatment, consultation.concern, treatment.name);
+  const replyText = buildConsultationConcernReply(treatment, consultation.concern, treatment.name, context);
   if (!replyText) {
     return null;
   }
@@ -2149,6 +2214,10 @@ export async function routeCustomerMessage({
     const guidedTreatment = guidedTreatmentKey ? findTreatmentByKey(guidedTreatmentKey) : null;
     if (guidedTreatment) {
       nextContext.lastReferencedTreatment = guidedTreatment.name;
+      const matchedConcern = findConcernByMessage(trimmedMessage);
+      if (matchedConcern) {
+        recordTreatmentConsultationConcern(nextContext, guidedTreatment.key, matchedConcern.key);
+      }
     }
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext)
       ? "booking_intake"
@@ -2160,9 +2229,14 @@ export async function routeCustomerMessage({
   }
 
   if (semanticTreatmentConsultation) {
-    const semanticTreatmentReply = getSemanticTreatmentConsultationReply(semanticTreatmentConsultation);
+    const semanticTreatmentReply = getSemanticTreatmentConsultationReply(semanticTreatmentConsultation, nextContext);
     if (semanticTreatmentReply) {
       nextContext.lastReferencedTreatment = semanticTreatmentReply.treatment.name;
+      recordTreatmentConsultationConcern(
+        nextContext,
+        semanticTreatmentReply.treatment.key,
+        semanticTreatmentConsultation.concern,
+      );
       nextContext.lastIntent = semanticTreatmentReply.matchedKey;
       return {
         decisionType: semanticTreatmentReply.decisionType,
