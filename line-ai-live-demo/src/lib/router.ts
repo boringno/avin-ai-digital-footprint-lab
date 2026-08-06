@@ -16,6 +16,7 @@ import { getHumanSupportStatus } from "@/lib/human-support";
 import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
 import { loadRuntimeContentOverlay, type RuntimeContentOverlay } from "@/lib/runtime-content-release";
+import { isPriceInquiry, isPromotionBrowseIntent, PRICE_ASK_TERMS, resolvePricingSubject } from "@/lib/pricing-subject";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -113,9 +114,8 @@ const FIRST_VISIT_TERMS = ["第一次", "初診", "要準備什麼", "需要準�
 const NEAREST_BRANCH_TERMS = ["最近", "哪一間", "哪間", "離我最近"];
 const PAYMENT_TERMS = ["付款", "刷卡", "轉帳", "匯款", "現金", "信用卡"];
 const PHONE_TERMS = ["電話", "聯絡方式", "專線"];
-const PRICE_TERMS = ["價格", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價"];
-const PROMOTION_INTENT_TERMS = clinicConfig.pricePolicy.inquiryAliases;
-const PRICE_OR_PROMOTION_TERMS = Array.from(new Set([...PRICE_TERMS, ...PROMOTION_INTENT_TERMS]));
+const PRICE_TERMS = PRICE_ASK_TERMS;
+const PRICE_OR_PROMOTION_TERMS = PRICE_ASK_TERMS;
 const SUPPORT_HOURS_TERMS = ["真人客服", "客服時間", "客服幾點", "有人嗎"];
 const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
 const EFFECT_GUARANTEE_TERMS = ["保證有效", "一定有效", "保證改善", "一定會改善", "保證有感", "一定有感", "效果保證"];
@@ -335,7 +335,7 @@ function campaignIsActive(campaign: PricingCampaign, today: Date) {
 }
 
 function isPromotionIntent(message: string) {
-  return includesAnyTerm(message, PROMOTION_INTENT_TERMS);
+  return isPromotionBrowseIntent(message);
 }
 
 function getActivePricingCampaigns(pricingCampaigns: PricingCampaign[], includePending: boolean, today: Date) {
@@ -419,74 +419,16 @@ function getPromotionOverviewGroups(pricingCampaigns: PricingCampaign[]) {
   return [...groups.values()];
 }
 
-function getContextualPricingTerms(message: string, context: ConversationContext) {
-  const terms = new Set<string>();
-  const matchedTreatment = findTreatmentByMessage(message);
-  if (matchedTreatment) {
-    terms.add(matchedTreatment.name);
-    matchedTreatment.aliases.forEach((alias) => terms.add(alias));
-  }
-
-  const bookingTreatments = context.bookingDraft.treatment
-    ?.split(/[、,，]/)
-    .map((item) => item.trim())
-    .filter(Boolean) ?? [];
-
-  [
-    context.lastReferencedTreatment,
-    ...bookingTreatments,
-  ]
-    .filter((term): term is string => Boolean(term))
-    .forEach((term) => {
-      terms.add(term);
-      const matchedConfig = findTreatmentConfigByName(term);
-      if (matchedConfig) {
-        terms.add(matchedConfig.name);
-        matchedConfig.aliases.forEach((alias) => terms.add(alias));
-      }
-    });
-
-  return [...terms].map((term) => normalizeText(term)).filter(Boolean);
-}
-
-function findExplicitPricingMatch(message: string, activeCampaigns: PricingCampaign[]) {
-  const normalizedMessage = normalizeText(message);
-  return [...activeCampaigns]
-    .sort((left, right) => right.treatment_name.length - left.treatment_name.length)
-    .find((campaign) => getCampaignSearchTerms(campaign).some((term) => normalizedMessage.includes(term)));
-}
-
-function matchPricing(
-  message: string,
-  context: ConversationContext,
-  pricingCampaigns: PricingCampaign[],
-  includePending: boolean,
-  today: Date,
-) {
-  const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
-  const explicitMatch = findExplicitPricingMatch(message, activeCampaigns);
-
-  if (explicitMatch) {
-    return explicitMatch;
-  }
-
-  const contextualTerms = getContextualPricingTerms(message, context);
-  if (contextualTerms.length === 0) {
+function findPricingCampaignForTreatmentKey(treatmentKey: string, activeCampaigns: PricingCampaign[]) {
+  const treatment = findTreatmentByKey(treatmentKey);
+  if (!treatment) {
     return null;
   }
 
-  // Contextual terms are ordered by recency: the current conversation topic
-  // must win over an older booking draft from the same customer.
-  for (const contextualTerm of contextualTerms) {
-    const campaign = activeCampaigns.find((candidate) =>
-      getCampaignSearchTerms(candidate).includes(contextualTerm),
-    );
-    if (campaign) {
-      return campaign;
-    }
-  }
-
-  return null;
+  const treatmentTerms = new Set([treatment.name, ...treatment.aliases].map((term) => normalizeText(term)));
+  return activeCampaigns.find((campaign) =>
+    getCampaignSearchTerms(campaign).some((term) => treatmentTerms.has(term)),
+  ) ?? null;
 }
 
 function clearStaleTreatmentConsultation(context: ConversationContext, now: Date) {
@@ -899,8 +841,23 @@ function shouldKeepBookingMode(
   return (
     isBookingConversationIntent(previousContext?.lastIntent) &&
     hasBookingDraftValue(nextContext) &&
-    !(message && isFreshTreatmentInquiry(message, previousContext))
+    !(message && (isFreshTreatmentInquiry(message, previousContext) || isBookingContextDetour(message)))
   );
+}
+
+function isBookingContextDetour(message: string) {
+  // A factual clinic question may be asked during booking, but it should not
+  // keep the booking intent alive forever. The draft remains intact; only the
+  // current topic changes so later generic questions do not inherit it.
+  return includesAnyTerm(message, [
+    ...ADDRESS_TERMS,
+    ...BUSINESS_HOUR_TERMS,
+    ...DOCTOR_SCHEDULE_TERMS,
+    ...NEAREST_BRANCH_TERMS,
+    ...PAYMENT_TERMS,
+    ...PHONE_TERMS,
+    ...TRANSPORT_TERMS,
+  ]);
 }
 
 function isFreeTextBookingInfoQuestion(message: string) {
@@ -2049,20 +2006,20 @@ function getPricingReply(
   pricingCampaigns: PricingCampaign[],
   includePending: boolean,
   today: Date,
+  bookingIntentActive: boolean,
 ) {
-  if (!includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS)) {
+  if (!isPriceInquiry(message)) {
     return null;
   }
 
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
-  const explicitPricingMatch = findExplicitPricingMatch(message, activeCampaigns);
-  const namedTreatment = findTreatmentByMessage(message);
+  const subject = resolvePricingSubject(message, context, {
+    bookingIntentActive,
+    contextualMaxAgeMs: TREATMENT_CONSULTATION_SESSION_MS,
+    now: today,
+  });
 
-  // A broad campaign question must not inherit the prior treatment context.
-  // Only a treatment named in this message itself may narrow the response. If
-  // that treatment has no active approved campaign, keep the question on the
-  // controlled pricing-followup path rather than showing unrelated offers.
-  if (isPromotionIntent(message) && !explicitPricingMatch && !namedTreatment && activeCampaigns.length > 0) {
+  if (subject.kind === "browse" && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
     const carouselCards = buildPromotionCarouselCards(activeCampaigns);
     return {
@@ -2076,8 +2033,21 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  const matchedPricing = matchPricing(message, context, pricingCampaigns, includePending, today);
-  if (matchedPricing) {
+  if (subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual") {
+    const matchedPricing = findPricingCampaignForTreatmentKey(subject.treatmentKey, activeCampaigns);
+    const treatment = findTreatmentByKey(subject.treatmentKey);
+    if (!matchedPricing) {
+      return {
+        decisionType: "pricing_auto_reply",
+        matchedKey: "pricing_followup",
+        matchedType: "guided_reply",
+        nextContext: context,
+        replyText: treatment
+          ? `目前尚未提供 ${treatment.name} 的核准價格方案。我可以先幫您安排免費諮詢，或請客服協助確認。`
+          : "想了解哪個療程的價格或優惠呢？我可以先幫您確認核准方案。",
+      } satisfies RouterDecision;
+    }
+
     const replyText = buildPricingReply(matchedPricing);
     return {
       decisionType: "pricing_auto_reply",
@@ -2089,26 +2059,12 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  if (isPromotionIntent(message) && !namedTreatment && activeCampaigns.length > 0) {
-    const replyText = buildPromotionOverviewReply(activeCampaigns);
-    const carouselCards = buildPromotionCarouselCards(activeCampaigns);
-    return {
-      decisionType: "pricing_auto_reply",
-      matchedKey: "promotion_overview",
-      matchedType: "pricing_campaign",
-      nextContext: context,
-      replyMessages: carouselCards.length > 0 ? [buildPromotionCarouselMessage(carouselCards, "目前活動優惠")] : undefined,
-      replyText,
-      suppressAiFooter: carouselCards.length > 0,
-    } satisfies RouterDecision;
-  }
-
   return {
     decisionType: "pricing_auto_reply",
-    matchedKey: isPromotionIntent(message) ? "promotion_followup" : "pricing_followup",
+    matchedKey: "pricing_followup",
     matchedType: "guided_reply",
     nextContext: context,
-    replyText: clinicConfig.pricePolicy.fallbackSummary,
+    replyText: "想了解哪個療程的價格或優惠呢？我可以先幫您確認核准方案。",
   } satisfies RouterDecision;
 }
 
@@ -2474,16 +2430,20 @@ export async function routeCustomerMessage({
 
   const pricingReply = getPricingReply(
     trimmedMessage,
-    nextContext,
+    previousContext,
     runtimeData.pricingCampaigns,
     includePending,
     currentTime,
+    isBookingConversationIntent(previousContext.lastIntent),
   );
   if (pricingReply) {
     nextContext.lastIntent = shouldKeepBookingMode(conversationContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : pricingReply.matchedKey;
-    return pricingReply;
+    return {
+      ...pricingReply,
+      nextContext,
+    };
   }
 
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);

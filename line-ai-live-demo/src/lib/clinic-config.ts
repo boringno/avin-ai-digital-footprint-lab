@@ -89,8 +89,8 @@ export type ClinicConfig = {
     summary: string;
   };
   pricePolicy: {
+    browseTerms: string[];
     fallbackSummary: string;
-    inquiryAliases: string[];
     overviewPrefix: string;
   };
   concernList: ConcernConfig[];
@@ -205,29 +205,21 @@ export const clinicConfig: ClinicConfig = {
     summary: "目前可提供現金或線上轉帳；若單筆消費滿 3000 元，也可刷卡。",
   },
   pricePolicy: {
-    fallbackSummary:
-      "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
-    inquiryAliases: [
-      "活動",
-      "活動療程",
+    browseTerms: [
       "現在活動",
       "現在活動有哪些",
       "目前活動",
       "目前活動有哪些",
       "近期活動",
       "最近活動",
-      "優惠",
       "優惠有哪些",
       "有什麼優惠",
-      "優惠方案",
-      "優惠活動",
-      "方案",
-      "體驗價",
-      "折扣",
       "現在有什麼優惠",
       "最近有什麼活動",
       "現在有什麼活動",
     ],
+    fallbackSummary:
+      "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
     overviewPrefix: "目前可先參考的近期活動如下",
   },
   concernList: [

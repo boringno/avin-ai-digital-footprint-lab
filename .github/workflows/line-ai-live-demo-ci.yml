@@ -81,3 +81,4 @@ jobs:
           npm run validate:booking-session-expiry
           npm run validate:booking-topic-switch
           npm run validate:conversation-flows
+          npm run validate:pricing-subject

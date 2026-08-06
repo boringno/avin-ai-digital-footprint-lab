@@ -198,10 +198,10 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "pricing_auto_reply",
-    expectedMatchedKey: "promotion_overview",
-    expectedReplyMessageCount: 1,
+    expectedMatchedKey: "pricing_followup",
+    expectedReplyMessageCount: 0,
     message: "鳳凰電波活動是什麼",
-    replyIncludes: ["目前可先參考的近期活動如下", "十蓓電波200發"],
+    replyIncludes: ["想了解哪個療程的價格或優惠呢"],
   },
   {
     expectedDecisionType: "handoff_pending",
