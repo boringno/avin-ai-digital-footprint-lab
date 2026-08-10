@@ -39,11 +39,12 @@ async function main() {
     concernReplies: [
       {
         concernKey: "jawline_looseness",
+        discoveryLabel: "fixture concern",
         followupPrompt: "想先了解哪個方向呢？",
         reply: "fixture only",
       },
     ],
-    discoveryPrompt: "fixture only",
+    discoveryQuestion: "fixture only",
     featureSummary: "fixture only",
     followupPrompt: "fixture only",
   };

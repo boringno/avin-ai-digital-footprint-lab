@@ -8,6 +8,7 @@
   listActiveBranches,
   normalizeClinicText,
   type BranchConfig,
+  type TreatmentConversationPack,
 } from "@/lib/clinic-config";
 import type { ConversationContext } from "@/lib/conversation-context";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
@@ -903,6 +904,11 @@ function isFreshTreatmentInquiry(message: string, previousContext: ConversationC
     return false;
   }
 
+  const normalizedMessage = normalizeText(message);
+  if (/(?:還|也)(?:想|要).{0,4}(?:打|做)|(?:加做|一起做)/u.test(normalizedMessage)) {
+    return false;
+  }
+
   if (findConcernByMessage(message) || isGenericTreatmentInquiry(message)) {
     return true;
   }
@@ -1477,6 +1483,54 @@ function findConsultationQuickReply(
   return treatment.consultationGuide?.quickReplies?.find((item) => includesAnyTerm(message, item.terms)) ?? null;
 }
 
+const CONSULTATION_OPTION_MARKERS = [
+  ["1", "①", "選1", "選①", "第一個", "第一項"],
+  ["2", "②", "選2", "選②", "第二個", "第二項"],
+  ["3", "③", "選3", "選③", "第三個", "第三項"],
+  ["4", "④", "選4", "選④", "第四個", "第四項"],
+] as const;
+
+function matchesConsultationOption(message: string, optionIndex: number, selectionTerms: string[] = []) {
+  const normalizedMessage = normalizeText(message);
+  const markers = CONSULTATION_OPTION_MARKERS[optionIndex] ?? [];
+  return markers.some((marker) => normalizedMessage === normalizeText(marker)) || includesAnyTerm(message, selectionTerms);
+}
+
+function buildConsultationDiscoveryPrompt(guide: TreatmentConversationPack) {
+  const labels = (guide.concernReplies ?? []).map((item) => item.discoveryLabel);
+  if (guide.discoveryFallbackOption) labels.push(guide.discoveryFallbackOption.label);
+
+  return [
+    guide.discoveryQuestion,
+    ...labels.map((label, index) => `${CONSULTATION_OPTION_MARKERS[index]?.[1] ?? `${index + 1}.`}${label}`),
+  ].join("\n");
+}
+
+function findConsultationDiscoverySelection(
+  treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
+  message: string,
+) {
+  const guide = treatment.consultationGuide;
+  if (!guide) return null;
+
+  const concernReplies = guide.concernReplies ?? [];
+  const concernIndex = concernReplies.findIndex((item, index) =>
+    matchesConsultationOption(message, index, item.selectionTerms),
+  );
+  if (concernIndex >= 0) {
+    return { concernReply: concernReplies[concernIndex], kind: "concern" as const };
+  }
+
+  if (
+    guide.discoveryFallbackOption &&
+    matchesConsultationOption(message, concernReplies.length, guide.discoveryFallbackOption.selectionTerms)
+  ) {
+    return { fallbackOption: guide.discoveryFallbackOption, kind: "fallback" as const };
+  }
+
+  return null;
+}
+
 function buildConsultationQuickReply(
   treatment: NonNullable<ReturnType<typeof getConsultationTreatment>>,
   message: string,
@@ -1572,7 +1626,7 @@ function buildConsultationConcernReply(
       ? "您較在意脂肪感、輪廓線，還是鬆弛感呢？"
       : concernKey === "local_contour"
         ? "您較在意腹部、手臂或大腿哪個部位呢？"
-        : guide.discoveryPrompt;
+      : buildConsultationDiscoveryPrompt(guide);
 
   return {
     aspectKey: `concern:${concernKey}:overview`,
@@ -1711,9 +1765,20 @@ function buildTreatmentClarificationReply(treatmentNames: string[]) {
 
 function getConcernReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
   const consultationTreatment = getConsultationTreatment(context);
-  const selectedConcernReply = consultationTreatment?.consultationGuide?.concernReplies?.find(
-    (item) => item.selectionTerms && includesAnyTerm(message, item.selectionTerms),
-  );
+  const discoverySelection = consultationTreatment
+    ? findConsultationDiscoverySelection(consultationTreatment, message)
+    : null;
+  if (discoverySelection?.kind === "fallback") {
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:${consultationTreatment?.key}:other`,
+      matchedType: "guided_reply",
+      replyText: discoverySelection.fallbackOption.followupPrompt,
+    };
+  }
+  const selectedConcernReply = discoverySelection?.kind === "concern"
+    ? discoverySelection.concernReply
+    : null;
   const matchedConcern = selectedConcernReply
     ? clinicConfig.concernList.find((item) => item.key === selectedConcernReply.concernKey) ?? null
     : findConcernByMessage(message);
@@ -2204,7 +2269,7 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_intro:${matchedTreatment.key}`,
     matchedType: "config",
-    replyText: `${approvedIntroReply}${consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? consultationGuide.discoveryPrompt : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
+    replyText: `${approvedIntroReply}${consultationGuide ? "" : ` ${matchedTreatment.evaluationNote}`}${branchAvailabilityNote ? ` ${branchAvailabilityNote}` : ""}\n${consultationGuide ? buildConsultationDiscoveryPrompt(consultationGuide) : "如果您願意，也可以告訴我想改善的部位，以及方便的館別，我先幫您整理諮詢方向。"}`,
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 

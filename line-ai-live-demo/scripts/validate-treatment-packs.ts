@@ -79,7 +79,13 @@ function validatePackSchema() {
   assert(packs.length > 0, "TP4: at least one treatment conversation pack must be configured");
 
   for (const treatment of packs) {
+    const concernReplies = treatment.consultationGuide?.concernReplies ?? [];
     const aspectKeys = treatment.consultationGuide?.detailReplies?.map((item) => item.aspectKey) ?? [];
+    assert(concernReplies.length > 0, `TP4: ${treatment.name} requires at least one discovery option`);
+    assert(
+      concernReplies.every((item) => item.discoveryLabel.trim()),
+      `TP4: ${treatment.name} discovery options require labels generated from the same concern records`,
+    );
     assert(aspectKeys.every(Boolean), `TP4: ${treatment.name} detail replies require stable aspect keys`);
     assert(
       new Set(aspectKeys).size === aspectKeys.length,
@@ -88,6 +94,49 @@ function validatePackSchema() {
   }
 
   console.log("PASS: TP4 treatment pack schema has stable, unique detail aspect keys");
+}
+
+async function validateGeneratedDiscoveryOptions() {
+  for (const treatment of clinicConfig.treatmentList.filter((item) => item.consultationGuide)) {
+    const guide = treatment.consultationGuide!;
+    const introduction = await runTurns([`我想了解${treatment.name}`]);
+
+    for (const [index, concernReply] of (guide.concernReplies ?? []).entries()) {
+      assert(
+        introduction.decisions[0].replyText.includes(concernReply.discoveryLabel),
+        `TP6: ${treatment.name} generated discovery prompt must include option ${index + 1}`,
+      );
+      const selected = await runTurns([`我想了解${treatment.name}`, String(index + 1)]);
+      assert(
+        selected.decisions[1].matchedKey === `treatment_consult:${treatment.key}`,
+        `TP6: ${treatment.name} numeric option ${index + 1} must route to its declared concern`,
+      );
+      assert(
+        selected.decisions[1].replyText.includes(concernReply.reply.split("\n")[0]),
+        `TP6: ${treatment.name} numeric option ${index + 1} must use its configured reply`,
+      );
+    }
+
+    if (guide.discoveryFallbackOption) {
+      const fallbackIndex = (guide.concernReplies?.length ?? 0) + 1;
+      const selected = await runTurns([`我想了解${treatment.name}`, String(fallbackIndex)]);
+      assert(
+        selected.decisions[1].matchedKey === `treatment_consult:${treatment.key}:other`,
+        `TP6: ${treatment.name} fallback option must not repeat the generic treatment paragraph`,
+      );
+    }
+  }
+
+  const wrinkleTerms = ["皺眉紋", "我在意皺眉紋", "眉間紋", "川字紋", "抬頭紋"];
+  for (const message of wrinkleTerms) {
+    const routed = await runTurns(["我想了解肉毒", message]);
+    assert(routed.decisions[1].matchedKey === "treatment_consult:botox", `TP6: ${message} must enter the Botox concern reply`);
+    assert(routed.decisions[1].replyText.includes("動態紋路"), `TP6: ${message} must not fall back to the generic Botox paragraph`);
+  }
+
+  const masseter = await runTurns(["我想了解肉毒", "2"]);
+  assert(masseter.decisions[1].replyText.includes("肉毒小臉"), "TP6: Botox option 2 must enter the masseter concern reply");
+  console.log("PASS: TP6 generated discovery options route every displayed choice and Botox wrinkle synonym");
 }
 
 async function validateCrossCategoryPackReuse() {
@@ -149,7 +198,8 @@ async function main() {
   await validatePrimaryConcernDoesNotLoop();
   validatePackSchema();
   await validateCrossCategoryPackReuse();
-  console.log("treatment pack validation passed (5 scenarios)");
+  await validateGeneratedDiscoveryOptions();
+  console.log("treatment pack validation passed (6 scenarios)");
 }
 
 main().catch((error) => {
