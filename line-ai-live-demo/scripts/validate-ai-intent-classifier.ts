@@ -6,6 +6,10 @@ import {
 } from "@/lib/ai-intent-classifier";
 
 async function main() {
+process.exitCode = 1;
+const watchdog = setTimeout(() => {
+  console.error("FAIL: classifier timeout validation did not settle");
+}, 1_000);
 const originalFetch = globalThis.fetch;
 const originalEnvironment = {
   aiProvider: process.env.AI_PROVIDER,
@@ -147,10 +151,10 @@ for (const item of cases) {
   console.log(`${item.passed ? "PASS" : "FAIL"}: ${item.name}`);
 }
 
-if (failed.length > 0) {
-  process.exitCode = 1;
-} else {
+clearTimeout(watchdog);
+if (failed.length === 0) {
   console.log(`AI intent classifier validation passed: ${cases.length} cases`);
+  process.exitCode = 0;
 }
 }
 
