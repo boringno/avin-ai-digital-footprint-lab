@@ -180,6 +180,11 @@ export async function classifyControlledIntent(message: string): Promise<Control
     return null;
   }
 
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => {
+    abortController.abort(new Error("OpenAI intent classifier timed out"));
+  }, config.openAiIntentClassifierTimeoutMs);
+
   try {
     const response = await fetch(OPENAI_RESPONSES_API_URL, {
       method: "POST",
@@ -193,6 +198,7 @@ export async function classifyControlledIntent(message: string): Promise<Control
         max_output_tokens: config.openAiIntentClassifierMaxTokens,
         model: config.openAiModel,
       }),
+      signal: abortController.signal,
     });
 
     const rawText = await response.text();
@@ -219,6 +225,8 @@ export async function classifyControlledIntent(message: string): Promise<Control
       source: "openai_intent_classifier",
     });
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
