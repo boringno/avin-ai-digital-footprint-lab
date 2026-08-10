@@ -147,6 +147,12 @@ export function canViewOperationalDebug(role: StaffRole) {
   return role === "owner" || role === "maintainer";
 }
 
+// NLU disagreement review can join diagnostics back to customer messages.
+// Analysts remain limited to de-identified aggregate reports.
+export function canReviewNluDisagreements(role: StaffRole) {
+  return role === "owner" || role === "maintainer";
+}
+
 // Engineering knowledge includes internal routing and source metadata. It is
 // intentionally narrower than ordinary content management.
 export function canViewEngineeringKnowledge(role: StaffRole) {
