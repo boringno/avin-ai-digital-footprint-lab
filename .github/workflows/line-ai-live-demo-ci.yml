@@ -50,6 +50,7 @@ jobs:
           npm run validate:onda-xiaoying-flow
           npm run validate:clinic-ontology
           npm run validate:clinic-ontology-matcher
+          npm run validate:routing-snapshot
           npm run validate:ci-parity
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation
