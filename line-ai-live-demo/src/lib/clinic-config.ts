@@ -304,7 +304,7 @@ export const clinicConfig: ClinicConfig = {
             campaignId: "promo-2026-08-face-contour-combo",
             concernKey: "jawline_looseness",
             reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟥 目前很推薦 ONDA Pro 搭配肉毒小臉，很多在意下顎線的客人都會選擇這個組合\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落",
-            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
             selectionTerms: ["①", "選1", "第一個", "臉部", "臉部輪廓"],
             startsBookingIntake: true,
           },
@@ -313,7 +313,7 @@ export const clinicConfig: ClinicConfig = {
             campaignId: "promo-2026-08-05-onda-pro",
             concernKey: "local_contour",
             reply: "②身體局部脂肪堆積（手臂／肚子／橘皮）\n\n🟥 很多在意身體局部脂肪堆積、產後腹部鬆弛等等困擾都可以由醫師評估是否適合\n\n🔥 破壞頑固脂肪／減少脂肪厚度\n\n🔥 改善橘皮組織／凹凸不平\n👉 減少橘皮紋路，皮膚更平滑\n\n❄️ 超舒適、無傷口\n❄️ 無需敷麻、幾乎無修復期\n❄️ 療程快速、立即有感\n❄️ 安全無副作用\n\n😊 由於每個人的脂肪分布、厚度及鬆弛狀況不同，建議您預約現場諮詢，由醫師親自評估後，才能為您規劃較適合的施作部位與療程次數唷🤍",
-            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
             selectionTerms: ["②", "選2", "第二個", "身體", "身體局部"],
             startsBookingIntake: true,
           },
@@ -327,7 +327,7 @@ export const clinicConfig: ClinicConfig = {
             terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
-            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
             startsBookingIntake: true,
           },
           {
@@ -369,7 +369,7 @@ export const clinicConfig: ClinicConfig = {
           {
             bookingTreatmentKeys: ["onda_pro", "botox"],
             campaignId: "promo-2026-08-face-contour-combo",
-            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
             key: "botox_small_face",
             reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與脂肪分布評估是否適合此療程，再提供最適合的建議",
             startsBookingIntake: true,
