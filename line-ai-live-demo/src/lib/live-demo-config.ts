@@ -35,6 +35,9 @@ export type RuntimeConfig = {
   openAiIntentClassifierMinConfidence: number;
   openAiMaxTokens: number;
   openAiModel: string;
+  openAiNluMode: "off" | "shadow" | "decision";
+  openAiNluSampleRate: number;
+  openAiNluTimeoutMs: number;
   retentionSweepMode: string;
   resendApiKey: string;
   sentryAuthToken: string;
@@ -103,6 +106,10 @@ export function getRuntimeConfig(): RuntimeConfig {
     : getDefaultSeedDir(appRoot);
   const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
 
+  const openAiNluMode = ["shadow", "decision"].includes((process.env.OPENAI_NLU_MODE ?? "off").toLowerCase())
+    ? (process.env.OPENAI_NLU_MODE ?? "off").toLowerCase() as "shadow" | "decision"
+    : "off";
+
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
     aiProvider: (process.env.AI_PROVIDER ?? "anthropic").toLowerCase() === "openai" ? "openai" : "anthropic",
@@ -139,6 +146,9 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiIntentClassifierMinConfidence: parseConfidence(process.env.OPENAI_INTENT_CLASSIFIER_MIN_CONFIDENCE, 0.85),
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
+    openAiNluMode,
+    openAiNluSampleRate: parseConfidence(process.env.OPENAI_NLU_SAMPLE_RATE, 0),
+    openAiNluTimeoutMs: parseInteger(process.env.OPENAI_NLU_TIMEOUT_MS, 700),
     retentionSweepMode: process.env.RETENTION_SWEEP_MODE ?? "",
     resendApiKey: process.env.RESEND_API_KEY ?? "",
     sentryAuthToken: process.env.SENTRY_AUTH_TOKEN ?? "",

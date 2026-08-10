@@ -43,6 +43,7 @@
     "validate:clinic-ontology-matcher": "tsx scripts/validate-clinic-ontology-matcher.ts",
     "validate:routing-snapshot": "tsx scripts/validate-routing-snapshot.ts",
     "validate:nlu-frame": "tsx scripts/validate-nlu-frame.ts",
+    "validate:nlu-shadow": "tsx scripts/validate-nlu-shadow.ts",
     "validate:ci-parity": "tsx scripts/validate-ci-parity.ts",
     "validate:conversation-store": "tsx scripts/validate-conversation-store.ts",
     "validate:treatment-consultation-flow": "tsx scripts/validate-treatment-consultation-flow.ts",
