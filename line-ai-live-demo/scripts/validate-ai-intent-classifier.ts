@@ -1,8 +1,51 @@
 import {
+  classifyControlledIntent,
   isHighConfidenceControlledIntent,
   parseControlledIntentOutput,
   shouldUseControlledIntentClassifier,
 } from "@/lib/ai-intent-classifier";
+
+async function main() {
+process.exitCode = 1;
+const watchdog = setTimeout(() => {
+  console.error("FAIL: classifier timeout validation did not settle");
+}, 1_000);
+const originalFetch = globalThis.fetch;
+const originalEnvironment = {
+  aiProvider: process.env.AI_PROVIDER,
+  apiKey: process.env.OPENAI_API_KEY,
+  enabled: process.env.OPENAI_INTENT_CLASSIFIER_ENABLED,
+  timeout: process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS,
+};
+
+process.env.AI_PROVIDER = "openai";
+process.env.OPENAI_API_KEY = "test-key";
+process.env.OPENAI_INTENT_CLASSIFIER_ENABLED = "true";
+process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS = "10";
+globalThis.fetch = (_input, init) =>
+  new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => {
+      reject(init.signal?.reason ?? new Error("aborted"));
+    });
+  });
+
+const timeoutStartedAt = Date.now();
+const timedOutClassification = await classifyControlledIntent("想看高雄本月門診時間");
+const timeoutElapsedMs = Date.now() - timeoutStartedAt;
+
+globalThis.fetch = originalFetch;
+for (const [key, value] of Object.entries({
+  AI_PROVIDER: originalEnvironment.aiProvider,
+  OPENAI_API_KEY: originalEnvironment.apiKey,
+  OPENAI_INTENT_CLASSIFIER_ENABLED: originalEnvironment.enabled,
+  OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS: originalEnvironment.timeout,
+})) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
 
 const metadata = { model: "test-model", tokensIn: 10, tokensOut: 8 };
 const valid = parseControlledIntentOutput(
@@ -75,6 +118,10 @@ const cases = [
     passed: shouldUseControlledIntentClassifier("想看高雄本月門診時間"),
   },
   {
+    name: "classifier timeout fails open without hanging the webhook path",
+    passed: timedOutClassification === null && timeoutElapsedMs < 500,
+  },
+  {
     name: "generic fallback message skips classifier",
     passed: !shouldUseControlledIntentClassifier("我想了解你們的服務"),
   },
@@ -104,8 +151,14 @@ for (const item of cases) {
   console.log(`${item.passed ? "PASS" : "FAIL"}: ${item.name}`);
 }
 
-if (failed.length > 0) {
-  process.exitCode = 1;
-} else {
+clearTimeout(watchdog);
+if (failed.length === 0) {
   console.log(`AI intent classifier validation passed: ${cases.length} cases`);
+  process.exitCode = 0;
 }
+}
+
+void main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
