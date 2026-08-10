@@ -1583,6 +1583,16 @@ function buildConsultationConcernReply(
 
   if (previousConcernKeys.includes(concernKey)) {
     if (matchingDetailReplies.length > 0) {
+      const bookingDetailReply = matchingDetailReplies.find((item) => item.startsBookingIntake);
+      if (bookingDetailReply) {
+        return {
+          aspectKey: "followup:booking",
+          bookingTreatmentKeys: bookingDetailReply.bookingTreatmentKeys,
+          replyText: `${treatment.name} 關於 ${concernKeyword} 的需求已記下。${bookingDetailReply.followupPrompt}`,
+          startsBookingIntake: true,
+        };
+      }
+
       return {
         aspectKey: "followup:consultation",
         replyText: `😊 ${treatment.name} 關於 ${concernKeyword} 的重點已先為您整理。您想接著了解體驗價，還是安排免費諮詢呢？`,

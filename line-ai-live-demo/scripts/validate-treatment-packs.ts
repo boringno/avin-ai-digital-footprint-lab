@@ -139,6 +139,32 @@ async function validateGeneratedDiscoveryOptions() {
   console.log("PASS: TP6 generated discovery options route every displayed choice and Botox wrinkle synonym");
 }
 
+async function validateBotoxWrinkleProgression() {
+  const { context, decisions } = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋"]);
+
+  assert(
+    decisions[2].replyText.includes("皺眉紋／眉間紋") && decisions[2].replyText.includes("999"),
+    "TP7: a specified wrinkle area must receive its configured detail and approved price",
+  );
+  assert(decisions[2].replyText.includes("預約諮詢是免費的"), "TP7: the wrinkle detail must offer free consultation");
+  assert(context.bookingDraft.treatment?.includes("肉毒"), "TP7: the specified wrinkle area must start Botox booking intake");
+  assert(
+    context.treatmentConsultation?.answeredAspectKeys?.includes("detail:dynamic_wrinkles_frown_lines"),
+    "TP7: the specified wrinkle area must persist as an answered detail",
+  );
+  assert(
+    !decisions[2].replyText.includes("已記下您也在意") && !decisions[3].replyText.includes("已記下您也在意"),
+    "TP7: a detail inside the selected concern must not be treated as another competing concern",
+  );
+  assert(decisions[2].replyText !== decisions[3].replyText, "TP7: repeating the same wrinkle must not replay identical copy");
+  assert(
+    decisions[3].nextContext.lastIntent === "booking_intake" && decisions[3].replyText.includes("平日還是假日"),
+    "TP7: repeating a booked detail must continue booking intake instead of returning to consultation discovery",
+  );
+  assert(!decisions[3].replyText.includes("999"), "TP7: repeating a booked detail must not repeat the price quote");
+  console.log("PASS: TP7 Botox wrinkle detail advances to price and booking without a priority loop");
+}
+
 async function validateCrossCategoryPackReuse() {
   const expectedPackKeys = ["onda_pro", "botox", "pico"];
   const configuredPacks = clinicConfig.treatmentList.filter((treatment) => treatment.consultationGuide);
@@ -199,7 +225,8 @@ async function main() {
   validatePackSchema();
   await validateCrossCategoryPackReuse();
   await validateGeneratedDiscoveryOptions();
-  console.log("treatment pack validation passed (6 scenarios)");
+  await validateBotoxWrinkleProgression();
+  console.log("treatment pack validation passed (7 scenarios)");
 }
 
 main().catch((error) => {
