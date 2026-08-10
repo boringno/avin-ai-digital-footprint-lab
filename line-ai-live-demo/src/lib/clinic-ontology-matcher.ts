@@ -4,6 +4,7 @@ import { clinicOntology } from "@/lib/clinic-ontology";
 const NEGATION_PATTERNS = [
   /不(?:想|要|考慮|需要|接受|打|做|用)/u,
   /不要/u,
+  /不是(?:想|要|在)(?:問|了解|考慮|打|做|用)?/u,
   /別(?:打|做|用|推薦)/u,
   /排除/u,
 ] as const;
@@ -68,7 +69,11 @@ export function matchClinicOntology(message: string): OntologyMatchResult {
   return {
     areas,
     concerns,
-    fastPathEligible: Boolean(normalizedMessage) && !negated && !hasMultipleEntities,
+    fastPathEligible:
+      Boolean(normalizedMessage) &&
+      treatments.length + concerns.length + areas.length > 0 &&
+      !negated &&
+      !hasMultipleEntities,
     negated,
     treatments,
   };

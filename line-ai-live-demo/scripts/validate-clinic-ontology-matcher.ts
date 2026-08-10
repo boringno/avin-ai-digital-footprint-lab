@@ -13,6 +13,12 @@ assert(onda.fastPathEligible, "one explicit treatment must remain eligible for t
 const negatedBotox = matchClinicOntology("我不想打肉毒");
 assert(negatedBotox.negated && !negatedBotox.fastPathEligible, "negated treatment requests must abstain");
 
+const negatedOnda = matchClinicOntology("我不是想問 ONDA");
+assert(negatedOnda.negated && !negatedOnda.fastPathEligible, "不是想問 must abstain instead of selecting ONDA");
+
+const noEntity = matchClinicOntology("今天天氣如何");
+assert(!noEntity.fastPathEligible, "messages without ontology entities must not enter the fast path");
+
 const multipleConcerns = matchClinicOntology("肚子跟雙下巴都想改善");
 assert(multipleConcerns.concerns.length === 2, "all concerns must be collected instead of first-match wins");
 assert(!multipleConcerns.fastPathEligible, "multiple concerns must abstain");
