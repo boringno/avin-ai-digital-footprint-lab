@@ -20,6 +20,45 @@ const result = await runNluShadow("肚子", decision);
 globalThis.fetch = originalFetch;
 
 if (result !== null || fetchCalls !== 0) throw new Error("NLU shadow must be off and unsampled by default");
+
+let capturedRequestBody: Record<string, unknown> | null = null;
+process.env.OPENAI_NLU_MODE = "shadow";
+process.env.OPENAI_NLU_SAMPLE_RATE = "1";
+process.env.OPENAI_NLU_TIMEOUT_MS = "1000";
+globalThis.fetch = async (_input, init) => {
+  capturedRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  return new Response(JSON.stringify({
+    output: [
+      { type: "reasoning", summary: [] },
+      {
+        type: "message",
+        content: [{
+          type: "output_text",
+          text: JSON.stringify({
+            confidence: 0.96,
+            concerns: [{ area: "face", key: "dynamic_wrinkles" }],
+            intents: ["treatment_consultation"],
+            negated: [],
+            safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+            treatments: ["botox"],
+          }),
+        }],
+      },
+    ],
+    usage: { input_tokens: 100, output_tokens: 30 },
+  }), { status: 200 });
+};
+const restPayloadResult = await runNluShadow("皺眉紋", decision);
+globalThis.fetch = originalFetch;
+if (restPayloadResult?.frame?.concerns[0]?.key !== "dynamic_wrinkles") {
+  throw new Error("NLU shadow must parse output[].content[] from the raw Responses REST payload");
+}
+const requestBody = capturedRequestBody as unknown as { text?: { format?: { type?: string; strict?: boolean } } } | null;
+const responseFormat = requestBody?.text?.format;
+if (responseFormat?.type !== "json_schema" || responseFormat.strict !== true) {
+  throw new Error("NLU shadow must request strict structured output");
+}
+
 process.env.OPENAI_NLU_MODE = "decision";
 let rejectedDecisionMode = false;
 try {

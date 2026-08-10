@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
+import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 
@@ -58,14 +59,6 @@ export type ControlledIntentResult = {
   treatmentKey: ControlledTreatmentKey | null;
   tokensIn: number;
   tokensOut: number;
-};
-
-type OpenAiResponsePayload = {
-  output_text?: string;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-  };
 };
 
 export function shouldUseControlledIntentClassifier(message: string) {
@@ -206,8 +199,8 @@ export async function classifyControlledIntent(message: string): Promise<Control
       throw new Error(`OpenAI intent classifier error ${response.status}`);
     }
 
-    const payload = JSON.parse(rawText) as OpenAiResponsePayload;
-    const output = payload.output_text?.trim();
+    const payload = JSON.parse(rawText) as OpenAiResponsesPayload;
+    const output = extractOpenAiResponseText(payload);
     if (!output) {
       return null;
     }

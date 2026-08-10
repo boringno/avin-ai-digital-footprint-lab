@@ -1,4 +1,4 @@
-import { buildNluInstructions, parseNluFrame } from "@/lib/nlu-frame";
+import { buildNluInstructions, buildNluResponseFormat, parseNluFrame } from "@/lib/nlu-frame";
 
 const valid = parseNluFrame({
   confidence: 0.94,
@@ -16,7 +16,9 @@ if (parseNluFrame({ ...valid, treatments: ["invented"] }) !== null) throw new Er
 if (parseNluFrame({ ...valid, confidence: 2 }) !== null) throw new Error("invalid confidence accepted");
 
 const instructions = buildNluInstructions();
-if (!instructions.includes('"onda_pro"') || !instructions.includes('"abdomen"')) throw new Error("prompt is not generated from canonical ontology");
+if (!instructions.includes('"onda_pro"') || !instructions.includes('"abdomen"') || !instructions.includes('"masseter_contour"')) throw new Error("prompt is not generated from canonical ontology");
 if (instructions.includes("12,999") || instructions.includes("16,888")) throw new Error("NLU prompt must not contain campaign facts");
+const responseFormat = buildNluResponseFormat();
+if (responseFormat.format.type !== "json_schema" || !responseFormat.format.strict) throw new Error("NLU response must use strict structured output");
 
 console.log("NLU frame validation passed");

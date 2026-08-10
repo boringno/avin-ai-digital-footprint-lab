@@ -1,6 +1,7 @@
 import { clinicConfig } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
+import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 
@@ -12,14 +13,6 @@ export type OpenAiReplyContext = {
   lastReferencedTreatment?: string;
   locationPreference?: string;
   preferredBranch?: string;
-};
-
-type OpenAiResponsePayload = {
-  output_text?: string;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-  };
 };
 
 export type GeneratedOpenAiReply = {
@@ -81,11 +74,6 @@ function buildUserPrompt(message: string, context?: OpenAiReplyContext) {
   ].join("\n");
 }
 
-function extractTextFromOpenAiResponse(payload: OpenAiResponsePayload) {
-  const text = payload.output_text?.trim();
-  return text || null;
-}
-
 export async function generateOpenAiReply(message: string, context?: OpenAiReplyContext): Promise<GeneratedOpenAiReply | null> {
   const config = getRuntimeConfig();
   if (config.aiProvider !== "openai" || !config.openAiApiKey) {
@@ -112,14 +100,14 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
       throw new Error(`OpenAI API error ${response.status}: ${rawText}`);
     }
 
-    let payload: OpenAiResponsePayload;
+    let payload: OpenAiResponsesPayload;
     try {
-      payload = JSON.parse(rawText) as OpenAiResponsePayload;
+      payload = JSON.parse(rawText) as OpenAiResponsesPayload;
     } catch {
       throw new Error("OpenAI API returned invalid JSON");
     }
 
-    const text = extractTextFromOpenAiResponse(payload);
+    const text = extractOpenAiResponseText(payload);
     if (!text) {
       return null;
     }
