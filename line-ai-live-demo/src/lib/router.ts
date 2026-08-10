@@ -2818,6 +2818,16 @@ export async function routeCustomerMessage({
 
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);
   if (treatmentReply) {
+    const restartedTreatmentKey = treatmentReply.matchedKey.match(/^treatment_intro:([^:]+)$/u)?.[1];
+    const restartedTreatment = restartedTreatmentKey ? findTreatmentByKey(restartedTreatmentKey) : null;
+    if (restartedTreatment?.consultationGuide) {
+      nextContext.treatmentConsultation = {
+        answeredAspectKeys: [],
+        concernKeys: [],
+        stage: "needs_discovery",
+        treatmentKey: restartedTreatment.key,
+      };
+    }
     nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : treatmentReply.matchedKey;
