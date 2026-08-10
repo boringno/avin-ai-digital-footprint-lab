@@ -190,10 +190,17 @@ function escapeRegExp(text: string) {
 
 function stripPromotionDateWording(text: string) {
   return text
+    .replace(
+      /(?:(?:19|20)\d{2}[/.年-]\d{1,2}(?:[/.月-]\d{1,2})?日?|\d{1,2}[/.月]\d{1,2}日?)(?:\s*(?:-|–|—|~|～|至)\s*(?:(?:19|20)\d{2}[/.年-])?\d{1,2}(?:[/.月-]\d{1,2})?日?)?/gu,
+      "",
+    )
+    .replace(/(?:^|\s)(?:19|20)\d{2}年?(?=\s|$)/gu, " ")
     .replace(/依館別、日期與現場評估調整/g, "依館別與現場評估調整")
     .replace(/依館別、檔期與現場評估調整/g, "依館別與現場評估調整")
     .replace(/依館別與日期調整/g, "依館別調整")
     .replace(/依檔期調整/g, "依現場狀況調整")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s\-–—~～至/.,，、:：()（）]+|[\s\-–—~～至/.,，、:：()（）]+$/gu, "")
     .trim();
 }
 
@@ -399,6 +406,8 @@ function getPromotionOverviewGroups(pricingCampaigns: PricingCampaign[]) {
 
   for (const campaign of pricingCampaigns) {
     const imageUrls = getCampaignImageUrls(campaign);
+    const customerCampaignName = stripPromotionDateWording(campaign.campaign_name);
+    const customerPriceText = stripPromotionDateWording(campaign.price_text);
     const groupKey = `${campaign.campaign_name}__${imageUrls.join("|")}`;
     const existing = groups.get(groupKey);
 
@@ -406,16 +415,16 @@ function getPromotionOverviewGroups(pricingCampaigns: PricingCampaign[]) {
       if (!existing.treatmentNames.includes(campaign.treatment_name)) {
         existing.treatmentNames.push(campaign.treatment_name);
       }
-      if (campaign.price_text.trim() && !existing.priceTexts.includes(campaign.price_text.trim())) {
-        existing.priceTexts.push(campaign.price_text.trim());
+      if (customerPriceText && !existing.priceTexts.includes(customerPriceText)) {
+        existing.priceTexts.push(customerPriceText);
       }
       continue;
     }
 
     groups.set(groupKey, {
-      campaignName: campaign.campaign_name,
+      campaignName: customerCampaignName,
       imageUrls,
-      priceTexts: campaign.price_text.trim() ? [campaign.price_text.trim()] : [],
+      priceTexts: customerPriceText ? [customerPriceText] : [],
       treatmentNames: [campaign.treatment_name],
     });
   }
@@ -615,8 +624,8 @@ function buildPromotionCarouselCards(pricingCampaigns: PricingCampaign[]) {
         ctaLabel: "我想了解",
         ctaText: `我想了解${campaign.treatment_name}活動`,
         imageUrl: primaryImageUrl,
-        priceText: campaign.price_text.trim() || undefined,
-        subtitle: campaign.campaign_name.trim() || undefined,
+        priceText: stripPromotionDateWording(campaign.price_text) || undefined,
+        subtitle: stripPromotionDateWording(campaign.campaign_name) || undefined,
         title: campaign.treatment_name.trim(),
       });
   }
@@ -1093,7 +1102,10 @@ function formatBookingKnownFields(context: ConversationContext) {
     parts.push(`館別先記為 ${context.bookingDraft.branch}`);
   }
   if (context.bookingDraft.campaignName) {
-    parts.push(`方案先記為 ${context.bookingDraft.campaignName}`);
+    const customerCampaignName = stripPromotionDateWording(context.bookingDraft.campaignName);
+    if (customerCampaignName) {
+      parts.push(`方案先記為 ${customerCampaignName}`);
+    }
   }
   if (context.bookingDraft.timeSlots.length > 0) {
     parts.push(`方便時段先記為 ${context.bookingDraft.timeSlots.join("、")}`);
@@ -1901,13 +1913,16 @@ function applyConsultationAction(
     : null;
 
   if (activeCampaign) {
+    const customerCampaignName = stripPromotionDateWording(activeCampaign.campaign_name);
+    const customerPriceText = stripPromotionDateWording(activeCampaign.price_text);
     const branchScope = activeCampaign.branch_scope.trim().toLowerCase() === "all"
       ? "全館適用"
       : `適用館別：${activeCampaign.branch_scope.replace(/[|,，、/]+/g, "、")}`;
-    nextReplyText = `${nextReplyText}\n\n💰 ${activeCampaign.campaign_name}：${activeCampaign.price_text}，${branchScope}。`;
+    const campaignLabel = customerCampaignName ? `${customerCampaignName}：` : "";
+    nextReplyText = `${nextReplyText}\n\n💰 ${campaignLabel}${customerPriceText}，${branchScope}。`;
     if (action.startsBookingIntake) {
       context.bookingDraft.campaignId = activeCampaign.id;
-      context.bookingDraft.campaignName = activeCampaign.campaign_name;
+      context.bookingDraft.campaignName = customerCampaignName;
     }
   }
 
@@ -2324,8 +2339,9 @@ function buildPricingReply(campaign: PricingCampaign) {
       : branchScope
         ? `適用館別：${branchScope.replace(/[|,，、/]+/g, "、")}。`
         : "";
-  const detailLabel = campaign.price_text.trim()
-    ? `：${campaign.price_text}。`
+  const customerPriceText = stripPromotionDateWording(campaign.price_text);
+  const detailLabel = customerPriceText
+    ? `：${customerPriceText}。`
     : "；詳細內容可直接參考活動圖片。";
 
   return `${campaignLabel}${detailLabel} ${branchScopeLabel}${fallbackSuffix}`.trim();
@@ -2341,7 +2357,7 @@ type PricingReplyDecision = RouterDecision & {
 function getPricingBookingMetadata(campaign: PricingCampaign) {
   return {
     bookingCampaignId: campaign.id,
-    bookingCampaignName: campaign.campaign_name,
+    bookingCampaignName: stripPromotionDateWording(campaign.campaign_name),
     bookingTreatmentNames: campaign.booking_treatments
       ?.split(/[|,，、]+/)
       .map((item) => item.trim())

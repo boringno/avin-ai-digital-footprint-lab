@@ -37,6 +37,30 @@ function assertOndaFaceComboPrice(decision: RouterDecision, scenario: string) {
   assert(decision.replyText.includes("12,999元"), `${scenario}: the selected face combo must return its approved amount`);
   const replyPayload = JSON.stringify(decision.replyMessages ?? []);
   assert(!/VIO|皮秒|除毛/.test(replyPayload), `${scenario}: ONDA price must not attach unrelated treatment cards`);
+  assertNoCustomerVisibleCampaignDate(decision, scenario);
+}
+
+const CUSTOMER_VISIBLE_CAMPAIGN_DATE = /(?:19|20)\d{2}(?:[/.年-]\d{1,2})?|\d{1,2}[/.月]\d{1,2}日?/u;
+
+function collectCustomerVisibleText(value: unknown, key = ""): string[] {
+  if (typeof value === "string") {
+    return ["text", "title", "subtitle", "priceText", "altText"].includes(key) ? [value] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectCustomerVisibleText(item, key));
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value).flatMap(([childKey, childValue]) => collectCustomerVisibleText(childValue, childKey));
+}
+
+function assertNoCustomerVisibleCampaignDate(decision: RouterDecision, scenario: string) {
+  const visibleText = [decision.replyText, ...collectCustomerVisibleText(decision.replyMessages ?? [])].join("\n");
+  assert(
+    !CUSTOMER_VISIBLE_CAMPAIGN_DATE.test(visibleText),
+    `${scenario}: campaign dates are internal metadata and must not appear in customer-visible text: ${visibleText}`,
+  );
 }
 
 async function getActiveOndaConsultation(userId: string) {
@@ -56,10 +80,12 @@ async function main() {
 
   const ps3 = await route("現在活動有哪些", createEmptyConversationContext("pricing-subject-ps3"));
   assert(ps3.matchedKey === "promotion_overview", "PS3: an explicit browse request must retain the promotion overview");
+  assertNoCustomerVisibleCampaignDate(ps3, "PS3");
   console.log("PASS: PS3 empty context explicit browse request shows overview");
 
   const botoxThenBrowse = await runTurns(["想了解肉毒", "現在活動有哪些"], "pricing-subject-ps4");
   assert(botoxThenBrowse.decisions[1].matchedKey === "promotion_overview", "PS4: browse intent must override prior treatment context");
+  assertNoCustomerVisibleCampaignDate(botoxThenBrowse.decisions[1], "PS4");
   console.log("PASS: PS4 explicit browse request is not polluted by prior treatment");
 
   const ps5 = await route("多少錢", createEmptyConversationContext("pricing-subject-ps5"));
@@ -76,6 +102,7 @@ async function main() {
   const ps7 = await route("肉毒多少錢", ondaThenBotox.context);
   assert(ps7.matchedKey.includes("肉毒"), "PS7: an explicit treatment must override an active consultation subject");
   assert(!ps7.replyText.includes("16,888"), "PS7: an explicit Botox price request must not return ONDA pricing");
+  assertNoCustomerVisibleCampaignDate(ps7, "PS7");
   console.log("PASS: PS7 explicitly named treatment overrides active consultation");
 
   const ondaThenHours = await getActiveOndaConsultation("pricing-subject-ps9");
@@ -83,6 +110,7 @@ async function main() {
   assert(ps9Hours.matchedKey.startsWith("branch_hours:"), "PS9: an intervening clinic-info question must replace the latest intent");
   const ps9 = await route("多少錢", ps9Hours.nextContext);
   assertOndaFaceComboPrice(ps9, "PS9");
+  assertNoCustomerVisibleCampaignDate(ps9, "PS9");
   console.log("PASS: PS9 active consultation survives an intervening clinic-info question for pricing");
 
   const booking = await runTurns(["我想預約皮秒"], "pricing-subject-ps8-booking");
@@ -123,7 +151,19 @@ async function main() {
   assert(ps11.matchedKey === "pricing_followup", "PS11: expired consultation context must not answer a generic price question");
   console.log("PASS: PS11 stale treatment and booking context expire before generic price handling");
 
-  console.log("pricing subject validation passed (12 scenarios)");
+  const ps12 = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋"], "pricing-subject-ps12");
+  assert(ps12.decisions[2].replyText.includes("盛夏光采：999"), "PS12: Botox wrinkle flow must keep the campaign label and price");
+  assertNoCustomerVisibleCampaignDate(ps12.decisions[2], "PS12 initial quote");
+  assertNoCustomerVisibleCampaignDate(ps12.decisions[3], "PS12 repeated detail");
+
+  const legacyCampaignContext = ps12.context;
+  legacyCampaignContext.bookingDraft.campaignName = "2026/07/09-08/31 盛夏光采";
+  const ps13 = await route("我想改約", legacyCampaignContext);
+  assert(ps13.replyText.includes("方案先記為 盛夏光采"), "PS13: legacy booking context must retain the campaign name without its dates");
+  assertNoCustomerVisibleCampaignDate(ps13, "PS13 legacy booking context");
+  console.log("PASS: PS12-PS13 campaign dates stay internal across consultation and legacy booking context");
+
+  console.log("pricing subject validation passed (14 scenarios)");
 }
 
 main().catch((error) => {
