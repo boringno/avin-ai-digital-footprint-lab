@@ -33,6 +33,7 @@ export type RuntimeConfig = {
   openAiIntentClassifierEnabled: boolean;
   openAiIntentClassifierMaxTokens: number;
   openAiIntentClassifierMinConfidence: number;
+  openAiIntentClassifierTimeoutMs: number;
   openAiMaxTokens: number;
   openAiModel: string;
   openAiNluMode: "off" | "shadow";
@@ -148,6 +149,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiIntentClassifierEnabled: parseBoolean(process.env.OPENAI_INTENT_CLASSIFIER_ENABLED, true),
     openAiIntentClassifierMaxTokens: parseInteger(process.env.OPENAI_INTENT_CLASSIFIER_MAX_TOKENS, 96),
     openAiIntentClassifierMinConfidence: parseConfidence(process.env.OPENAI_INTENT_CLASSIFIER_MIN_CONFIDENCE, 0.85),
+    openAiIntentClassifierTimeoutMs: parseInteger(process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS, 800),
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
     openAiNluMode,
