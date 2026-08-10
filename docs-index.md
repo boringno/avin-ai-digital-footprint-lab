@@ -182,6 +182,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [LINE AI Live Demo App](line-ai-live-demo/README.md)
 - [新客戶導入 SOP](line-ai-live-demo/docs/CLIENT_SETUP.md)
 - [客戶 Production 部署檢查表](line-ai-live-demo/docs/DEPLOYMENT_CHECKLIST.md)
+- [NLU shadow runbook](line-ai-live-demo/docs/NLU_SHADOW_RUNBOOK.md)
 - [Internal Admin Backend v1.1](line-ai-live-demo/docs/admin-backend-v1.1-spec.md)
 - [Admin Backend v1.2 規格 — 訊息分類、月報彙總、AI 建議、內容版本管理](line-ai-live-demo/docs/admin-backend-v1.2-spec.md)
 - [Client Demo Readiness Checklist](line-ai-live-demo/docs/client-demo-readiness-checklist.md)
