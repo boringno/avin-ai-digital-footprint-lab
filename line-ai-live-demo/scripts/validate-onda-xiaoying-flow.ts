@@ -73,7 +73,27 @@ async function main() {
   const pregnancy = await route("我懷孕可以做 ONDA 嗎", intro.nextContext);
   assert(pregnancy.matchedKey === "pregnancy_caution", "X10: pregnancy safety must still override Xiaoying content");
 
-  console.log("ONDA Xiaoying flow validation passed (10 scenarios)");
+  const oldFaceContext = createEmptyConversationContext("onda-restart-body-flow");
+  oldFaceContext.treatmentConsultation = {
+    answeredAspectKeys: ["concern:jawline_looseness:overview"],
+    concernKeys: ["jawline_looseness"],
+    stage: "needs_discovery",
+    treatmentKey: "onda_pro",
+  };
+  const restartedIntro = await route("\u60f3\u4e86\u89e3ONDA", oldFaceContext);
+  assert(
+    restartedIntro.nextContext.treatmentConsultation?.concernKeys.length === 0,
+    "X11: an explicit treatment restart must clear old concern state",
+  );
+  const restartedBody = await route("\u624b\u81c2", restartedIntro.nextContext);
+  assert(restartedBody.replyText.includes("16,888"), "X11: a body choice after restart must use the ONDA body price");
+  assert(!restartedBody.replyText.includes("12,999"), "X11: an old face concern must not contaminate the restarted body flow");
+  assert(
+    restartedBody.nextContext.treatmentConsultation?.concernKeys.join(",") === "local_contour",
+    "X11: the restarted consultation must retain only the new body concern",
+  );
+
+  console.log("ONDA Xiaoying flow validation passed (11 scenarios)");
 }
 
 main().catch((error) => {
