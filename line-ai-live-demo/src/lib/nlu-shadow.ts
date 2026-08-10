@@ -1,11 +1,12 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
-import { buildNluInstructions, parseNluFrame } from "@/lib/nlu-frame";
+import { buildNluInstructions, buildNluResponseFormat, parseNluFrame } from "@/lib/nlu-frame";
 import type { NluShadowObservation } from "@/lib/nlu-shadow-store";
 import { storeNluShadowObservation } from "@/lib/nlu-shadow-store";
 import { reportOperationalError } from "@/lib/monitoring";
+import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
-export const NLU_PROMPT_VERSION = "nlu-v1";
+export const NLU_PROMPT_VERSION = "nlu-v2";
 type DecisionSnapshot = NluShadowObservation["deterministicDecision"];
 
 export async function runNluShadow(message: string, decision: DecisionSnapshot) {
@@ -19,12 +20,19 @@ export async function runNluShadow(message: string, decision: DecisionSnapshot) 
     const response = await fetch(OPENAI_RESPONSES_API_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${config.openAiApiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ input: `請解析這則客人訊息：\n${message}`, instructions: buildNluInstructions(), max_output_tokens: 320, model: config.openAiModel }),
+      body: JSON.stringify({
+        input: `請解析這則客人訊息：\n${message}`,
+        instructions: buildNluInstructions(),
+        max_output_tokens: 320,
+        model: config.openAiModel,
+        text: buildNluResponseFormat(),
+      }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`OpenAI NLU shadow error ${response.status}`);
-    const payload = await response.json() as { output_text?: string; usage?: { input_tokens?: number; output_tokens?: number } };
-    const frame = payload.output_text ? parseNluFrame(JSON.parse(payload.output_text)) : null;
+    const payload = await response.json() as OpenAiResponsesPayload;
+    const outputText = extractOpenAiResponseText(payload);
+    const frame = outputText ? parseNluFrame(JSON.parse(outputText)) : null;
     const divergenceCategories: string[] = [];
     if (!frame) divergenceCategories.push("invalid_frame");
     if (frame && Object.values(frame.safety).some(Boolean) && !["handoff_pending", "medical_guidance_reply"].includes(decision.decisionType)) divergenceCategories.push("safety_disagreement");

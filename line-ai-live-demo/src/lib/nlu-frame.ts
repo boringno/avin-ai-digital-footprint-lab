@@ -77,3 +77,62 @@ export function buildNluInstructions() {
     '只輸出 JSON：{"intents":[],"treatments":[],"concerns":[],"negated":[],"safety":{"pregnancyNursing":false,"postTreatmentRisk":false,"complaint":false,"humanRequest":false},"confidence":0}',
   ].join("\n");
 }
+
+export function buildNluResponseFormat() {
+  const treatmentKeys = clinicOntology.treatments.map((item) => item.key);
+  const concernKeys = clinicOntology.concerns.map((item) => item.key);
+  const areaKeys = clinicOntology.areas.map((item) => item.key);
+
+  return {
+    format: {
+      name: "clinic_nlu_frame",
+      schema: {
+        additionalProperties: false,
+        properties: {
+          confidence: { maximum: 1, minimum: 0, type: "number" },
+          concerns: {
+            items: {
+              additionalProperties: false,
+              properties: {
+                area: { anyOf: [{ enum: areaKeys, type: "string" }, { type: "null" }] },
+                key: { enum: concernKeys, type: "string" },
+              },
+              required: ["key", "area"],
+              type: "object",
+            },
+            type: "array",
+          },
+          intents: { items: { enum: CONTROLLED_INTENTS, type: "string" }, type: "array" },
+          negated: {
+            items: {
+              additionalProperties: false,
+              properties: {
+                key: { type: "string" },
+                type: { enum: ["area", "concern", "intent", "treatment"], type: "string" },
+              },
+              required: ["key", "type"],
+              type: "object",
+            },
+            type: "array",
+          },
+          safety: {
+            additionalProperties: false,
+            properties: {
+              complaint: { type: "boolean" },
+              humanRequest: { type: "boolean" },
+              postTreatmentRisk: { type: "boolean" },
+              pregnancyNursing: { type: "boolean" },
+            },
+            required: ["pregnancyNursing", "postTreatmentRisk", "complaint", "humanRequest"],
+            type: "object",
+          },
+          treatments: { items: { enum: treatmentKeys, type: "string" }, type: "array" },
+        },
+        required: ["intents", "treatments", "concerns", "negated", "safety", "confidence"],
+        type: "object",
+      },
+      strict: true,
+      type: "json_schema",
+    },
+  } as const;
+}

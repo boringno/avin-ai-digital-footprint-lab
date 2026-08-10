@@ -33,6 +33,21 @@ const timeoutStartedAt = Date.now();
 const timedOutClassification = await classifyControlledIntent("想看高雄本月門診時間");
 const timeoutElapsedMs = Date.now() - timeoutStartedAt;
 
+globalThis.fetch = async () => new Response(JSON.stringify({
+  output: [
+    { type: "reasoning", summary: [] },
+    {
+      type: "message",
+      content: [{
+        type: "output_text",
+        text: '{"intent":"doctor_schedule","branch":"高雄館","month":"current","treatment_key":null,"concern":null,"confidence":0.96}',
+      }],
+    },
+  ],
+  usage: { input_tokens: 10, output_tokens: 8 },
+}), { status: 200 });
+const restPayloadClassification = await classifyControlledIntent("想看高雄本月門診時間");
+
 globalThis.fetch = originalFetch;
 for (const [key, value] of Object.entries({
   AI_PROVIDER: originalEnvironment.aiProvider,
@@ -120,6 +135,10 @@ const cases = [
   {
     name: "classifier timeout fails open without hanging the webhook path",
     passed: timedOutClassification === null && timeoutElapsedMs < 500,
+  },
+  {
+    name: "raw Responses REST output array is parsed",
+    passed: restPayloadClassification?.intent === "doctor_schedule" && restPayloadClassification.branch === "高雄館",
   },
   {
     name: "generic fallback message skips classifier",
