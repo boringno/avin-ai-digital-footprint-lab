@@ -48,6 +48,7 @@ jobs:
           npm run validate:ai-intent-classifier
           npm run validate:onda-semantic-routing
           npm run validate:onda-xiaoying-flow
+          npm run validate:clinic-ontology
           npm run validate:ci-parity
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation
