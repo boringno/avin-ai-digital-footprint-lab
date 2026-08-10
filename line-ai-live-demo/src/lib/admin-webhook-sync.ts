@@ -4,8 +4,7 @@ import { PREGNANCY_RISK_NOTE, PREGNANCY_RISK_REASON_SUFFIX } from "@/lib/admin-r
 import { storeRuleIntentLabel } from "@/lib/intent-label-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
-import { runNluShadow } from "@/lib/nlu-shadow";
-import { storeNluShadowObservation } from "@/lib/nlu-shadow-store";
+import { captureNluShadowObservation } from "@/lib/nlu-shadow";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 const TENANT_ID = "tenant_001";
@@ -84,14 +83,15 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
       }
 
       await safelyStoreIntentLabel(customerMessageId, result, "customer");
-      const shadowObservation = await runNluShadow(result.messageText ?? "", {
-        decisionType: result.decision.decisionType,
-        matchedKey: result.decision.matchedKey,
-        matchedType: result.decision.matchedType,
+      await captureNluShadowObservation({
+        decision: {
+          decisionType: result.decision.decisionType,
+          matchedKey: result.decision.matchedKey,
+          matchedType: result.decision.matchedType,
+        },
+        message: result.messageText ?? "",
+        messageId: customerMessageId,
       });
-      if (shadowObservation) {
-        await storeNluShadowObservation({ ...shadowObservation, messageId: customerMessageId });
-      }
       const aiMessageId = await insertAiMessage(conversation.id, result, input.replyResults);
       if (aiMessageId) {
         await safelyStoreIntentLabel(aiMessageId, result, "ai");

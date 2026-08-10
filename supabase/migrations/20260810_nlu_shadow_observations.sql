@@ -31,6 +31,7 @@ create index if not exists idx_nlu_shadow_observations_retention
   on public.nlu_shadow_observations (retention_expiry);
 
 alter table public.nlu_shadow_observations enable row level security;
+revoke all on table public.nlu_shadow_observations from anon, authenticated;
 
 comment on table public.nlu_shadow_observations is
   'Internal shadow-only NLU diagnostics. Stores message_id references, never a duplicate of customer message text. Rows expire with the 180-day conversation retention policy.';

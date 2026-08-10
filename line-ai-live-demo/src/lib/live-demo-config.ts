@@ -35,7 +35,7 @@ export type RuntimeConfig = {
   openAiIntentClassifierMinConfidence: number;
   openAiMaxTokens: number;
   openAiModel: string;
-  openAiNluMode: "off" | "shadow" | "decision";
+  openAiNluMode: "off" | "shadow";
   openAiNluSampleRate: number;
   openAiNluTimeoutMs: number;
   retentionSweepMode: string;
@@ -57,6 +57,12 @@ function parseBoolean(value: string | undefined, fallback: boolean) {
     return fallback;
   }
   return value.toLowerCase() === "true";
+}
+
+function parseNluMode(value: string | undefined): "off" | "shadow" {
+  const normalized = (value ?? "off").trim().toLowerCase();
+  if (normalized === "off" || normalized === "shadow") return normalized;
+  throw new Error(`Unsupported OPENAI_NLU_MODE: ${normalized}`);
 }
 
 function parseInteger(value: string | undefined, fallback: number) {
@@ -106,9 +112,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     : getDefaultSeedDir(appRoot);
   const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
 
-  const openAiNluMode = ["shadow", "decision"].includes((process.env.OPENAI_NLU_MODE ?? "off").toLowerCase())
-    ? (process.env.OPENAI_NLU_MODE ?? "off").toLowerCase() as "shadow" | "decision"
-    : "off";
+  const openAiNluMode = parseNluMode(process.env.OPENAI_NLU_MODE);
 
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
