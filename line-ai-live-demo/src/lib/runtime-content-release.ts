@@ -141,6 +141,7 @@ function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
     campaign_name: text(entry.payload_json, "campaign_name"),
     end_date: entry.end_at?.slice(0, 10) ?? "",
     fallback_message: text(entry.payload_json, "fallback_message"),
+    id: entry.content_key,
     is_active: "true",
     notes: `runtime_release:${entry.content_key}`,
     price_text: text(entry.payload_json, "price_text"),

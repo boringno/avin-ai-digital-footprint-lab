@@ -14,15 +14,22 @@ export type BranchConfig = {
 
 export type TreatmentConversationPack = {
   concernReplies?: Array<{
+    bookingTreatmentKeys?: string[];
+    campaignId?: string;
     concernKey: string;
     followupPrompt: string;
     reply: string;
+    selectionTerms?: string[];
+    startsBookingIntake?: boolean;
   }>;
   detailReplies?: Array<{
     aspectKey: string;
+    bookingTreatmentKeys?: string[];
+    campaignId?: string;
     concernKey: string;
     followupPrompt: string;
     reply: string;
+    startsBookingIntake?: boolean;
     terms: string[];
   }>;
   discoveryPrompt: string;
@@ -32,6 +39,15 @@ export type TreatmentConversationPack = {
     followupPrompt: string;
     key: string;
     reply: string;
+    terms: string[];
+  }>;
+  relatedReplies?: Array<{
+    bookingTreatmentKeys?: string[];
+    campaignId?: string;
+    followupPrompt: string;
+    key: string;
+    reply: string;
+    startsBookingIntake?: boolean;
     terms: string[];
   }>;
 };
@@ -284,25 +300,35 @@ export const clinicConfig: ClinicConfig = {
       consultationGuide: {
         concernReplies: [
           {
+            bookingTreatmentKeys: ["onda_pro", "botox"],
+            campaignId: "promo-2026-08-face-contour-combo",
             concernKey: "jawline_looseness",
-            reply: "🌿 如果您在意肉肉的雙下巴、嘴邊肉或下顎線不明顯，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。\n✨ 可再依臉型、脂肪分布與緊實需求安排。",
-            followupPrompt: "您比較在意雙下巴厚度，還是嘴邊肉／下顎線呢？😊",
+            reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟥 目前很推薦 ONDA Pro 搭配肉毒小臉，很多在意下顎線的客人都會選擇這個組合\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落",
+            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            selectionTerms: ["①", "選1", "第一個", "臉部", "臉部輪廓"],
+            startsBookingIntake: true,
           },
           {
+            bookingTreatmentKeys: ["onda_pro"],
+            campaignId: "promo-2026-08-05-onda-pro",
             concernKey: "local_contour",
-            reply: "🔥 手臂、腹部或大腿等局部脂肪困擾，也可先從 ONDA Pro 的體態與緊實需求評估開始。\n❄️ 實際施作部位仍會依脂肪分布與個人狀況確認。",
-            followupPrompt: "您最想改善哪個部位呢？😊",
+            reply: "②身體局部脂肪堆積（手臂／肚子／橘皮）\n\n🟥 很多在意身體局部脂肪堆積、產後腹部鬆弛等等困擾都可以由醫師評估是否適合\n\n🔥 破壞頑固脂肪／減少脂肪厚度\n\n🔥 改善橘皮組織／凹凸不平\n👉 減少橘皮紋路，皮膚更平滑\n\n❄️ 超舒適、無傷口\n❄️ 無需敷麻、幾乎無修復期\n❄️ 療程快速、立即有感\n❄️ 安全無副作用\n\n😊 由於每個人的脂肪分布、厚度及鬆弛狀況不同，建議您預約現場諮詢，由醫師親自評估後，才能為您規劃較適合的施作部位與療程次數唷🤍",
+            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            selectionTerms: ["②", "選2", "第二個", "身體", "身體局部"],
+            startsBookingIntake: true,
           },
         ],
         detailReplies: [
           {
             aspectKey: "jawline_expectation",
+            bookingTreatmentKeys: ["onda_pro", "botox"],
+            campaignId: "promo-2026-08-face-contour-combo",
             concernKey: "jawline_looseness",
             terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
-            followupPrompt:
-              "✨ 實際改善幅度與安排仍會依脂肪厚度、皮膚鬆弛與下顎線狀況由醫師確認。您想先了解體驗價，還是安排免費諮詢呢？",
+            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            startsBookingIntake: true,
           },
           {
             aspectKey: "jawline_intro",
@@ -315,7 +341,7 @@ export const clinicConfig: ClinicConfig = {
           },
         ],
         discoveryPrompt:
-          "😊 您想先了解哪個方向呢？\n①雙下巴／嘴邊肉\n②手臂、腹部、大腿等身體局部",
+          "😊 請問您最想改善哪個部位呢\n①雙下巴／嘴邊肉（輪廓線提升）\n②身體局部脂肪堆積（手臂／肚子／橘皮）",
         featureSummary:
           "✨ 療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
         followupPrompt: "如果有偏好的館別，也可以一併告訴我😊",
@@ -339,9 +365,20 @@ export const clinicConfig: ClinicConfig = {
             followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢😊",
           },
         ],
+        relatedReplies: [
+          {
+            bookingTreatmentKeys: ["onda_pro", "botox"],
+            campaignId: "promo-2026-08-face-contour-combo",
+            followupPrompt: "😊 都是免費的，可以先來了解看看適不適合自己～您都是平日還是假日方便呢？",
+            key: "botox_small_face",
+            reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與脂肪分布評估是否適合此療程，再提供最適合的建議",
+            startsBookingIntake: true,
+            terms: ["肉毒功效", "肉毒效果", "肉毒小臉", "咀嚼肌", "國字臉"],
+          },
+        ],
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "可以呀😊\n🟢 ONDA Pro 超微波採用 Coolwaves® 高頻能量技術，可協助局部脂肪管理與緊緻拉提。\n❄️ 屬非侵入式療程，搭配冷卻控溫設計。",
+      intro: "🟢 ONDA Pro超微波是目前醫美界非常熱門的新一代高頻能量 Coolwaves® 技術\n\n🟢 透過超高頻微波的頻率，透過專利科技精準加熱🔥「脂肪層」幫助脂肪細胞自然代謝，同時也有緊緻拉提肌膚的效果～屬於非侵入式療程，不需要動刀😊\n\n🔷 搭配內建冷卻控溫系統，全程無痛、舒適體驗❄️",
       key: "onda_pro",
       name: "ONDA PRO",
     },

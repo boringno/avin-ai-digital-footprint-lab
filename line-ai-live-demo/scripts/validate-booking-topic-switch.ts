@@ -1,7 +1,7 @@
 import { createEmptyConversationContext, type ConversationContext } from "../src/lib/conversation-context";
 import { routeCustomerMessage } from "../src/lib/router";
 
-const NOW = new Date("2026-08-06T08:00:00.000Z");
+const NOW = new Date("2026-08-10T08:00:00.000Z");
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -52,8 +52,9 @@ async function main() {
   const newConcern = await route("我想改善雙下巴", activeBooking);
   assert(newConcern.decisionType === "treatment_intro_reply", "T2: a new concern must not be treated as booking data");
   assert(newConcern.matchedKey === "treatment_consult:onda_pro", "T2: a double-chin concern must enter the ONDA consultation path");
-  assert(newConcern.nextContext.lastIntent === "treatment_consult:onda_pro", "T2: a new concern must replace the stale booking intent");
-  assert(newConcern.nextContext.bookingDraft.treatment === "肉毒", "T2: a new concern must not overwrite the existing booking");
+  assert(newConcern.nextContext.lastIntent === "booking_intake", "T2: an understood ONDA concern and quote must start the new booking intake");
+  assert(newConcern.nextContext.bookingDraft.treatment === "肉毒、ONDA PRO", "T2: the ONDA quote must merge with, not overwrite, the existing booking");
+  assert(newConcern.replyText.includes("12,999元"), "T2: the new ONDA booking intent must be grounded in the approved combo quote");
 
   const bookingNeedsTreatment = createActiveBookingContext();
   bookingNeedsTreatment.bookingDraft.treatment = undefined;

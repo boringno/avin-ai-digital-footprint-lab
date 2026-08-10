@@ -204,6 +204,8 @@ function cloneContext(context: ConversationContext | undefined) {
     bookingDraft: {
       appointmentAt: bookingDraft.appointmentAt,
       branch: bookingDraft.branch,
+      campaignId: bookingDraft.campaignId,
+      campaignName: bookingDraft.campaignName,
       isFirstVisit: bookingDraft.isFirstVisit,
       name: bookingDraft.name,
       phone: bookingDraft.phone,
@@ -430,6 +432,36 @@ function findPricingCampaignForTreatmentKey(treatmentKey: string, activeCampaign
   return activeCampaigns.find((campaign) =>
     getCampaignSearchTerms(campaign).some((term) => treatmentTerms.has(term)),
   ) ?? null;
+}
+
+function findExplicitPricingCampaign(message: string, activeCampaigns: PricingCampaign[]) {
+  const normalizedMessage = normalizeText(message);
+  return activeCampaigns
+    .map((campaign) => ({
+      campaign,
+      matchLength: getCampaignSearchTerms(campaign)
+        .filter((term) => term.length >= 2 && normalizedMessage.includes(term))
+        .reduce((longest, term) => Math.max(longest, term.length), 0),
+    }))
+    .filter((item) => item.matchLength > 0)
+    .sort((left, right) => right.matchLength - left.matchLength)[0]?.campaign ?? null;
+}
+
+function findConsultationPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
+  const treatmentKey = context.treatmentConsultation?.treatmentKey;
+  const concernKeys = context.treatmentConsultation?.concernKeys ?? [];
+  const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
+  const latestConcernKey = concernKeys[concernKeys.length - 1];
+  const campaignId = treatment?.consultationGuide?.concernReplies?.find(
+    (item) => item.concernKey === latestConcernKey,
+  )?.campaignId;
+
+  return campaignId ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null : null;
+}
+
+function findBookingPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
+  const campaignId = context.bookingDraft.campaignId;
+  return campaignId ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null : null;
 }
 
 function clearStaleTreatmentConsultation(context: ConversationContext, now: Date) {
@@ -715,14 +747,14 @@ function extractTimeSlots(message: string) {
     .filter(Boolean);
 
   const timeLikeChunks = chunks.filter((chunk) =>
-    /(\d{1,2}[:點]\d{0,2}|上午|中午|下午|晚上|明天|今天|週|周|月|號)/.test(chunk),
+    /(\d{1,2}[:點]\d{0,2}|上午|中午|下午|晚上|明天|今天|平日|假日|週末|周末|週|周|月|號)/.test(chunk),
   );
 
   if (timeLikeChunks.length >= 2) {
     return Array.from(new Set(timeLikeChunks)).slice(0, 3);
   }
 
-  if (/(\d{1,2}[:點]\d{0,2}|上午|中午|下午|晚上|明天|今天|週|周|月|號)/.test(message)) {
+  if (/(\d{1,2}[:點]\d{0,2}|上午|中午|下午|晚上|明天|今天|平日|假日|週末|周末|週|周|月|號)/.test(message)) {
     return [message.trim()];
   }
 
@@ -731,7 +763,7 @@ function extractTimeSlots(message: string) {
 
 function extractBookingProgressTimeSlots(message: string) {
   const timePattern =
-    /(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}:\d{2}|上午|下午|晚上|中午|今天|明天|後天|週[一二三四五六日天]|星期[一二三四五六日天])/;
+    /(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}:\d{2}|上午|下午|晚上|中午|今天|明天|後天|平日|假日|週末|周末|週[一二三四五六日天]|星期[一二三四五六日天])/;
   const structuredValue = extractStructuredFieldValue(message, STRUCTURED_BOOKING_FIELD_LABELS.timeSlots);
 
   if (structuredValue) {
@@ -815,6 +847,7 @@ function hasBookingDraftValue(context: ConversationContext) {
   return Boolean(
     context.bookingDraft.treatment ||
       context.bookingDraft.branch ||
+      context.bookingDraft.campaignId ||
       context.bookingDraft.name ||
       context.bookingDraft.phone ||
       (context.bookingDraft.isFirstVisit && context.bookingDraft.isFirstVisit !== "unknown") ||
@@ -1052,6 +1085,9 @@ function formatBookingKnownFields(context: ConversationContext) {
   }
   if (context.bookingDraft.branch) {
     parts.push(`館別先記為 ${context.bookingDraft.branch}`);
+  }
+  if (context.bookingDraft.campaignName) {
+    parts.push(`方案先記為 ${context.bookingDraft.campaignName}`);
   }
   if (context.bookingDraft.timeSlots.length > 0) {
     parts.push(`方便時段先記為 ${context.bookingDraft.timeSlots.join("、")}`);
@@ -1484,7 +1520,10 @@ function buildConsultationConcernReply(
   if (nextDetailReply) {
     return {
       aspectKey: `detail:${nextDetailReply.aspectKey}`,
+      bookingTreatmentKeys: nextDetailReply.bookingTreatmentKeys,
+      campaignId: nextDetailReply.campaignId,
       replyText: `${nextDetailReply.reply}\n${nextDetailReply.followupPrompt}`,
+      startsBookingIntake: nextDetailReply.startsBookingIntake,
     };
   }
 
@@ -1521,7 +1560,10 @@ function buildConsultationConcernReply(
   if (configuredConcernReply) {
     return {
       aspectKey: `concern:${concernKey}:overview`,
+      bookingTreatmentKeys: configuredConcernReply.bookingTreatmentKeys,
+      campaignId: configuredConcernReply.campaignId,
       replyText: `${configuredConcernReply.reply}\n${configuredConcernReply.followupPrompt}`,
+      startsBookingIntake: configuredConcernReply.startsBookingIntake,
     };
   }
 
@@ -1544,10 +1586,6 @@ function getActiveTreatmentConsultationConcernKeys(context: ConversationContext,
 }
 
 function getActiveTreatmentConsultation(context: ConversationContext, treatmentKey: string) {
-  if (!context.lastIntent?.startsWith(`treatment_consult:${treatmentKey}`)) {
-    return null;
-  }
-
   if (context.treatmentConsultation?.treatmentKey !== treatmentKey) {
     return null;
   }
@@ -1653,7 +1691,11 @@ function getTreatmentConsultationPriorityReply(message: string, context: Convers
 }
 
 type ConsultationConcernDecision = Omit<RouterDecision, "nextContext"> & {
+  bookingTreatmentKeys?: string[];
+  campaignId?: string;
   consultationAspectKey?: string;
+  consultationConcernKey?: string;
+  startsBookingIntake?: boolean;
 };
 
 function supportsConsultationConcern(
@@ -1664,7 +1706,13 @@ function supportsConsultationConcern(
 }
 
 function getConcernReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
-  const matchedConcern = findConcernByMessage(message);
+  const consultationTreatment = getConsultationTreatment(context);
+  const selectedConcernReply = consultationTreatment?.consultationGuide?.concernReplies?.find(
+    (item) => item.selectionTerms && includesAnyTerm(message, item.selectionTerms),
+  );
+  const matchedConcern = selectedConcernReply
+    ? clinicConfig.concernList.find((item) => item.key === selectedConcernReply.concernKey) ?? null
+    : findConcernByMessage(message);
   if (!matchedConcern) {
     return null;
   }
@@ -1675,7 +1723,6 @@ function getConcernReply(message: string, context: ConversationContext): Consult
     return null;
   }
 
-  const consultationTreatment = getConsultationTreatment(context);
   const compatibleConsultationTreatment =
     consultationTreatment && supportsConsultationConcern(consultationTreatment, matchedConcern.key)
       ? consultationTreatment
@@ -1698,7 +1745,11 @@ function getConcernReply(message: string, context: ConversationContext): Consult
         matchedKey: `treatment_consult:${guidedTreatment.key}`,
         matchedType: "guided_reply",
         replyText: consultationReply.replyText,
+        bookingTreatmentKeys: consultationReply.bookingTreatmentKeys,
+        campaignId: consultationReply.campaignId,
         consultationAspectKey: consultationReply.aspectKey,
+        consultationConcernKey: matchedConcern.key,
+        startsBookingIntake: consultationReply.startsBookingIntake,
       } satisfies ConsultationConcernDecision;
     }
   }
@@ -1718,6 +1769,70 @@ function getConcernReply(message: string, context: ConversationContext): Consult
     matchedType: "guided_reply",
     replyText: `如果您想改善 ${matchedKeyword}，${matchedConcern.summary} 以院內目前可先評估的方向，常見會先從 ${recommendedTreatments.join("、")} 這幾類療程討論；實際仍要依您的部位條件、膚況與醫師評估為主。`,
   } satisfies Omit<RouterDecision, "nextContext">;
+}
+
+function getRelatedTreatmentConsultationReply(
+  message: string,
+  context: ConversationContext,
+): ConsultationConcernDecision | null {
+  const treatmentKey = context.treatmentConsultation?.treatmentKey;
+  const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
+  const relatedReply = treatment?.consultationGuide?.relatedReplies?.find((item) =>
+    includesAnyTerm(message, item.terms),
+  );
+
+  if (!treatment || !relatedReply) {
+    return null;
+  }
+
+  return {
+    bookingTreatmentKeys: relatedReply.bookingTreatmentKeys,
+    campaignId: relatedReply.campaignId,
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_consult:${treatment.key}:related:${relatedReply.key}`,
+    matchedType: "guided_reply",
+    replyText: `${relatedReply.reply}\n${relatedReply.followupPrompt}`,
+    startsBookingIntake: relatedReply.startsBookingIntake,
+  } satisfies ConsultationConcernDecision;
+}
+
+function applyConsultationAction(
+  replyText: string,
+  action: Pick<ConsultationConcernDecision, "bookingTreatmentKeys" | "campaignId" | "startsBookingIntake">,
+  context: ConversationContext,
+  pricingCampaigns: PricingCampaign[],
+  includePending: boolean,
+  today: Date,
+) {
+  let nextReplyText = replyText;
+  const activeCampaign = action.campaignId
+    ? getActivePricingCampaigns(pricingCampaigns, includePending, today).find(
+        (campaign) => campaign.id === action.campaignId,
+      )
+    : null;
+
+  if (activeCampaign) {
+    const branchScope = activeCampaign.branch_scope.trim().toLowerCase() === "all"
+      ? "全館適用"
+      : `適用館別：${activeCampaign.branch_scope.replace(/[|,，、/]+/g, "、")}`;
+    nextReplyText = `${nextReplyText}\n\n💰 ${activeCampaign.campaign_name}：${activeCampaign.price_text}，${branchScope}。`;
+    if (action.startsBookingIntake) {
+      context.bookingDraft.campaignId = activeCampaign.id;
+      context.bookingDraft.campaignName = activeCampaign.campaign_name;
+    }
+  }
+
+  if (action.startsBookingIntake) {
+    for (const treatmentKey of action.bookingTreatmentKeys ?? []) {
+      const treatment = findTreatmentByKey(treatmentKey);
+      if (treatment) {
+        context.bookingDraft.treatment = mergeBookingTreatment(context.bookingDraft.treatment, treatment.name);
+      }
+    }
+    markBookingSessionActive(context, today);
+  }
+
+  return nextReplyText;
 }
 
 function getCustomerConcernPhrase(message: string, concernKey: string, fallbackKeywords: string[]) {
@@ -1751,11 +1866,14 @@ function getSemanticTreatmentConsultationReply(
   }
 
   return {
+    bookingTreatmentKeys: consultationReply.bookingTreatmentKeys,
+    campaignId: consultationReply.campaignId,
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_consult:${treatment.key}:semantic:${consultation.concern}`,
     matchedType: "guided_reply",
     consultationAspectKey: consultationReply.aspectKey,
     replyText: consultationReply.replyText,
+    startsBookingIntake: consultationReply.startsBookingIntake,
     treatment,
   } as const;
 }
@@ -2124,6 +2242,25 @@ function buildPricingReply(campaign: PricingCampaign) {
   return `${campaignLabel}${detailLabel} ${branchScopeLabel}${fallbackSuffix}`.trim();
 }
 
+type PricingReplyDecision = RouterDecision & {
+  bookingCampaignId?: string;
+  bookingCampaignName?: string;
+  bookingTreatmentNames?: string[];
+  startsBookingIntake?: boolean;
+};
+
+function getPricingBookingMetadata(campaign: PricingCampaign) {
+  return {
+    bookingCampaignId: campaign.id,
+    bookingCampaignName: campaign.campaign_name,
+    bookingTreatmentNames: campaign.booking_treatments
+      ?.split(/[|,，、]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+    startsBookingIntake: ["1", "true", "yes"].includes(campaign.starts_booking_intake?.trim().toLowerCase() ?? ""),
+  };
+}
+
 function getPricingReply(
   message: string,
   context: ConversationContext,
@@ -2131,7 +2268,7 @@ function getPricingReply(
   includePending: boolean,
   today: Date,
   bookingIntentActive: boolean,
-) {
+): PricingReplyDecision | null {
   if (!isPriceInquiry(message)) {
     return null;
   }
@@ -2157,6 +2294,36 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
+  const explicitlyMatchedCampaign = findExplicitPricingCampaign(message, activeCampaigns);
+  if (explicitlyMatchedCampaign) {
+    const replyText = buildPricingReply(explicitlyMatchedCampaign);
+    return {
+      ...getPricingBookingMetadata(explicitlyMatchedCampaign),
+      decisionType: "pricing_auto_reply",
+      matchedKey: explicitlyMatchedCampaign.treatment_name,
+      matchedType: "pricing_campaign",
+      nextContext: context,
+      replyMessages: buildPromotionReplyMessages([explicitlyMatchedCampaign], replyText),
+      replyText,
+    } satisfies PricingReplyDecision;
+  }
+
+  const consultationCampaign =
+    findBookingPricingCampaign(context, activeCampaigns) ??
+    findConsultationPricingCampaign(context, activeCampaigns);
+  if (consultationCampaign) {
+    const replyText = buildPricingReply(consultationCampaign);
+    return {
+      ...getPricingBookingMetadata(consultationCampaign),
+      decisionType: "pricing_auto_reply",
+      matchedKey: consultationCampaign.treatment_name,
+      matchedType: "pricing_campaign",
+      nextContext: context,
+      replyMessages: buildPromotionReplyMessages([consultationCampaign], replyText),
+      replyText,
+    } satisfies PricingReplyDecision;
+  }
+
   if (subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual") {
     const matchedPricing = findPricingCampaignForTreatmentKey(subject.treatmentKey, activeCampaigns);
     const treatment = findTreatmentByKey(subject.treatmentKey);
@@ -2174,13 +2341,14 @@ function getPricingReply(
 
     const replyText = buildPricingReply(matchedPricing);
     return {
+      ...getPricingBookingMetadata(matchedPricing),
       decisionType: "pricing_auto_reply",
       matchedKey: matchedPricing.treatment_name,
       matchedType: "pricing_campaign",
       nextContext: context,
       replyMessages: buildPromotionReplyMessages([matchedPricing], replyText),
       replyText,
-    } satisfies RouterDecision;
+    } satisfies PricingReplyDecision;
   }
 
   return {
@@ -2491,6 +2659,30 @@ export async function routeCustomerMessage({
     };
   }
 
+  const relatedTreatmentConsultationReply = getRelatedTreatmentConsultationReply(trimmedMessage, nextContext);
+  if (relatedTreatmentConsultationReply) {
+    const {
+      bookingTreatmentKeys,
+      campaignId,
+      startsBookingIntake,
+      ...decision
+    } = relatedTreatmentConsultationReply;
+    const replyText = applyConsultationAction(
+      decision.replyText,
+      { bookingTreatmentKeys, campaignId, startsBookingIntake },
+      nextContext,
+      runtimeData.pricingCampaigns,
+      includePending,
+      currentTime,
+    );
+    nextContext.lastIntent = startsBookingIntake ? "booking_intake" : decision.matchedKey;
+    return {
+      ...decision,
+      nextContext,
+      replyText,
+    };
+  }
+
   const consultationPriorityReply = getTreatmentConsultationPriorityReply(trimmedMessage, nextContext);
   if (consultationPriorityReply) {
     nextContext.lastReferencedTreatment = consultationPriorityReply.treatment.name;
@@ -2515,23 +2707,39 @@ export async function routeCustomerMessage({
     const guidedTreatment = guidedTreatmentKey ? findTreatmentByKey(guidedTreatmentKey) : null;
     if (guidedTreatment) {
       nextContext.lastReferencedTreatment = guidedTreatment.name;
-      const matchedConcern = findConcernByMessage(trimmedMessage);
-      if (matchedConcern) {
+      const matchedConcernKey = concernReply.consultationConcernKey ?? findConcernByMessage(trimmedMessage)?.key;
+      if (matchedConcernKey) {
         recordTreatmentConsultationConcern(
           nextContext,
           guidedTreatment.key,
-          matchedConcern.key,
+          matchedConcernKey,
           concernReply.consultationAspectKey,
         );
       }
     }
-    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
+    const {
+      bookingTreatmentKeys,
+      campaignId,
+      consultationAspectKey: _consultationAspectKey,
+      consultationConcernKey: _consultationConcernKey,
+      startsBookingIntake,
+      ...decision
+    } = concernReply;
+    const replyText = applyConsultationAction(
+      decision.replyText,
+      { bookingTreatmentKeys, campaignId, startsBookingIntake },
+      nextContext,
+      runtimeData.pricingCampaigns,
+      includePending,
+      currentTime,
+    );
+    nextContext.lastIntent = startsBookingIntake || shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
       : concernReply.matchedKey;
-    const { consultationAspectKey: _consultationAspectKey, ...decision } = concernReply;
     return {
       ...decision,
       nextContext,
+      replyText,
     };
   }
 
@@ -2545,13 +2753,23 @@ export async function routeCustomerMessage({
         semanticTreatmentConsultation.concern,
         semanticTreatmentReply.consultationAspectKey,
       );
-      nextContext.lastIntent = semanticTreatmentReply.matchedKey;
+      const replyText = applyConsultationAction(
+        semanticTreatmentReply.replyText,
+        semanticTreatmentReply,
+        nextContext,
+        runtimeData.pricingCampaigns,
+        includePending,
+        currentTime,
+      );
+      nextContext.lastIntent = semanticTreatmentReply.startsBookingIntake
+        ? "booking_intake"
+        : semanticTreatmentReply.matchedKey;
       return {
         decisionType: semanticTreatmentReply.decisionType,
         matchedKey: semanticTreatmentReply.matchedKey,
         matchedType: semanticTreatmentReply.matchedType,
         nextContext,
-        replyText: semanticTreatmentReply.replyText,
+        replyText,
       };
     }
   }
@@ -2574,11 +2792,26 @@ export async function routeCustomerMessage({
     isBookingConversationIntent(previousContext.lastIntent),
   );
   if (pricingReply) {
-    nextContext.lastIntent = shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
+    const {
+      bookingCampaignId,
+      bookingCampaignName,
+      bookingTreatmentNames,
+      startsBookingIntake,
+      ...decision
+    } = pricingReply;
+    if (startsBookingIntake) {
+      nextContext.bookingDraft.campaignId = bookingCampaignId;
+      nextContext.bookingDraft.campaignName = bookingCampaignName;
+      for (const treatmentName of bookingTreatmentNames ?? []) {
+        nextContext.bookingDraft.treatment = mergeBookingTreatment(nextContext.bookingDraft.treatment, treatmentName);
+      }
+      markBookingSessionActive(nextContext, currentTime);
+    }
+    nextContext.lastIntent = startsBookingIntake || shouldKeepBookingMode(previousContext, nextContext, trimmedMessage)
       ? "booking_intake"
-      : pricingReply.matchedKey;
+      : decision.matchedKey;
     return {
-      ...pricingReply,
+      ...decision,
       nextContext,
     };
   }

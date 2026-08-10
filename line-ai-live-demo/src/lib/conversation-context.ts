@@ -13,6 +13,8 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 export type BookingDraft = {
   appointmentAt?: string;
   branch?: string;
+  campaignId?: string;
+  campaignName?: string;
   isFirstVisit?: "no" | "unknown" | "yes";
   name?: string;
   phone?: string;

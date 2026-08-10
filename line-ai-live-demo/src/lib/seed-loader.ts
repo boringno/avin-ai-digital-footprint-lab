@@ -36,14 +36,17 @@ export type PricingCampaign = {
   approval_status: string;
   asset_urls: string;
   branch_scope: string;
+  booking_treatments?: string;
   campaign_aliases: string;
   campaign_name: string;
   end_date: string;
   fallback_message: string;
+  id: string;
   is_active: string;
   notes: string;
   price_text: string;
   start_date: string;
+  starts_booking_intake?: string;
   treatment_name: string;
 };
 
