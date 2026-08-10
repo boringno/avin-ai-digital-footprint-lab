@@ -1705,6 +1705,10 @@ function supportsConsultationConcern(
   return treatment.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ?? false;
 }
 
+function buildTreatmentClarificationReply(treatmentNames: string[]) {
+  return `您提到的需求目前有 ${treatmentNames.join("、")} 等不同諮詢方向。為了不要替您直接選療程，想先確認您比較想了解哪一項呢？`;
+}
+
 function getConcernReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
   const consultationTreatment = getConsultationTreatment(context);
   const selectedConcernReply = consultationTreatment?.consultationGuide?.concernReplies?.find(
@@ -1727,10 +1731,20 @@ function getConcernReply(message: string, context: ConversationContext): Consult
     consultationTreatment && supportsConsultationConcern(consultationTreatment, matchedConcern.key)
       ? consultationTreatment
       : null;
-  const recommendedConsultationTreatment = matchedConcern.recommendedTreatmentKeys
+  const recommendedConsultationTreatments = matchedConcern.recommendedTreatmentKeys
     .map((treatmentKey) => findTreatmentByKey(treatmentKey))
-    .find((treatment) => treatment?.consultationGuide);
-  const guidedTreatment = compatibleConsultationTreatment ?? recommendedConsultationTreatment;
+    .filter((treatment): treatment is NonNullable<typeof treatment> =>
+      Boolean(treatment?.consultationGuide && supportsConsultationConcern(treatment, matchedConcern.key)),
+    );
+  if (!compatibleConsultationTreatment && recommendedConsultationTreatments.length > 1) {
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:clarify:${matchedConcern.key}`,
+      matchedType: "guided_reply",
+      replyText: buildTreatmentClarificationReply(recommendedConsultationTreatments.map((treatment) => treatment.name)),
+    } satisfies ConsultationConcernDecision;
+  }
+  const guidedTreatment = compatibleConsultationTreatment ?? recommendedConsultationTreatments[0];
   if (guidedTreatment) {
     const consultationReply = buildConsultationConcernReply(
       guidedTreatment,

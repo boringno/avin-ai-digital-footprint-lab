@@ -71,11 +71,20 @@ export type TreatmentConfig = {
 };
 
 export type ConcernConfig = {
+  areaKeys: TreatmentAreaKey[];
   key: string;
   keywords: string[];
   informationalReply?: string;
   recommendedTreatmentKeys: string[];
   summary: string;
+};
+
+export type TreatmentAreaKey = "face" | "jawline" | "skin" | "body" | "arm" | "abdomen" | "flank" | "thigh";
+
+export type TreatmentAreaConfig = {
+  key: TreatmentAreaKey;
+  keywords: string[];
+  label: string;
 };
 
 export type ClinicConfig = {
@@ -112,6 +121,7 @@ export type ClinicConfig = {
     fallbackSummary: string;
     overviewPrefix: string;
   };
+  areaList: TreatmentAreaConfig[];
   concernList: ConcernConfig[];
   treatmentList: TreatmentConfig[];
 };
@@ -241,8 +251,19 @@ export const clinicConfig: ClinicConfig = {
       "價格會依療程部位、劑量、活動期間與醫師評估而不同。\n我可以先幫您整理想了解的療程與館別\n客服上班後再協助確認目前方案。",
     overviewPrefix: "目前可先參考的近期活動如下",
   },
+  areaList: [
+    { key: "face", keywords: ["臉", "臉部", "全臉", "側臉"], label: "臉部" },
+    { key: "jawline", keywords: ["雙下巴", "雙下八", "下巴", "下顎線", "嘴邊肉", "輪廓線"], label: "下顎輪廓" },
+    { key: "skin", keywords: ["皮膚", "膚質", "毛孔", "痘疤", "暗沉"], label: "肌膚" },
+    { key: "body", keywords: ["身體", "體態", "局部脂肪", "贅肉"], label: "身體" },
+    { key: "arm", keywords: ["手臂", "蝴蝶袖", "掰掰袖", "掰掰肉"], label: "手臂" },
+    { key: "abdomen", keywords: ["腹部", "小腹", "小肚肚", "肚子", "肚皮", "腰腹"], label: "腹部" },
+    { key: "flank", keywords: ["腰側", "側腰"], label: "腰側" },
+    { key: "thigh", keywords: ["大腿", "腿部"], label: "大腿" },
+  ],
   concernList: [
     {
+      areaKeys: ["face"],
       key: "dynamic_wrinkles",
       keywords: ["魚尾紋", "動態紋", "表情紋"],
       informationalReply:
@@ -251,42 +272,49 @@ export const clinicConfig: ClinicConfig = {
       summary: "這類通常會先從表情肌活動與動態紋路方向了解。",
     },
     {
+      areaKeys: ["jawline", "face"],
       key: "jawline_looseness",
       keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "雙下八", "下巴肉", "肉肉下巴", "下巴線條", "臉部鬆弛"],
       recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
     },
     {
+      areaKeys: ["body", "arm", "abdomen", "flank", "thigh"],
       key: "local_contour",
       keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "肚子", "肚皮", "腰腹", "手臂", "蝴蝶袖", "掰掰袖", "大腿", "腰側", "側腰", "橘皮", "體態", "身體線條", "贅肉"],
       recommendedTreatmentKeys: ["onda_pro"],
       summary: "這類可先從局部線條、脂肪型困擾與緊實需求整理諮詢方向。",
     },
     {
+      areaKeys: ["face"],
       key: "nasolabial_fold",
       keywords: ["法令紋", "木偶紋", "嘴角紋"],
       recommendedTreatmentKeys: ["filler", "counterclockwise", "tenthermage"],
       summary: "這類通常會先看是凹陷支撐不足、整體鬆弛，還是兩者一起影響。",
     },
     {
+      areaKeys: ["skin", "face"],
       key: "pores_texture",
       keywords: ["毛孔", "膚質", "粗糙", "粉刺", "出油", "皮膚粗糙"],
       recommendedTreatmentKeys: ["pico", "hydrafacial", "hydrafacial_elite", "skin_booster", "fisbo"],
       summary: "這類通常會先往膚質整理、清潔保養與整體細緻度方向評估。",
     },
     {
+      areaKeys: ["skin", "face"],
       key: "acne_scar",
       keywords: ["痘疤", "痘坑", "凹疤"],
       recommendedTreatmentKeys: ["pico", "pico_honeycomb_tip", "skin_booster"],
       summary: "這類通常會先看痘疤深淺、膚況穩定度與是否需要搭配分段治療。",
     },
     {
+      areaKeys: ["skin", "face"],
       key: "dullness_brightening",
       keywords: ["暗沉", "提亮", "膚色不均", "氣色差", "美白"],
       recommendedTreatmentKeys: ["pico", "skin_booster", "hydrafacial", "hydrafacial_elite"],
       summary: "這類通常會先往亮白、膚色均勻與整體膚況整理方向評估。",
     },
     {
+      areaKeys: ["face", "body"],
       key: "general_looseness",
       keywords: ["鬆弛", "下垂", "拉提", "緊實", "老化"],
       recommendedTreatmentKeys: ["tenthermage", "ultherapy", "qplus", "onda_pro"],
