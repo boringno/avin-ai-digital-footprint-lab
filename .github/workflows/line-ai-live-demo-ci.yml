@@ -53,6 +53,7 @@ jobs:
           npm run validate:routing-snapshot
           npm run validate:nlu-frame
           npm run validate:nlu-shadow
+          npm run validate:nlu-review-boundary
           npm run validate:ci-parity
           npm run validate:pregnancy-risk-handoff
           npm run validate:workbench-presentation

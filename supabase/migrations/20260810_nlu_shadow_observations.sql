@@ -14,6 +14,10 @@ create table if not exists public.nlu_shadow_observations (
   tokens_in integer not null default 0 check (tokens_in >= 0),
   tokens_out integer not null default 0 check (tokens_out >= 0),
   error_code text,
+  review_status text not null default 'pending' check (review_status in ('pending', 'confirmed', 'dismissed')),
+  expected_frame jsonb,
+  reviewed_by uuid references public.staff_users(id) on delete set null,
+  reviewed_at timestamptz,
   created_at timestamptz not null default now(),
   retention_expiry timestamptz not null default (now() + interval '180 days'),
   constraint nlu_shadow_observations_message_prompt_unique unique (tenant_id, message_id, prompt_version)
