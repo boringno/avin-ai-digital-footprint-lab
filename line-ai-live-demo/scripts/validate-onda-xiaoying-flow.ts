@@ -85,13 +85,35 @@ async function main() {
     restartedIntro.nextContext.treatmentConsultation?.concernKeys.length === 0,
     "X11: an explicit treatment restart must clear old concern state",
   );
-  const restartedBody = await route("\u624b\u81c2", restartedIntro.nextContext);
-  assert(restartedBody.replyText.includes("16,888"), "X11: a body choice after restart must use the ONDA body price");
-  assert(!restartedBody.replyText.includes("12,999"), "X11: an old face concern must not contaminate the restarted body flow");
-  assert(
-    restartedBody.nextContext.treatmentConsultation?.concernKeys.join(",") === "local_contour",
-    "X11: the restarted consultation must retain only the new body concern",
-  );
+  const bodyTerms = [
+    "\u624b\u81c2",
+    "\u809a\u5b50",
+    "\u6a58\u76ae",
+    "\u8179\u90e8",
+    "\u5c0f\u8179",
+    "\u8774\u8776\u8896",
+    "\u63b0\u63b0\u8896",
+    "\u5927\u817f",
+    "\u8170\u5074",
+    "\u5074\u8170",
+    "\u8170\u8179",
+    "\u809a\u76ae",
+  ];
+  for (const bodyTerm of bodyTerms) {
+    const restartedBody = await route(bodyTerm, restartedIntro.nextContext);
+    assert(
+      restartedBody.replyText.includes("16,888"),
+      `X11: body term ${bodyTerm} after restart must use the ONDA body price`,
+    );
+    assert(
+      !restartedBody.replyText.includes("12,999"),
+      `X11: an old face concern must not contaminate body term ${bodyTerm}`,
+    );
+    assert(
+      restartedBody.nextContext.treatmentConsultation?.concernKeys.join(",") === "local_contour",
+      `X11: body term ${bodyTerm} must retain only the new body concern`,
+    );
+  }
 
   console.log("ONDA Xiaoying flow validation passed (11 scenarios)");
 }
