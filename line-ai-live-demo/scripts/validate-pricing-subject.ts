@@ -31,10 +31,10 @@ async function runTurns(messages: string[], userId: string) {
   return { context, decisions };
 }
 
-function assertOndaPrice(decision: RouterDecision, scenario: string) {
+function assertOndaFaceComboPrice(decision: RouterDecision, scenario: string) {
   assert(decision.decisionType === "pricing_auto_reply", `${scenario}: price questions must use the controlled pricing route`);
-  assert(decision.matchedKey === "ONDA PRO", `${scenario}: ONDA must remain the pricing subject`);
-  assert(decision.replyText.includes("16,888"), `${scenario}: ONDA must return its approved amount`);
+  assert(decision.matchedKey === "臉部輪廓組合", `${scenario}: the selected ONDA face combo must remain the pricing subject`);
+  assert(decision.replyText.includes("12,999元"), `${scenario}: the selected face combo must return its approved amount`);
   const replyPayload = JSON.stringify(decision.replyMessages ?? []);
   assert(!/VIO|皮秒|除毛/.test(replyPayload), `${scenario}: ONDA price must not attach unrelated treatment cards`);
 }
@@ -46,13 +46,13 @@ async function getActiveOndaConsultation(userId: string) {
 async function main() {
   const ondaExperience = await getActiveOndaConsultation("pricing-subject-ps1");
   const ps1 = await route("體驗價", ondaExperience.context);
-  assertOndaPrice(ps1, "PS1");
-  console.log("PASS: PS1 active ONDA consultation resolves 體驗價 to ONDA only");
+  assertOndaFaceComboPrice(ps1, "PS1");
+  console.log("PASS: PS1 active ONDA face consultation resolves 體驗價 to its combo only");
 
   const ondaHowMuch = await getActiveOndaConsultation("pricing-subject-ps2");
   const ps2 = await route("多少錢", ondaHowMuch.context);
-  assertOndaPrice(ps2, "PS2");
-  console.log("PASS: PS2 active ONDA consultation resolves 多少錢 to ONDA only");
+  assertOndaFaceComboPrice(ps2, "PS2");
+  console.log("PASS: PS2 active ONDA face consultation resolves 多少錢 to its combo only");
 
   const ps3 = await route("現在活動有哪些", createEmptyConversationContext("pricing-subject-ps3"));
   assert(ps3.matchedKey === "promotion_overview", "PS3: an explicit browse request must retain the promotion overview");
@@ -82,7 +82,7 @@ async function main() {
   const ps9Hours = await route("高雄館營業時間", ondaThenHours.context);
   assert(ps9Hours.matchedKey.startsWith("branch_hours:"), "PS9: an intervening clinic-info question must replace the latest intent");
   const ps9 = await route("多少錢", ps9Hours.nextContext);
-  assertOndaPrice(ps9, "PS9");
+  assertOndaFaceComboPrice(ps9, "PS9");
   console.log("PASS: PS9 active consultation survives an intervening clinic-info question for pricing");
 
   const booking = await runTurns(["我想預約皮秒"], "pricing-subject-ps8-booking");
@@ -101,13 +101,27 @@ async function main() {
   console.log("PASS: PS10 browse and clarify promotion wording remain intentionally distinct");
 
   const staleOnda = await getActiveOndaConsultation("pricing-subject-ps11");
-  const staleContext: ConversationContext = {
+  const expiredConsultationActiveBooking: ConversationContext = {
     ...staleOnda.context,
     lastSeenAt: new Date(NOW.getTime() - 21 * 60 * 1000).toISOString(),
   };
+  const ps11a = await route("多少錢", expiredConsultationActiveBooking);
+  assertOndaFaceComboPrice(ps11a, "PS11a");
+  console.log("PASS: PS11a active booking preserves its quoted combo after consultation context expires");
+
+  const staleContext: ConversationContext = {
+    ...staleOnda.context,
+    bookingSession: staleOnda.context.bookingSession
+      ? {
+          ...staleOnda.context.bookingSession,
+          lastActiveAt: new Date(NOW.getTime() - 25 * 60 * 60 * 1000).toISOString(),
+        }
+      : undefined,
+    lastSeenAt: new Date(NOW.getTime() - 25 * 60 * 60 * 1000).toISOString(),
+  };
   const ps11 = await route("多少錢", staleContext);
   assert(ps11.matchedKey === "pricing_followup", "PS11: expired consultation context must not answer a generic price question");
-  console.log("PASS: PS11 stale treatment context expires before generic price handling");
+  console.log("PASS: PS11 stale treatment and booking context expire before generic price handling");
 
   console.log("pricing subject validation passed (12 scenarios)");
 }
