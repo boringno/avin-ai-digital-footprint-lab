@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { buildLimitedAiReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
+import { buildLimitedAiReplyMessages, buildLimitedTextReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
 import { generateAiReply } from "@/lib/ai-reply-client";
 import {
   classifyControlledIntent,
@@ -49,6 +49,7 @@ type LineWebhookPayload = {
 
 type ClassifiedDecision = {
   aiModel?: string;
+  aiSourceUrl?: string;
   aiTokensIn?: number;
   aiTokensOut?: number;
   conversationState: ConversationState;
@@ -87,6 +88,7 @@ export class InvalidWebhookPayloadError extends Error {
 
 export type ProcessedWebhookResult = {
   aiModel?: string;
+  aiSourceUrl?: string;
   aiTokensIn?: number;
   aiTokensOut?: number;
   bookingDraft: {
@@ -179,13 +181,18 @@ export function buildReplyPayload(
 ) {
   const introducedText = shouldIntroduce && !replyText.includes("AI 客服") ? `${AI_INTRO_TEXT}\n\n${replyText}` : replyText;
   const finalText = suppressAiFooter ? introducedText : appendAiFooter(introducedText);
-  const messages = replyMessages?.length
+  const baseMessages: LineReplyMessage[] = replyMessages?.length
     ? [
         ...(shouldIntroduce && !suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_INTRO_TEXT) } satisfies LineTextMessage] : []),
         ...formatReplyMessages(replyMessages),
         ...(!suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_REPLY_FOOTER) } satisfies LineTextMessage] : []),
       ]
-    : [{ type: "text", text: formatReplyText(finalText) } satisfies LineTextMessage];
+    : buildLimitedTextReplyMessages(finalText);
+  const messages: LineReplyMessage[] = replyMessages?.length
+    ? baseMessages.flatMap((message): LineReplyMessage[] =>
+        message.type === "text" ? buildLimitedTextReplyMessages(message.text) : [message],
+      )
+    : baseMessages;
 
   return {
     replyToken,
@@ -426,33 +433,46 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       replyText = humanizedReply;
       usedAiHumanizer = true;
     }
-  } else if (
-    !controlledClassifierResolved &&
-    routedDecision.decisionType === "fallback_reply" &&
-    (shouldAllowAiFallbackReply(event.message.text ?? "") || isOfficialTreatmentEducationRoute(routedDecision.matchedKey))
-  ) {
-    const officialEducationTreatmentKey = isOfficialTreatmentEducationRoute(routedDecision.matchedKey)
-      ? routedDecision.matchedKey.split(":", 2)[1]
-      : undefined;
-    generatedReplyIsMedical = Boolean(officialEducationTreatmentKey) || isMedicalAestheticFallbackCandidate(event.message.text ?? "");
-    const aiReply = await generateAiReply(event.message.text ?? "", {
-      bookingBranch: routedDecision.nextContext.bookingDraft.branch,
-      bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
-      lastIntent: routedDecision.nextContext.lastIntent,
-      lastReferencedBranch: routedDecision.nextContext.lastReferencedBranch,
-      lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,
-      locationPreference: routedDecision.nextContext.locationPreference,
-      preferredBranch: routedDecision.nextContext.preferredBranch,
-      controlledMedicalFallback: generatedReplyIsMedical,
-      officialEducationTreatmentKey,
-    });
-    if (aiReply) {
-      replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical });
-      aiModel = aiReply.model;
-      aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
-      aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
-      aiReplySourceUrl = aiReply.sourceUrl;
-      usedAiReplyGenerator = true;
+  } else if (!controlledClassifierResolved) {
+    const canUseApprovedKnowledge =
+      !routedDecision.replyMessages?.length &&
+      (routedDecision.decisionType === "faq_auto_reply" ||
+        (routedDecision.decisionType === "treatment_intro_reply" &&
+          (/^treatment_(?:intro|brand):/u.test(routedDecision.matchedKey) ||
+            ["unsupported_energy_device_alternatives"].includes(routedDecision.matchedKey) ||
+            routedDecision.matchedKey.startsWith("unavailable_treatment_alternative:"))));
+    const canUseFallbackGenerator =
+      routedDecision.decisionType === "fallback_reply" &&
+      (shouldAllowAiFallbackReply(event.message.text ?? "") || isOfficialTreatmentEducationRoute(routedDecision.matchedKey));
+
+    if (canUseApprovedKnowledge || canUseFallbackGenerator) {
+      const officialEducationTreatmentKey = isOfficialTreatmentEducationRoute(routedDecision.matchedKey)
+        ? routedDecision.matchedKey.split(":", 2)[1]
+        : undefined;
+      generatedReplyIsMedical =
+        routedDecision.decisionType === "treatment_intro_reply" ||
+        Boolean(officialEducationTreatmentKey) ||
+        isMedicalAestheticFallbackCandidate(event.message.text ?? "");
+      const aiReply = await generateAiReply(event.message.text ?? "", {
+        approvedKnowledge: canUseApprovedKnowledge ? routedDecision.replyText : undefined,
+        bookingBranch: routedDecision.nextContext.bookingDraft.branch,
+        bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
+        lastIntent: routedDecision.nextContext.lastIntent,
+        lastReferencedBranch: routedDecision.nextContext.lastReferencedBranch,
+        lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,
+        locationPreference: routedDecision.nextContext.locationPreference,
+        preferredBranch: routedDecision.nextContext.preferredBranch,
+        controlledMedicalFallback: generatedReplyIsMedical,
+        officialEducationTreatmentKey,
+      });
+      if (aiReply) {
+        replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical });
+        aiModel = aiReply.model;
+        aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
+        aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
+        aiReplySourceUrl = aiReply.sourceUrl;
+        usedAiReplyGenerator = true;
+      }
     }
   }
 
@@ -464,7 +484,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   const replyMessages = usedAiReplyGenerator
     ? formatReplyMessages(buildLimitedAiReplyMessages(replyText, AI_REPLY_FOOTER, {
         medical: generatedReplyIsMedical,
-        sourceUrl: aiReplySourceUrl,
       }))
     : usedAiHumanizer || !routedDecision.replyMessages
       ? undefined
@@ -495,15 +514,16 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
 
   return {
     aiModel,
+    aiSourceUrl: aiReplySourceUrl,
     aiTokensIn,
     aiTokensOut,
     conversationState: {
       ...conversationState,
       updatedAt: currentIso,
     },
-    decisionType: usedAiReplyGenerator ? "ai_auto_reply" : routedDecision.decisionType,
-    matchedKey: usedAiReplyGenerator ? "ai_controlled_fallback" : routedDecision.matchedKey,
-    matchedType: usedAiReplyGenerator ? "guided_reply" : routedDecision.matchedType,
+    decisionType: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType,
+    matchedKey: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey,
+    matchedType: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     replyMessages,
     replyText,
@@ -529,6 +549,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
 
     results.push({
       aiModel: decision.aiModel,
+      aiSourceUrl: decision.aiSourceUrl,
       aiTokensIn: decision.aiTokensIn,
       aiTokensOut: decision.aiTokensOut,
       bookingDraft: {

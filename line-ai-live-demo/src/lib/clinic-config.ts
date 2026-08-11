@@ -244,7 +244,7 @@ export const clinicConfig: ClinicConfig = {
   escalationPolicy: {
     autoResumeAfterMinutes: 120,
     humanRequestTerms: ["真人", "真人客服", "人工", "專人", "客服本人"],
-    personalizedConsultTerms: ["我適合", "我適不適合", "推薦哪個", "哪個適合我", "幫我判斷", "效果一定", "保證效果"],
+    personalizedConsultTerms: [],
     postProcedureAlertTerms: ["很腫", "發炎", "疼痛", "發燒", "流膿", "冒血", "紅腫", "不舒服", "異常", "副作用"],
     seriousComplaintTerms: ["客訴", "投訴", "申訴", "不爽", "生氣", "退費", "退款", "求償", "服務很差"],
   },
@@ -1020,6 +1020,18 @@ export function getClinicOfferingNames() {
     new Set(
       clinicConfig.treatmentList.flatMap((treatment) => [
         treatment.name,
+        ...(treatment.availableBrands ?? []),
+      ]),
+    ),
+  );
+}
+
+export function getClinicOfferingTerms() {
+  return Array.from(
+    new Set(
+      clinicConfig.treatmentList.flatMap((treatment) => [
+        treatment.name,
+        ...treatment.aliases,
         ...(treatment.availableBrands ?? []),
       ]),
     ),

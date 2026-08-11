@@ -1,4 +1,4 @@
-import { getClinicOfferingNames } from "@/lib/clinic-config";
+import { getClinicOfferingTerms } from "@/lib/clinic-config";
 import { formatReplyText } from "@/lib/reply-text-format";
 import type { LineTextMessage } from "@/lib/treatment-carousel";
 
@@ -10,7 +10,7 @@ const SAFE_MEDICAL_FALLBACK =
 const SAFE_GENERAL_FALLBACK = "我可以協助診所療程與預約相關問題，請告訴我想了解的項目。";
 
 const PRICE_OR_CAMPAIGN_PATTERN =
-  /(?:NT\$|TWD|新台幣|元|價格|價錢|費用|報價|市場行情|優惠|折扣|活動|體驗價|檔期|截至|即日起|[\p{Nd}０-９]|[零〇一二兩三四五六七八九十百千萬億]{2,}|(?:大約|大概|差不多).{0,8}(?:萬|千)|(?:幾|數)(?:萬|千)|(?:月底|年底))/iu;
+  /(?:NT\$|TWD|新台幣|價格|價錢|費用|報價|市場行情|優惠|折扣|活動|體驗價|檔期|截至|即日起|[\p{Nd}０-９][\p{Nd}０-９,，.．]*\s*(?:元|塊)|[零〇一二兩三四五六七八九十百千萬億]+\s*(?:元|塊)|(?:大約|大概|差不多).{0,8}(?:萬|千)|(?:幾|數)(?:萬|千)|(?:月底|年底))/iu;
 const OVERCLAIM_PATTERN =
   /(?:(?:保證|一定|必定|立即|馬上|立刻).{0,5}(?:有效|有感|改善|見效)|(?:效果|療效).{0,5}(?:很好|超好|明顯|都很好)|(?:每個人|人人).{0,8}(?:有效|有感|改善|效果)|永久|百分之百|100%)/iu;
 const ABSOLUTE_SAFETY_PATTERN =
@@ -46,8 +46,8 @@ function normalizeGeneratedText(text: string) {
 }
 
 function stripApprovedTreatmentNames(text: string) {
-  return getClinicOfferingNames().reduce(
-    (remaining, name) => remaining.replaceAll(name, ""),
+  return getClinicOfferingTerms().reduce(
+    (remaining, name) => remaining.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"), ""),
     text,
   );
 }
@@ -81,7 +81,6 @@ function fitWithinTotalBudget(text: string, budget: number, fallback: string, re
 
 type AiReplyConstraintOptions = {
   medical?: boolean;
-  sourceUrl?: string;
 };
 
 export function constrainMedicalAiReply(text: string, footer: string, options: AiReplyConstraintOptions = {}) {
@@ -108,8 +107,7 @@ export function constrainMedicalAiReply(text: string, footer: string, options: A
     return medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK;
   }
 
-  const sourceLine = options.sourceUrl ? `\n資料來源：${options.sourceUrl}` : "";
-  const footerCost = visibleLength(footer) + visibleLength(sourceLine) + 2;
+  const footerCost = visibleLength(footer) + 2;
   const totalContentBudget = AI_FALLBACK_MESSAGE_LIMIT * AI_FALLBACK_MAX_MESSAGES - footerCost;
   const constrained = medical ? ensureMedicalAssessment(normalized) : normalized;
   return fitWithinTotalBudget(
@@ -118,6 +116,36 @@ export function constrainMedicalAiReply(text: string, footer: string, options: A
     medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK,
     medical ? "實際仍需由醫師現場評估。" : "",
   );
+}
+
+function truncateVisible(text: string, budget: number) {
+  if (visibleLength(text) <= budget) return text;
+  if (budget <= 1) return takeVisible(text, budget);
+
+  const fitted = takeVisible(text, budget - 1).trimEnd();
+  return `${fitted}…`;
+}
+
+export function buildLimitedTextReplyMessages(text: string): LineTextMessage[] {
+  const normalized = formatReplyText(text);
+  if (!normalized) return [];
+
+  const bounded = truncateVisible(normalized, AI_FALLBACK_MESSAGE_LIMIT * AI_FALLBACK_MAX_MESSAGES);
+  if (visibleLength(bounded) <= AI_FALLBACK_MESSAGE_LIMIT) {
+    return [{ type: "text", text: bounded }];
+  }
+
+  const splitIndex = findSplitIndex(
+    bounded,
+    Math.max(1, visibleLength(bounded) - AI_FALLBACK_MESSAGE_LIMIT),
+    AI_FALLBACK_MESSAGE_LIMIT,
+  );
+  const first = takeVisible(bounded, splitIndex).trim();
+  const second = Array.from(bounded).slice(splitIndex).join("").trim();
+  return [first, second]
+    .filter(Boolean)
+    .slice(0, AI_FALLBACK_MAX_MESSAGES)
+    .map((messageText) => ({ type: "text", text: messageText } satisfies LineTextMessage));
 }
 
 function findSplitIndex(text: string, minimum: number, maximum: number) {
@@ -135,14 +163,13 @@ export function buildLimitedAiReplyMessages(
   options: AiReplyConstraintOptions = {},
 ): LineTextMessage[] {
   const normalized = formatReplyText(constrainMedicalAiReply(text, footer, options));
-  const sourceLine = options.sourceUrl ? `\n資料來源：${options.sourceUrl}` : "";
   const separator = "\n\n";
-  const oneMessage = `${normalized}${sourceLine}${separator}${footer}`;
+  const oneMessage = `${normalized}${separator}${footer}`;
   if (visibleLength(oneMessage) <= AI_FALLBACK_MESSAGE_LIMIT) {
     return [{ type: "text", text: oneMessage }];
   }
 
-  const secondCapacity = AI_FALLBACK_MESSAGE_LIMIT - visibleLength(sourceLine) - visibleLength(separator) - visibleLength(footer);
+  const secondCapacity = AI_FALLBACK_MESSAGE_LIMIT - visibleLength(separator) - visibleLength(footer);
   const minimumFirstLength = Math.max(1, visibleLength(normalized) - secondCapacity);
   const splitIndex = findSplitIndex(
     normalized,
@@ -151,16 +178,14 @@ export function buildLimitedAiReplyMessages(
   );
   const first = takeVisible(normalized, splitIndex).trim();
   const second = Array.from(normalized).slice(splitIndex).join("").trim();
-
   if (!first || !second) {
     const safeReply = options.medical === false ? SAFE_GENERAL_FALLBACK : SAFE_MEDICAL_FALLBACK;
-    const safe = `${safeReply}${sourceLine}${separator}${footer}`;
-    return [{ type: "text", text: safe }];
+    return buildLimitedTextReplyMessages(`${safeReply}${separator}${footer}`);
   }
 
   return [
     { type: "text", text: first },
-    { type: "text", text: `${second}${sourceLine}${separator}${footer}` },
+    { type: "text", text: `${second}${separator}${footer}` },
   ];
 }
 

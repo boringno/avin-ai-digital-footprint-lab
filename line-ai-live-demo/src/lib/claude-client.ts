@@ -28,6 +28,7 @@ export type GeneratedClaudeReply = {
 };
 
 export type ClaudeReplyContext = {
+  approvedKnowledge?: string;
   bookingBranch?: string;
   bookingTreatment?: string;
   lastIntent?: string;
@@ -117,6 +118,12 @@ export function buildClaudeUserPrompt(message: string, context?: ClaudeReplyCont
     "可收斂的重點是：療程、館別、3 個方便時段。",
     ...(context?.controlledMedicalFallback
       ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向。若客人問診所有沒有該項目，只能以核准療程清單判斷；未列出就說目前核准清單未列此項，並詢問部位或困擾，只能從清單內推薦相近方向。最後引導免費諮詢與醫師現場評估；客人願意預約時，再收集館別、姓名、電話與方便時段。"]
+      : []),
+    ...(context?.approvedKnowledge
+      ? [
+          "以下是診所核准內容。請以它作為事實底稿，針對客人的問法自然回答，不必逐字照抄；不得加入底稿沒有的院內資訊、價格或承諾，也不要輸出網址或資料來源欄位。",
+          `內部知識：${context.approvedKnowledge}`,
+        ]
       : []),
     ...(contextLines.length > 0 ? ["", "已知對話上下文：", ...contextLines] : []),
     "",

@@ -6,6 +6,7 @@ import { extractOpenAiResponseSourceUrls, extractOpenAiResponseText, type OpenAi
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 
 export type OpenAiReplyContext = {
+  approvedKnowledge?: string;
   bookingBranch?: string;
   bookingTreatment?: string;
   lastIntent?: string;
@@ -31,15 +32,6 @@ function isAllowedOfficialSource(url: string, allowedDomains: string[]) {
     return allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   } catch {
     return false;
-  }
-}
-
-function fitSourceUrlForLine(url: string) {
-  if (Array.from(url).length <= 68) return url;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
   }
 }
 
@@ -106,8 +98,14 @@ export function buildOpenAiUserPrompt(message: string, context?: OpenAiReplyCont
     ...(context?.controlledMedicalFallback
       ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向。若客人問診所有沒有該項目，只能以核准療程清單判斷；未列出就說目前核准清單未列此項，並詢問部位或困擾，只能從清單內推薦相近方向。最後引導免費諮詢與醫師現場評估；客人願意預約時，再收集館別、姓名、電話與方便時段。"]
       : []),
-    ...(context?.officialEducationTreatmentKey
-      ? ["這題沒有診所核准 FAQ。你必須先使用官方來源搜尋工具，再依搜尋結果回答；只說一般原理、常見改善方向或一般注意事項。不得引用價格、活動、院內供應、療程規格或把效果說死；若官方來源不足，請明確說資料不足並引導免費諮詢。"]
+    ...(context?.approvedKnowledge
+      ? [
+          "以下是診所核准內容或已完成官方來源查證的內部知識。請以它作為事實底稿，針對客人的問法自然回答，不必逐字照抄；不得加入底稿沒有的院內資訊、價格或承諾，也不要輸出網址或資料來源欄位。",
+          `內部知識：${context.approvedKnowledge}`,
+        ]
+      : []),
+    ...(context?.officialEducationTreatmentKey && !context.approvedKnowledge
+      ? ["這題沒有診所核准 FAQ，系統會先在背景查證官方來源；只說一般原理、常見改善方向或一般注意事項。不得引用價格、活動、院內供應、療程規格或把效果說死；若官方來源不足，請明確說資料不足並引導免費諮詢。"]
       : []),
     ...(contextLines.length > 0 ? ["", "對話背景：", ...contextLines] : []),
     "",
@@ -133,62 +131,78 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
   const timeoutMs = usesOfficialSearch ? config.aiOfficialSearchTimeoutMs : config.aiReplyGenerationTimeoutMs;
   const timeout = setTimeout(() => abortController.abort(new Error("OpenAI reply generation timed out")), timeoutMs);
   try {
-    const response = await fetch(OPENAI_RESPONSES_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openAiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        input: buildOpenAiUserPrompt(message, context),
-        instructions: buildSystemPrompt(),
+    const request = async (body: Record<string, unknown>) => {
+      const response = await fetch(OPENAI_RESPONSES_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openAiApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      const rawText = await response.text();
+      if (!response.ok) {
+        throw new Error(`OpenAI API error ${response.status}: ${rawText}`);
+      }
+      try {
+        return JSON.parse(rawText) as OpenAiResponsesPayload;
+      } catch {
+        throw new Error("OpenAI API returned invalid JSON");
+      }
+    };
+
+    let sourceUrl: string | undefined;
+    let approvedKnowledge = context?.approvedKnowledge;
+    let tokensIn = 0;
+    let tokensOut = 0;
+
+    if (usesOfficialSearch) {
+      const searchPayload = await request({
+        include: ["web_search_call.action.sources"],
+        input: [
+          `療程：${officialTreatment?.name ?? context?.officialEducationTreatmentKey}`,
+          `客人問題：${message}`,
+          "請只整理可供客服內部使用的一般原理、常見改善方向或一般注意事項。不要提供價格、活動、院內供應宣稱或療效保證。",
+        ].join("\n"),
+        instructions: "你是內部官方資料查證工具。只依允許的官方網域整理精簡事實筆記；這份內容不會直接顯示給客人。",
         max_output_tokens: config.openAiMaxTokens,
         model: config.openAiModel,
-        ...(usesOfficialSearch
-          ? {
-              include: ["web_search_call.action.sources"],
-              tool_choice: "required",
-              tools: [{
-                filters: { allowed_domains: officialSourceDomains },
-                search_context_size: "low",
-                type: "web_search",
-              }],
-            }
-          : {}),
+        tool_choice: "required",
+        tools: [{
+          filters: { allowed_domains: officialSourceDomains },
+          search_context_size: "low",
+          type: "web_search",
+        }],
+      });
+      approvedKnowledge = extractOpenAiResponseText(searchPayload) ?? undefined;
+      sourceUrl = extractOpenAiResponseSourceUrls(searchPayload)
+        .find((url) => isAllowedOfficialSource(url, officialSourceDomains));
+      tokensIn += searchPayload.usage?.input_tokens ?? 0;
+      tokensOut += searchPayload.usage?.output_tokens ?? 0;
+      if (!approvedKnowledge || !sourceUrl) return null;
+    }
+
+    const replyPayload = await request({
+      input: buildOpenAiUserPrompt(message, {
+        ...context,
+        approvedKnowledge,
+        officialEducationTreatmentKey: undefined,
       }),
-      signal: abortController.signal,
+      instructions: buildSystemPrompt(),
+      max_output_tokens: config.openAiMaxTokens,
+      model: config.openAiModel,
     });
-
-    const rawText = await response.text();
-    if (!response.ok) {
-      throw new Error(`OpenAI API error ${response.status}: ${rawText}`);
-    }
-
-    let payload: OpenAiResponsesPayload;
-    try {
-      payload = JSON.parse(rawText) as OpenAiResponsesPayload;
-    } catch {
-      throw new Error("OpenAI API returned invalid JSON");
-    }
-
-    const text = extractOpenAiResponseText(payload);
-    if (!text) {
-      return null;
-    }
-
-    const sourceUrl = extractOpenAiResponseSourceUrls(payload)
-      .filter((url) => isAllowedOfficialSource(url, officialSourceDomains))
-      .map(fitSourceUrlForLine)
-      .find((url): url is string => Boolean(url));
-    if (usesOfficialSearch && !sourceUrl) {
-      return null;
-    }
+    const text = extractOpenAiResponseText(replyPayload);
+    if (!text) return null;
+    tokensIn += replyPayload.usage?.input_tokens ?? 0;
+    tokensOut += replyPayload.usage?.output_tokens ?? 0;
 
     return {
       model: config.openAiModel,
       text,
-      tokensIn: payload.usage?.input_tokens ?? 0,
-      tokensOut: payload.usage?.output_tokens ?? 0,
+      tokensIn,
+      tokensOut,
       ...(sourceUrl ? { sourceUrl } : {}),
     };
   } catch (error) {
