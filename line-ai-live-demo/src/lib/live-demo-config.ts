@@ -4,6 +4,7 @@ import path from "node:path";
 export type RuntimeConfig = {
   adminNotifyTarget: string;
   aiReplyGenerationTimeoutMs: number;
+  aiOfficialSearchTimeoutMs: number;
   aiProvider: "anthropic" | "openai";
   appBaseUrl: string;
   anthropicApiKey: string;
@@ -119,6 +120,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
     aiReplyGenerationTimeoutMs: parseInteger(process.env.AI_REPLY_GENERATION_TIMEOUT_MS, 2500),
+    aiOfficialSearchTimeoutMs: parseInteger(process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS, 5500),
     aiProvider: (process.env.AI_PROVIDER ?? "anthropic").toLowerCase() === "openai" ? "openai" : "anthropic",
     appBaseUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_BASE_URL ?? (vercelHost ? `https://${vercelHost}` : "https://line-ai-live-demo.vercel.app"),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",

@@ -1,3 +1,4 @@
+import { getClinicOfferingNames } from "@/lib/clinic-config";
 import { formatReplyText } from "@/lib/reply-text-format";
 import type { LineTextMessage } from "@/lib/treatment-carousel";
 
@@ -44,6 +45,13 @@ function normalizeGeneratedText(text: string) {
     .trim();
 }
 
+function stripApprovedTreatmentNames(text: string) {
+  return getClinicOfferingNames().reduce(
+    (remaining, name) => remaining.replaceAll(name, ""),
+    text,
+  );
+}
+
 function ensureMedicalAssessment(text: string) {
   if (/醫師.{0,12}評估/u.test(text)) {
     return text;
@@ -73,11 +81,13 @@ function fitWithinTotalBudget(text: string, budget: number, fallback: string, re
 
 type AiReplyConstraintOptions = {
   medical?: boolean;
+  sourceUrl?: string;
 };
 
 export function constrainMedicalAiReply(text: string, footer: string, options: AiReplyConstraintOptions = {}) {
   const medical = options.medical ?? true;
   const normalized = normalizeGeneratedText(text);
+  const contentWithoutApprovedTreatmentNames = stripApprovedTreatmentNames(normalized);
   const hasUnqualifiedSafetyClaim =
     SAFETY_TOPIC_PATTERN.test(normalized) && !SAFETY_QUALIFIER_PATTERN.test(normalized);
   const isOutsideAestheticEducation =
@@ -85,7 +95,7 @@ export function constrainMedicalAiReply(text: string, footer: string, options: A
   if (
     !normalized ||
     (medical &&
-      (PRICE_OR_CAMPAIGN_PATTERN.test(normalized) ||
+      (PRICE_OR_CAMPAIGN_PATTERN.test(contentWithoutApprovedTreatmentNames) ||
         OVERCLAIM_PATTERN.test(normalized) ||
         ABSOLUTE_SAFETY_PATTERN.test(normalized) ||
         hasUnqualifiedSafetyClaim ||
@@ -98,7 +108,8 @@ export function constrainMedicalAiReply(text: string, footer: string, options: A
     return medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK;
   }
 
-  const footerCost = visibleLength(footer) + 2;
+  const sourceLine = options.sourceUrl ? `\n資料來源：${options.sourceUrl}` : "";
+  const footerCost = visibleLength(footer) + visibleLength(sourceLine) + 2;
   const totalContentBudget = AI_FALLBACK_MESSAGE_LIMIT * AI_FALLBACK_MAX_MESSAGES - footerCost;
   const constrained = medical ? ensureMedicalAssessment(normalized) : normalized;
   return fitWithinTotalBudget(
@@ -124,27 +135,32 @@ export function buildLimitedAiReplyMessages(
   options: AiReplyConstraintOptions = {},
 ): LineTextMessage[] {
   const normalized = formatReplyText(constrainMedicalAiReply(text, footer, options));
+  const sourceLine = options.sourceUrl ? `\n資料來源：${options.sourceUrl}` : "";
   const separator = "\n\n";
-  const oneMessage = `${normalized}${separator}${footer}`;
+  const oneMessage = `${normalized}${sourceLine}${separator}${footer}`;
   if (visibleLength(oneMessage) <= AI_FALLBACK_MESSAGE_LIMIT) {
     return [{ type: "text", text: oneMessage }];
   }
 
-  const secondCapacity = AI_FALLBACK_MESSAGE_LIMIT - visibleLength(separator) - visibleLength(footer);
+  const secondCapacity = AI_FALLBACK_MESSAGE_LIMIT - visibleLength(sourceLine) - visibleLength(separator) - visibleLength(footer);
   const minimumFirstLength = Math.max(1, visibleLength(normalized) - secondCapacity);
-  const splitIndex = findSplitIndex(normalized, minimumFirstLength, AI_FALLBACK_MESSAGE_LIMIT);
+  const splitIndex = findSplitIndex(
+    normalized,
+    minimumFirstLength,
+    Math.min(AI_FALLBACK_MESSAGE_LIMIT, Math.max(1, visibleLength(normalized) - 1)),
+  );
   const first = takeVisible(normalized, splitIndex).trim();
   const second = Array.from(normalized).slice(splitIndex).join("").trim();
 
   if (!first || !second) {
     const safeReply = options.medical === false ? SAFE_GENERAL_FALLBACK : SAFE_MEDICAL_FALLBACK;
-    const safe = `${safeReply}${separator}${footer}`;
+    const safe = `${safeReply}${sourceLine}${separator}${footer}`;
     return [{ type: "text", text: safe }];
   }
 
   return [
     { type: "text", text: first },
-    { type: "text", text: `${second}${separator}${footer}` },
+    { type: "text", text: `${second}${sourceLine}${separator}${footer}` },
   ];
 }
 

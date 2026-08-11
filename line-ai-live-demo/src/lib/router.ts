@@ -163,6 +163,25 @@ const MEDICAL_AESTHETIC_DISCOVERY_TERMS = [
   "童顏",
   "再生",
 ];
+const TREATMENT_EDUCATION_TERMS = [
+  "原理",
+  "副作用",
+  "風險",
+  "恢復期",
+  "修復期",
+  "會痛",
+  "術後照護",
+  "差在哪",
+  "有什麼不同",
+  "怎麼作用",
+];
+const UNSUPPORTED_ENERGY_DEVICE_TERMS = ["海芙", "無雙"];
+const UNAVAILABLE_TREATMENT_ALTERNATIVES = [
+  {
+    alternativeKey: "hydrafacial",
+    terms: ["海菲秀"],
+  },
+] as const;
 const GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS = [
   "糖尿病",
   "高血壓",
@@ -270,6 +289,7 @@ const PLASTIC_SURGERY_TERMS = [
   "外開眼袋",
   "鼻中隔延長",
   "鼻頭縮小",
+  "植髮",
   "植髮手術",
   "狐臭手術",
 ];
@@ -374,6 +394,34 @@ function isGenericTreatmentInquiry(message: string) {
   );
 }
 
+function isUnsupportedEnergyDeviceQuestion(message: string) {
+  const hasExplicitUnsupportedDevice = includesAnyTerm(message, UNSUPPORTED_ENERGY_DEVICE_TERMS);
+  if (findTreatmentByMessage(message) && !hasExplicitUnsupportedDevice) {
+    return false;
+  }
+
+  const normalizedMessage = normalizeText(message);
+  return (
+    hasExplicitUnsupportedDevice ||
+    /^.{0,16}(?:電波|音波)(?:是什麼|有嗎|有沒有|有做嗎|可以做嗎|療程|機器|設備|差在哪|比較|效果|功效)?(?:呢|嗎)?$/u.test(
+      normalizedMessage,
+    )
+  );
+}
+
+function isTreatmentComparisonQuestion(message: string) {
+  const normalizedMessage = normalizeText(message);
+  const hasComparisonWording = /(?:差在哪|哪裡不一樣|有什麼不同|比較)/u.test(normalizedMessage);
+  return (
+    hasComparisonWording &&
+    (Boolean(findTreatmentByMessage(message)) || isUnsupportedEnergyDeviceQuestion(message))
+  );
+}
+
+function findUnavailableTreatmentAlternative(message: string) {
+  return UNAVAILABLE_TREATMENT_ALTERNATIVES.find((entry) => includesAnyTerm(message, [...entry.terms])) ?? null;
+}
+
 function isHardBlockedQuestion(message: string) {
   return (
     includesAnyTerm(message, POST_PROCEDURE_TERMS) ||
@@ -388,7 +436,8 @@ export function shouldAllowAiFallbackReply(message: string) {
     Boolean(findAnyBranchByMessage(message)) ||
     Boolean(extractUnknownBranchLikeTerm(message)) ||
     Boolean(findTreatmentByMessage(message)) ||
-    isUnsupportedTreatmentAvailabilityQuestion(message) ||
+    Boolean(findUnavailableTreatmentAlternative(message)) ||
+    isUnsupportedEnergyDeviceQuestion(message) ||
     includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive]) ||
     includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS) ||
     includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
@@ -400,6 +449,10 @@ export function shouldAllowAiFallbackReply(message: string) {
   );
 }
 
+export function isOfficialTreatmentEducationRoute(matchedKey: string) {
+  return matchedKey.startsWith("official_treatment_education:");
+}
+
 function hasUnknownMicroEducationShape(message: string) {
   const normalizedMessage = normalizeText(message);
   return /^.{2,24}(?:是什麼|可以改善什麼(?:狀況|問題|困擾)?|適合改善什麼(?:狀況|問題|困擾)?|主要改善什麼(?:狀況|問題|困擾)?|有什麼功效)$/u.test(
@@ -409,9 +462,10 @@ function hasUnknownMicroEducationShape(message: string) {
 
 export function isMedicalAestheticFallbackCandidate(message: string) {
   return (
-    (includesAnyTerm(message, MEDICAL_AESTHETIC_DISCOVERY_TERMS) || hasUnknownMicroEducationShape(message)) &&
+    (includesAnyTerm(message, MEDICAL_AESTHETIC_DISCOVERY_TERMS) ||
+      hasUnknownMicroEducationShape(message) ||
+      isUnsupportedTreatmentAvailabilityQuestion(message)) &&
     !findTreatmentByMessage(message) &&
-    !isUnsupportedTreatmentAvailabilityQuestion(message) &&
     !includesAnyTerm(message, PLASTIC_SURGERY_TERMS) &&
     !includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS)
   );
@@ -2157,7 +2211,7 @@ function extractUnknownBranchLikeTerm(message: string) {
 }
 
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
-  if (hasStructuredBookingForm(message)) {
+  if (hasStructuredBookingForm(message) || isTreatmentComparisonQuestion(message)) {
     return null;
   }
 
@@ -2417,6 +2471,21 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     : null;
   if (consultationQuickReply) {
     return consultationQuickReply;
+  }
+
+  const canUseOfficialEducation =
+    !consultationGuide &&
+    matchedTreatment.category !== "surgery" &&
+    matchedTreatment.educationMode !== "human_only" &&
+    matchedTreatment.officialSourceDomains.length > 0 &&
+    includesAnyTerm(message, TREATMENT_EDUCATION_TERMS);
+  if (canUseOfficialEducation) {
+    return {
+      decisionType: "fallback_reply",
+      matchedKey: `official_treatment_education:${matchedTreatment.key}`,
+      matchedType: "guided_reply",
+      replyText: `${approvedIntroReply} ${matchedTreatment.evaluationNote}`,
+    } satisfies Omit<RouterDecision, "nextContext">;
   }
 
   return {
@@ -3088,6 +3157,31 @@ export async function routeCustomerMessage({
     };
   }
 
+  if (isUnsupportedEnergyDeviceQuestion(trimmedMessage)) {
+    nextContext.lastIntent = "unsupported_energy_device_alternatives";
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: "unsupported_energy_device_alternatives",
+      matchedType: "guided_reply",
+      nextContext,
+      replyText:
+        "目前院內電波療程為十蓓電波、鳳凰電波；音波療程為 Q+音波、美國音波 2.0，其他電音波目前沒有提供。若您在意拉提、緊實或輪廓，可以告訴我部位，我幫您從院內療程整理方向，實際仍由醫師評估。",
+    };
+  }
+
+  const unavailableTreatmentAlternative = findUnavailableTreatmentAlternative(trimmedMessage);
+  if (unavailableTreatmentAlternative) {
+    const alternative = findTreatmentByKey(unavailableTreatmentAlternative.alternativeKey);
+    nextContext.lastIntent = `unavailable_treatment_alternative:${unavailableTreatmentAlternative.alternativeKey}`;
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `unavailable_treatment_alternative:${unavailableTreatmentAlternative.alternativeKey}`,
+      matchedType: "guided_reply",
+      nextContext,
+      replyText: `目前院內沒有提供海菲秀；如果您在意清潔、粉刺、出油或整體膚況整理，可以先了解院內的${alternative?.name ?? "水飛梭"}。兩者不是相同療程，實際仍需依膚況由現場評估。`,
+    };
+  }
+
   const treatmentReply = getTreatmentReply(trimmedMessage, nextContext);
   if (treatmentReply) {
     const restartedTreatmentKey = treatmentReply.matchedKey.match(/^treatment_intro:([^:]+)$/u)?.[1];
@@ -3122,14 +3216,14 @@ export async function routeCustomerMessage({
   }
 
   if (isUnsupportedTreatmentAvailabilityQuestion(trimmedMessage)) {
-    nextContext.lastIntent = "unsupported_treatment_or_unapproved_content";
+    nextContext.lastIntent = "unsupported_treatment_discovery";
     return {
-      decisionType: "handoff_pending",
-      matchedKey: "unsupported_treatment_or_unapproved_content",
-      matchedType: "handoff_rule",
+      decisionType: "fallback_reply",
+      matchedKey: "unsupported_treatment_discovery",
+      matchedType: "guided_reply",
       nextContext,
       replyText:
-        "目前系統只會依院內核准內容說明療程；這一題我先不直接延伸回答，以免提供到未核准或不完整的療程描述。我先幫您整理想了解的項目，後續由真人客服接續補充。",
+        "目前核准療程清單沒有這個項目。我可以先了解您最在意的部位或困擾，再從診所有提供的療程整理相近方向；若想安排免費諮詢，也可以接著提供館別、姓名、電話與方便時段。",
     };
   }
 
