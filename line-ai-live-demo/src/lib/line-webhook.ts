@@ -333,6 +333,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let usedAiReplyGenerator = false;
   let controlledClassifierResolved = false;
   let generatedReplyIsMedical = false;
+  let generatedReplyUsedGroundedKnowledge = false;
 
   if (routedDecision.decisionType === "handoff_pending") {
     const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
@@ -438,7 +439,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       !routedDecision.replyMessages?.length &&
       (routedDecision.decisionType === "faq_auto_reply" ||
         (routedDecision.decisionType === "treatment_intro_reply" &&
-          (/^treatment_(?:intro|brand):/u.test(routedDecision.matchedKey) ||
+          (/^treatment_(?:intro|brand|consult):/u.test(routedDecision.matchedKey) ||
             ["unsupported_energy_device_alternatives"].includes(routedDecision.matchedKey) ||
             routedDecision.matchedKey.startsWith("unavailable_treatment_alternative:"))));
     const canUseFallbackGenerator =
@@ -453,6 +454,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         routedDecision.decisionType === "treatment_intro_reply" ||
         Boolean(officialEducationTreatmentKey) ||
         isMedicalAestheticFallbackCandidate(event.message.text ?? "");
+      generatedReplyUsedGroundedKnowledge = canUseApprovedKnowledge || Boolean(officialEducationTreatmentKey);
       const aiReply = await generateAiReply(event.message.text ?? "", {
         approvedKnowledge: canUseApprovedKnowledge ? routedDecision.replyText : undefined,
         bookingBranch: routedDecision.nextContext.bookingDraft.branch,
@@ -466,7 +468,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         officialEducationTreatmentKey,
       });
       if (aiReply) {
-        replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical });
+        replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, {
+          groundedByApprovedKnowledge: generatedReplyUsedGroundedKnowledge,
+          medical: generatedReplyIsMedical,
+        });
         aiModel = aiReply.model;
         aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
         aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
@@ -483,6 +488,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
   const replyMessages = usedAiReplyGenerator
     ? formatReplyMessages(buildAiReplyMessages(replyText, AI_REPLY_FOOTER, {
+        groundedByApprovedKnowledge: generatedReplyUsedGroundedKnowledge,
         medical: generatedReplyIsMedical,
       }))
     : usedAiHumanizer || !routedDecision.replyMessages

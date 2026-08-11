@@ -14,14 +14,12 @@ export type BranchConfig = {
 
 export type TreatmentConversationPack = {
   concernReplies?: Array<{
-    bookingTreatmentKeys?: string[];
-    campaignId?: string;
     concernKey: string;
     discoveryLabel: string;
     followupPrompt: string;
     reply: string;
     selectionTerms?: string[];
-    startsBookingIntake?: boolean;
+    pricingCampaignId?: string;
   }>;
   discoveryFallbackOption?: {
     followupPrompt: string;
@@ -30,12 +28,10 @@ export type TreatmentConversationPack = {
   };
   detailReplies?: Array<{
     aspectKey: string;
-    bookingTreatmentKeys?: string[];
-    campaignId?: string;
     concernKey: string;
     followupPrompt: string;
+    pricingCampaignId?: string;
     reply: string;
-    startsBookingIntake?: boolean;
     terms: string[];
   }>;
   discoveryQuestion: string;
@@ -48,12 +44,10 @@ export type TreatmentConversationPack = {
     terms: string[];
   }>;
   relatedReplies?: Array<{
-    bookingTreatmentKeys?: string[];
-    campaignId?: string;
     followupPrompt: string;
     key: string;
+    pricingCampaignId?: string;
     reply: string;
-    startsBookingIntake?: boolean;
     terms: string[];
   }>;
 };
@@ -304,7 +298,7 @@ export const clinicConfig: ClinicConfig = {
     {
       areaKeys: ["face", "jawline"],
       key: "masseter_contour",
-      keywords: ["咀嚼肌", "國字臉", "肉毒小臉", "小臉肉毒", "咬肌"],
+      keywords: ["咀嚼肌", "國字臉", "肉毒小臉", "肉毒瘦小臉", "瘦小臉", "小臉肉毒", "咬肌"],
       recommendedTreatmentKeys: ["botox"],
       summary: "這類通常會先從咀嚼肌活動與臉部輪廓方向了解。",
     },
@@ -365,37 +359,31 @@ export const clinicConfig: ClinicConfig = {
       consultationGuide: {
         concernReplies: [
           {
-            bookingTreatmentKeys: ["onda_pro", "botox"],
-            campaignId: "promo-2026-08-face-contour-combo",
             concernKey: "jawline_looseness",
             discoveryLabel: "雙下巴／嘴邊肉（輪廓線提升）",
             reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟥 目前很推薦 ONDA Pro 搭配肉毒小臉，很多在意下顎線的客人都會選擇這個組合\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
+            followupPrompt: "您比較想先了解作用方式、適合情況，還是 ONDA Pro 與肉毒搭配的差異呢？😊",
             selectionTerms: ["①", "選1", "第一個", "臉部", "臉部輪廓"],
-            startsBookingIntake: true,
+            pricingCampaignId: "promo-2026-08-face-contour-combo",
           },
           {
-            bookingTreatmentKeys: ["onda_pro"],
-            campaignId: "promo-2026-08-05-onda-pro",
             concernKey: "local_contour",
             discoveryLabel: "身體局部脂肪堆積（手臂／肚子／橘皮）",
             reply: "②身體局部脂肪堆積（手臂／肚子／橘皮）\n\n🟥 很多在意身體局部脂肪堆積、產後腹部鬆弛等等困擾都可以由醫師評估是否適合\n\n🔥 破壞頑固脂肪／減少脂肪厚度\n\n🔥 改善橘皮組織／凹凸不平\n👉 減少橘皮紋路，皮膚更平滑\n\n❄️ 超舒適、無傷口\n❄️ 無需敷麻、幾乎無修復期\n❄️ 療程快速、立即有感\n❄️ 安全無副作用\n\n😊 由於每個人的脂肪分布、厚度及鬆弛狀況不同，建議您預約現場諮詢，由醫師親自評估後，才能為您規劃較適合的施作部位與療程次數唷🤍",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
+            followupPrompt: "您主要在意手臂、腹部、腰側，還是大腿／橘皮呢？😊",
             selectionTerms: ["②", "選2", "第二個", "身體", "身體局部", "手臂", "蝴蝶袖", "掰掰袖", "腹部", "小腹", "肚子", "肚皮", "腰腹", "腰側", "側腰", "大腿", "橘皮"],
-            startsBookingIntake: true,
+            pricingCampaignId: "promo-2026-08-05-onda-pro",
           },
         ],
         detailReplies: [
           {
             aspectKey: "jawline_expectation",
-            bookingTreatmentKeys: ["onda_pro", "botox"],
-            campaignId: "promo-2026-08-face-contour-combo",
             concernKey: "jawline_looseness",
+            pricingCampaignId: "promo-2026-08-face-contour-combo",
             terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
-            startsBookingIntake: true,
+            followupPrompt: "您比較在意脂肪厚度，還是下顎線不夠俐落呢？😊",
           },
           {
             aspectKey: "jawline_intro",
@@ -433,12 +421,10 @@ export const clinicConfig: ClinicConfig = {
         ],
         relatedReplies: [
           {
-            bookingTreatmentKeys: ["onda_pro", "botox"],
-            campaignId: "promo-2026-08-face-contour-combo",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
+            followupPrompt: "您比較在意咀嚼肌造成的臉寬，還是雙下巴與下顎線呢？😊",
             key: "botox_small_face",
+            pricingCampaignId: "promo-2026-08-face-contour-combo",
             reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與脂肪分布評估是否適合此療程，再提供最適合的建議",
-            startsBookingIntake: true,
             terms: ["肉毒功效", "肉毒效果", "肉毒小臉", "咀嚼肌", "國字臉"],
           },
         ],
@@ -568,45 +554,40 @@ export const clinicConfig: ClinicConfig = {
             reply: "🌿 魚尾紋、抬頭紋、皺眉紋等動態紋路常會先從表情肌活動方向了解；肉毒可作為動態紋路改善與評估的選項之一，實際是否適合仍需醫師現場評估。",
             followupPrompt: "您較在意魚尾紋、抬頭紋，還是咀嚼肌／臉部輪廓呢？😊",
             selectionTerms: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "眉間紋", "川字紋", "動態紋", "表情紋"],
+            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
           },
           {
             concernKey: "masseter_contour",
             discoveryLabel: "咀嚼肌／臉部輪廓",
             reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與肌肉狀況評估是否適合此療程，再提供較適合的建議",
             followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
-            selectionTerms: ["咀嚼肌", "國字臉", "肉毒小臉", "小臉肉毒", "咬肌", "臉部輪廓"],
+            selectionTerms: ["咀嚼肌", "國字臉", "肉毒小臉", "肉毒瘦小臉", "瘦小臉", "小臉肉毒", "咬肌", "臉部輪廓"],
           },
         ],
         detailReplies: [
           {
             aspectKey: "dynamic_wrinkles_crows_feet",
-            bookingTreatmentKeys: ["botox"],
-            campaignId: "promo-2026-07-09-botox-wrinkle",
             concernKey: "dynamic_wrinkles",
+            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
             terms: ["魚尾紋"],
             reply: "🌿 已記下您主要在意魚尾紋這類動態紋路。肉毒通常會依眼周表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
-            startsBookingIntake: true,
+            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
           },
           {
             aspectKey: "dynamic_wrinkles_forehead",
-            bookingTreatmentKeys: ["botox"],
-            campaignId: "promo-2026-07-09-botox-wrinkle",
             concernKey: "dynamic_wrinkles",
+            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
             terms: ["抬頭紋", "額頭紋"],
             reply: "🌿 已記下您主要在意抬頭紋／額頭紋這類動態紋路。肉毒通常會依額頭表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
-            startsBookingIntake: true,
+            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
           },
           {
             aspectKey: "dynamic_wrinkles_frown_lines",
-            bookingTreatmentKeys: ["botox"],
-            campaignId: "promo-2026-07-09-botox-wrinkle",
             concernKey: "dynamic_wrinkles",
+            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
             terms: ["皺眉紋", "皺眉", "眉間紋", "川字紋"],
             reply: "🌿 已記下您主要在意皺眉紋／眉間紋這類動態紋路。肉毒通常會依眉間表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
-            startsBookingIntake: true,
+            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
           },
           {
             aspectKey: "dynamic_wrinkles_intro",

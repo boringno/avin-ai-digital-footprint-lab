@@ -155,7 +155,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiIntentClassifierMinConfidence: parseConfidence(process.env.OPENAI_INTENT_CLASSIFIER_MIN_CONFIDENCE, 0.85),
     openAiIntentClassifierTimeoutMs: parseInteger(process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS, 800),
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
-    openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.4-mini",
+    openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
     openAiNluMode,
     openAiNluSampleRate: parseConfidence(process.env.OPENAI_NLU_SAMPLE_RATE, 0),
     openAiNluTimeoutMs: parseInteger(process.env.OPENAI_NLU_TIMEOUT_MS, 700),

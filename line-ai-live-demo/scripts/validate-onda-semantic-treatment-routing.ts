@@ -24,12 +24,13 @@ async function main() {
   const jawline = await routeSemanticConcern("jawline_looseness");
   assert(jawline.matchedKey === "treatment_consult:onda_pro:semantic:jawline_looseness", "S1: must use the approved ONDA jawline scenario");
   assert(jawline.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "S1: must use approved Xiaoying ONDA copy, not LLM-generated text");
-  assert(jawline.replyText.includes("12,999元"), "S1: semantic jawline routing must quote the approved combo");
+  assert(!jawline.replyText.includes("12,999元"), "S1: semantic concern routing must not quote before a price question");
+  assert(jawline.nextContext.lastIntent !== "booking_intake", "S1: semantic concern routing must remain consultation");
 
   const body = await routeSemanticConcern("local_contour");
   assert(body.matchedKey === "treatment_consult:onda_pro:semantic:local_contour", "S2: must use the approved ONDA body scenario");
   assert(body.replyText.includes("身體局部脂肪堆積"), "S2: must use approved Xiaoying ONDA body copy");
-  assert(body.replyText.includes("體驗價 16,888"), "S2: semantic body routing must quote the approved standalone price");
+  assert(!body.replyText.includes("體驗價 16,888"), "S2: semantic concern routing must not quote before a price question");
 
   const pregnancy = await routeCustomerMessage({
     includePending: false,

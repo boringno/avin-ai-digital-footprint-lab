@@ -47,8 +47,8 @@ async function validatePastAppointmentStartsFresh() {
   const decision = await route("我想了解ONDA", context);
   assert(decision.matchedKey === "treatment_intro:onda_pro", "CS3: a post-appointment enquiry must start a fresh treatment topic");
   assert(
-    decision.nextContext.bookingDraft.treatment === "ONDA PRO",
-    "CS3: past appointment data must not leak into the newly mentioned treatment",
+    !decision.nextContext.bookingDraft.treatment,
+    "CS3: past appointment data must be cleared and a new consultation must not populate booking",
   );
   assert(!decision.nextContext.bookingSession, "CS3: completed appointment must not leave an active booking session");
   console.log("PASS: CS3 past appointment starts a fresh conversation episode");

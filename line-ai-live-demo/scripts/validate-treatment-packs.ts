@@ -140,14 +140,14 @@ async function validateGeneratedDiscoveryOptions() {
 }
 
 async function validateBotoxWrinkleProgression() {
-  const { context, decisions } = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋"]);
+  const { context, decisions } = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋", "價錢"]);
 
   assert(
-    decisions[2].replyText.includes("皺眉紋／眉間紋") && decisions[2].replyText.includes("999"),
-    "TP7: a specified wrinkle area must receive its configured detail and approved price",
+    decisions[2].replyText.includes("皺眉紋／眉間紋") && !decisions[2].replyText.includes("999"),
+    "TP7: a specified wrinkle area must receive its configured detail without unsolicited pricing",
   );
-  assert(decisions[2].replyText.includes("預約諮詢是免費的"), "TP7: the wrinkle detail must offer free consultation");
-  assert(context.bookingDraft.treatment?.includes("肉毒"), "TP7: the specified wrinkle area must start Botox booking intake");
+  assert(!decisions[2].replyText.includes("平日還是假日"), "TP7: the wrinkle detail must not start booking");
+  assert(!context.bookingDraft.treatment, "TP7: consultation must not populate a booking draft");
   assert(
     context.treatmentConsultation?.answeredAspectKeys?.includes("detail:dynamic_wrinkles_frown_lines"),
     "TP7: the specified wrinkle area must persist as an answered detail",
@@ -158,11 +158,12 @@ async function validateBotoxWrinkleProgression() {
   );
   assert(decisions[2].replyText !== decisions[3].replyText, "TP7: repeating the same wrinkle must not replay identical copy");
   assert(
-    decisions[3].nextContext.lastIntent === "booking_intake" && decisions[3].replyText.includes("平日還是假日"),
-    "TP7: repeating a booked detail must continue booking intake instead of returning to consultation discovery",
+    decisions[3].nextContext.lastIntent !== "booking_intake" && decisions[3].replyText.includes("其他可評估方案"),
+    "TP7: repeating a detail must advance the consultation without starting booking",
   );
   assert(!decisions[3].replyText.includes("999"), "TP7: repeating a booked detail must not repeat the price quote");
-  console.log("PASS: TP7 Botox wrinkle detail advances to price and booking without a priority loop");
+  assert(decisions[4].replyText.includes("999"), "TP7: an explicit price question must still return the approved price");
+  console.log("PASS: TP7 Botox wrinkle detail advances without repetition and only quotes on request");
 }
 
 async function validateCrossCategoryPackReuse() {
