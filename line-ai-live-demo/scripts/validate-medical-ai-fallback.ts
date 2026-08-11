@@ -1,7 +1,5 @@
 import {
-  AI_FALLBACK_MAX_MESSAGES,
-  AI_FALLBACK_MESSAGE_LIMIT,
-  buildLimitedAiReplyMessages,
+  buildAiReplyMessages,
   constrainMedicalAiReply,
   getVisibleReplyLength,
 } from "../src/lib/ai-fallback-guard";
@@ -153,9 +151,8 @@ async function assertOfficialSearchIsConstrained() {
     assert(customerDraftRequest.tools === undefined, "M12: customer-facing draft must not call web search directly");
     assert(customerDraftRequest.input?.includes("內部知識"), "M12: verified official notes must become internal knowledge");
 
-    const messages = buildLimitedAiReplyMessages(reply.text, FOOTER, { medical: true });
-    assert(messages.length <= 2, "M12: cited response must remain within two LINE messages");
-    assert(messages.every((item) => getVisibleReplyLength(item.text) <= 100), "M12: cited response must remain within 100 characters per message");
+    const messages = buildAiReplyMessages(reply.text, FOOTER, { medical: true });
+    assert(messages.length === 1, "M12: cited response and disclosure should remain together without artificial splitting");
     assert(messages.every((item) => !item.text.includes("http") && !item.text.includes("資料來源")), "M12: official source must never be customer-visible");
 
     globalThis.fetch = (async () => new Response(JSON.stringify({
@@ -247,8 +244,7 @@ async function assertOfficialSearchWebhookFlow() {
     assert(webhookResult.aiSourceUrl === "https://lumenis.com/aesthetics/products/m22/", "M13: exact source URL must remain in internal metadata");
     const texts = (webhookResult.replyPayload?.messages ?? [])
       .flatMap((item) => item.type === "text" ? [item.text] : []);
-    assert(texts.length > 0 && texts.length <= 2, "M13: final LINE payload must contain one or two text messages");
-    assert(texts.every((text) => getVisibleReplyLength(text) <= 100), "M13: final LINE payload must keep every message within 100 characters");
+    assert(texts.length === 1, "M13: final LINE payload must not artificially split the generated answer");
     assert(texts.every((text) => !text.includes("http") && !text.includes("資料來源")), "M13: final LINE payload must not expose source URLs");
     assert(texts.filter((text) => text.includes(FOOTER)).length === 1, "M13: final LINE payload must contain the AI disclosure exactly once");
     assert(requestBodies.length === 2, "M13: official lookup and customer drafting must remain separate calls");
@@ -308,7 +304,7 @@ async function assertApprovedKnowledgeIsNaturalized() {
     const texts = (webhookResult.replyPayload?.messages ?? [])
       .flatMap((item) => item.type === "text" ? [item.text] : []);
     assert(texts.join("").includes("主要在意鬆弛"), "M14: customer must receive the naturalized answer");
-    assert(texts.every((text) => getVisibleReplyLength(text) <= 100), "M14: naturalized FAQ must obey the universal text limit");
+    assert(texts.join("").includes(FOOTER), "M14: naturalized FAQ must retain the AI disclosure");
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries({
@@ -382,7 +378,7 @@ async function main() {
     "不得輸出",
     "整形外科",
     "醫師現場評估",
-    "180 個繁體中文字以內",
+    "不設固定字數限制",
     "不得使用本院",
     "一般疾病",
   ];
@@ -458,7 +454,8 @@ async function main() {
   const general = constrainMedicalAiReply("可以協助您確認停車方向。", FOOTER, { medical: false });
   assert(!general.includes("醫師現場評估"), "M9: non-medical fallback must not add medical guidance");
   const longGeneral = constrainMedicalAiReply("一般問題說明。".repeat(80), FOOTER, { medical: false });
-  assert(!longGeneral.includes("醫師現場評估"), "M9: long non-medical fallback must not gain medical guidance while fitting the limit");
+  assert(!longGeneral.includes("醫師現場評估"), "M9: long non-medical fallback must not gain medical guidance");
+  assert(getVisibleReplyLength(longGeneral) > 100, "M9: long non-medical fallback must not be truncated to the old limit");
 
   for (const generalMedical of ["糖尿病有哪些症狀", "皮膚癌有哪些症狀", "青春痘需要看醫生嗎"]) {
     const decision = await route(generalMedical);
@@ -472,31 +469,30 @@ async function main() {
 
   const longAnswer =
     "這類膠原增生療程通常會從輪廓支撐、凹陷感與膚況需求方向說明。不同產品的成分、作用方式與適用部位不同，實際安排也會依個人條件調整。建議預約免費諮詢，由醫師現場評估。";
-  const messages = buildLimitedAiReplyMessages(longAnswer, FOOTER);
-  assert(AI_FALLBACK_MESSAGE_LIMIT === 100, "M10: per-message limit must remain exactly 100");
-  assert(AI_FALLBACK_MAX_MESSAGES === 2, "M10: generated reply must remain capped at exactly two messages");
-  assert(messages.length <= AI_FALLBACK_MAX_MESSAGES, "M10: generated reply must use at most two LINE messages");
-  assert(messages.every((message) => getVisibleReplyLength(message.text) <= AI_FALLBACK_MESSAGE_LIMIT), "M10: every message must be at most 100 visible characters");
+  const messages = buildAiReplyMessages(longAnswer, FOOTER);
+  assert(messages.length === 1, "M10: generated reply must not be artificially split");
+  assert(getVisibleReplyLength(messages[0]?.text ?? "") > 100, "M10: generated reply must preserve content beyond the old 100-character limit");
+  assert(messages[0]?.text.includes("不同產品的成分、作用方式與適用部位不同"), "M10: generated reply must not truncate later content");
   assert(messages.at(-1)?.text.includes(FOOTER), `M10: final message must include AI disclosure: ${JSON.stringify(messages)}`);
   assert(messages.filter((message) => message.text.includes(FOOTER)).length === 1, "M10: AI disclosure must appear exactly once");
 
   const payload = buildReplyPayload("test-reply-token", longAnswer, true, messages, true);
-  assert(payload.messages.length <= 2, "M10: final LINE payload must not add an intro or third footer message");
+  assert(payload.messages.length === 1, "M10: final LINE payload must keep the generated answer together");
   const payloadTexts = payload.messages.flatMap((message) => message.type === "text" ? [message.text] : []);
-  assert(payloadTexts.every((text) => getVisibleReplyLength(text) <= 100), "M10: final LINE payload text must stay within 100 characters");
+  assert(payloadTexts.some((text) => getVisibleReplyLength(text) > 100), "M10: final LINE payload must preserve content beyond the old limit");
   assert(payloadTexts.filter((text) => text.includes(FOOTER)).length === 1, "M10: final LINE payload must contain the disclosure exactly once");
 
   const deterministicPayload = buildReplyPayload("test-reply-token", "固定規則內容。".repeat(80), false);
   const deterministicTexts = deterministicPayload.messages.flatMap((message) => message.type === "text" ? [message.text] : []);
-  assert(deterministicTexts.length <= 2, `M10: deterministic text must also use at most two LINE messages: ${JSON.stringify(deterministicPayload.messages)}`);
-  assert(deterministicTexts.every((text) => getVisibleReplyLength(text) <= 100), "M10: deterministic text must also stay within 100 characters per message");
+  assert(deterministicTexts.length === 1, `M10: deterministic text must not be artificially split: ${JSON.stringify(deterministicPayload.messages)}`);
+  assert(deterministicTexts.some((text) => getVisibleReplyLength(text) > 100), "M10: deterministic text must not be truncated to the old limit");
 
   await assertReplyGeneratorsTimeOut();
   await assertOfficialSearchIsConstrained();
   await assertOfficialSearchWebhookFlow();
   await assertApprovedKnowledgeIsNaturalized();
 
-  console.log("M0-M14 passed: flexible consultation, naturalized approved knowledge, internal official sources, and bounded delivery.");
+  console.log("M0-M14 passed: flexible consultation, naturalized approved knowledge, internal official sources, and untruncated delivery.");
 }
 
 main().catch((error) => {

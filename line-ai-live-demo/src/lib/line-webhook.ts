@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { buildLimitedAiReplyMessages, buildLimitedTextReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
+import { buildAiReplyMessages, buildTextReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
 import { generateAiReply } from "@/lib/ai-reply-client";
 import {
   classifyControlledIntent,
@@ -187,10 +187,10 @@ export function buildReplyPayload(
         ...formatReplyMessages(replyMessages),
         ...(!suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_REPLY_FOOTER) } satisfies LineTextMessage] : []),
       ]
-    : buildLimitedTextReplyMessages(finalText);
+    : buildTextReplyMessages(finalText);
   const messages: LineReplyMessage[] = replyMessages?.length
     ? baseMessages.flatMap((message): LineReplyMessage[] =>
-        message.type === "text" ? buildLimitedTextReplyMessages(message.text) : [message],
+        message.type === "text" ? buildTextReplyMessages(message.text) : [message],
       )
     : baseMessages;
 
@@ -482,7 +482,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   };
   replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
   const replyMessages = usedAiReplyGenerator
-    ? formatReplyMessages(buildLimitedAiReplyMessages(replyText, AI_REPLY_FOOTER, {
+    ? formatReplyMessages(buildAiReplyMessages(replyText, AI_REPLY_FOOTER, {
         medical: generatedReplyIsMedical,
       }))
     : usedAiHumanizer || !routedDecision.replyMessages
@@ -527,8 +527,8 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     nextContext,
     replyMessages,
     replyText,
-    // Generated fallback messages already include the disclosure in the final
-    // <=100-character bubble, so do not append a third footer message.
+    // Generated fallback messages already include the disclosure, so do not
+    // append a duplicate footer message.
     suppressAiFooter: usedAiReplyGenerator,
     shouldIntroduce: usedAiReplyGenerator ? false : !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
