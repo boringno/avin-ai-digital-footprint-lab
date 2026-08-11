@@ -2,9 +2,6 @@ import { getClinicOfferingTerms } from "@/lib/clinic-config";
 import { formatReplyText } from "@/lib/reply-text-format";
 import type { LineTextMessage } from "@/lib/treatment-carousel";
 
-export const AI_FALLBACK_MESSAGE_LIMIT = 100;
-export const AI_FALLBACK_MAX_MESSAGES = 2;
-
 const SAFE_MEDICAL_FALLBACK =
   "這項微整可改善的方向會因成分、部位與個人狀況不同，建議預約免費諮詢，由醫師現場評估。";
 const SAFE_GENERAL_FALLBACK = "我可以協助診所療程與預約相關問題，請告訴我想了解的項目。";
@@ -32,10 +29,6 @@ function visibleLength(text: string) {
   return Array.from(text).length;
 }
 
-function takeVisible(text: string, length: number) {
-  return Array.from(text).slice(0, length).join("");
-}
-
 function normalizeGeneratedText(text: string) {
   return text
     .replace(/```[\s\S]*?```/gu, "")
@@ -59,31 +52,11 @@ function ensureMedicalAssessment(text: string) {
   return `${text}${/[。！？]$/u.test(text) ? "" : "。"}實際仍需由醫師現場評估。`;
 }
 
-function fitWithinTotalBudget(text: string, budget: number, fallback: string, requiredSuffix = "") {
-  if (visibleLength(text) <= budget) {
-    return text;
-  }
-
-  const answerBudget = budget - visibleLength(requiredSuffix);
-  const sentences = text.match(/[^。！？\n]+[。！？]?/gu) ?? [];
-  let answer = "";
-  for (const sentence of sentences) {
-    const candidate = `${answer}${sentence.trim()}`;
-    if (visibleLength(candidate) > answerBudget) break;
-    answer = candidate;
-  }
-
-  const fitted = requiredSuffix && answer.endsWith(requiredSuffix) ? answer : `${answer}${requiredSuffix}`;
-  return answer && visibleLength(fitted) <= budget
-    ? fitted
-    : fallback;
-}
-
 type AiReplyConstraintOptions = {
   medical?: boolean;
 };
 
-export function constrainMedicalAiReply(text: string, footer: string, options: AiReplyConstraintOptions = {}) {
+export function constrainMedicalAiReply(text: string, _footer: string, options: AiReplyConstraintOptions = {}) {
   const medical = options.medical ?? true;
   const normalized = normalizeGeneratedText(text);
   const contentWithoutApprovedTreatmentNames = stripApprovedTreatmentNames(normalized);
@@ -107,86 +80,23 @@ export function constrainMedicalAiReply(text: string, footer: string, options: A
     return medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK;
   }
 
-  const footerCost = visibleLength(footer) + 2;
-  const totalContentBudget = AI_FALLBACK_MESSAGE_LIMIT * AI_FALLBACK_MAX_MESSAGES - footerCost;
-  const constrained = medical ? ensureMedicalAssessment(normalized) : normalized;
-  return fitWithinTotalBudget(
-    constrained,
-    totalContentBudget,
-    medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK,
-    medical ? "實際仍需由醫師現場評估。" : "",
-  );
+  return medical ? ensureMedicalAssessment(normalized) : normalized;
 }
 
-function truncateVisible(text: string, budget: number) {
-  if (visibleLength(text) <= budget) return text;
-  if (budget <= 1) return takeVisible(text, budget);
-
-  const fitted = takeVisible(text, budget - 1).trimEnd();
-  return `${fitted}…`;
-}
-
-export function buildLimitedTextReplyMessages(text: string): LineTextMessage[] {
+export function buildTextReplyMessages(text: string): LineTextMessage[] {
   const normalized = formatReplyText(text);
   if (!normalized) return [];
-
-  const bounded = truncateVisible(normalized, AI_FALLBACK_MESSAGE_LIMIT * AI_FALLBACK_MAX_MESSAGES);
-  if (visibleLength(bounded) <= AI_FALLBACK_MESSAGE_LIMIT) {
-    return [{ type: "text", text: bounded }];
-  }
-
-  const splitIndex = findSplitIndex(
-    bounded,
-    Math.max(1, visibleLength(bounded) - AI_FALLBACK_MESSAGE_LIMIT),
-    AI_FALLBACK_MESSAGE_LIMIT,
-  );
-  const first = takeVisible(bounded, splitIndex).trim();
-  const second = Array.from(bounded).slice(splitIndex).join("").trim();
-  return [first, second]
-    .filter(Boolean)
-    .slice(0, AI_FALLBACK_MAX_MESSAGES)
-    .map((messageText) => ({ type: "text", text: messageText } satisfies LineTextMessage));
+  return [{ type: "text", text: normalized }];
 }
 
-function findSplitIndex(text: string, minimum: number, maximum: number) {
-  const characters = Array.from(text);
-  const boundaryPattern = /[。！？；，、\s]/u;
-  for (let index = maximum; index >= minimum; index -= 1) {
-    if (boundaryPattern.test(characters[index - 1] ?? "")) return index;
-  }
-  return maximum;
-}
-
-export function buildLimitedAiReplyMessages(
+export function buildAiReplyMessages(
   text: string,
   footer: string,
   options: AiReplyConstraintOptions = {},
 ): LineTextMessage[] {
   const normalized = formatReplyText(constrainMedicalAiReply(text, footer, options));
   const separator = "\n\n";
-  const oneMessage = `${normalized}${separator}${footer}`;
-  if (visibleLength(oneMessage) <= AI_FALLBACK_MESSAGE_LIMIT) {
-    return [{ type: "text", text: oneMessage }];
-  }
-
-  const secondCapacity = AI_FALLBACK_MESSAGE_LIMIT - visibleLength(separator) - visibleLength(footer);
-  const minimumFirstLength = Math.max(1, visibleLength(normalized) - secondCapacity);
-  const splitIndex = findSplitIndex(
-    normalized,
-    minimumFirstLength,
-    Math.min(AI_FALLBACK_MESSAGE_LIMIT, Math.max(1, visibleLength(normalized) - 1)),
-  );
-  const first = takeVisible(normalized, splitIndex).trim();
-  const second = Array.from(normalized).slice(splitIndex).join("").trim();
-  if (!first || !second) {
-    const safeReply = options.medical === false ? SAFE_GENERAL_FALLBACK : SAFE_MEDICAL_FALLBACK;
-    return buildLimitedTextReplyMessages(`${safeReply}${separator}${footer}`);
-  }
-
-  return [
-    { type: "text", text: first },
-    { type: "text", text: `${second}${separator}${footer}` },
-  ];
+  return [{ type: "text", text: `${normalized}${separator}${footer}` }];
 }
 
 export function getVisibleReplyLength(text: string) {
