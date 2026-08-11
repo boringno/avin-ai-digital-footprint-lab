@@ -455,10 +455,22 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         Boolean(officialEducationTreatmentKey) ||
         isMedicalAestheticFallbackCandidate(event.message.text ?? "");
       generatedReplyUsedGroundedKnowledge = canUseApprovedKnowledge || Boolean(officialEducationTreatmentKey);
+      const consultationState = routedDecision.nextContext.treatmentConsultation;
+      const consultationConcernLabels = (consultationState?.concernKeys ?? []).map((concernKey) => {
+        const concern = clinicConfig.concernList.find((item) => item.key === concernKey);
+        return concern?.keywords.slice(0, 3).join("／") ?? concernKey;
+      });
+      const consultationPrimaryConcern = consultationState?.primaryConcernKey
+        ? clinicConfig.concernList.find((item) => item.key === consultationState.primaryConcernKey)
+        : undefined;
       const aiReply = await generateAiReply(event.message.text ?? "", {
         approvedKnowledge: canUseApprovedKnowledge ? routedDecision.replyText : undefined,
         bookingBranch: routedDecision.nextContext.bookingDraft.branch,
         bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
+        consultationAnsweredTopics: consultationState?.answeredAspectKeys,
+        consultationKnownNeeds: consultationConcernLabels,
+        consultationPrimaryNeed:
+          consultationPrimaryConcern?.keywords.slice(0, 3).join("／") ?? consultationState?.primaryConcernKey,
         lastIntent: routedDecision.nextContext.lastIntent,
         lastReferencedBranch: routedDecision.nextContext.lastReferencedBranch,
         lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,

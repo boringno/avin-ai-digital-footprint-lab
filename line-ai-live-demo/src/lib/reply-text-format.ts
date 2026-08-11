@@ -19,7 +19,14 @@ function splitParagraphIntoLines(paragraph: string) {
 }
 
 export function formatReplyText(text: string) {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const normalized = text
+    .replace(/```[\s\S]*?```/gu, "")
+    .replace(/`/gu, "")
+    .replace(/\*\*/gu, "")
+    .replace(/__/gu, "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]*/gmu, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (!normalized) {
     return "";
   }

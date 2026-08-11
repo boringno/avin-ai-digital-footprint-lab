@@ -380,10 +380,10 @@ export const clinicConfig: ClinicConfig = {
             aspectKey: "jawline_expectation",
             concernKey: "jawline_looseness",
             pricingCampaignId: "promo-2026-08-face-contour-combo",
-            terms: ["厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
+            terms: ["脂肪", "脂肪型", "厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
-              "🌿 了解😊 如果您主要在意雙下巴的肉感／厚度，ONDA Pro 可作為局部脂肪與輪廓管理的評估方向。",
-            followupPrompt: "您比較在意脂肪厚度，還是下顎線不夠俐落呢？😊",
+              "🌿 了解😊 目前先記下是雙下巴的脂肪型困擾（肉感／厚度）。ONDA Pro 可從局部脂肪厚度與下顎線條方向評估。",
+            followupPrompt: "您想先了解單做 ONDA Pro，還是與肉毒小臉搭配的差異呢？😊",
           },
           {
             aspectKey: "jawline_intro",

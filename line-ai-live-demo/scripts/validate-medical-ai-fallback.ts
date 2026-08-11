@@ -414,10 +414,23 @@ async function main() {
       assert(controlledPrompt.includes(rule), `M7: ${provider} controlled medical prompt missing rule: ${rule}`);
     }
     assert(!ordinaryPrompt.includes("詞庫外的非手術醫美問題"), `M7: ${provider} must not apply the controlled medical instruction to ordinary replies`);
+
+    const contextualPrompt = buildPrompt("脂肪", {
+      approvedKnowledge: "已確認是雙下巴的脂肪型困擾，接著說明 ONDA Pro 與肉毒搭配差異。",
+      consultationAnsweredTopics: ["concern:jawline_looseness:overview"],
+      consultationKnownNeeds: ["雙下巴／嘴邊肉／下顎線"],
+      consultationPrimaryNeed: "雙下巴／嘴邊肉／下顎線",
+      lastReferencedTreatment: "ONDA PRO",
+    });
+    assert(contextualPrompt.includes("已確認的客人需求：雙下巴／嘴邊肉／下顎線"), `M7: ${provider} prompt must include confirmed consultation needs`);
+    assert(contextualPrompt.includes("目前主要需求：雙下巴／嘴邊肉／下顎線"), `M7: ${provider} prompt must include the active primary need`);
+    assert(contextualPrompt.includes("已回答過的諮詢主題：concern:jawline_looseness:overview"), `M7: ${provider} prompt must expose answered topics to prevent repeated questions`);
   }
 
   const safe = constrainMedicalAiReply("洢蓮絲通常用於支撐輪廓與改善凹陷感。", FOOTER);
   assert(safe === "洢蓮絲通常用於支撐輪廓與改善凹陷感。", "M8: ordinary education must not gain repetitive medical-assessment wording");
+  const markdownFree = buildAiReplyMessages("😊 目前是**雙下巴脂肪型困擾**，可先了解 `ONDA PRO`。", FOOTER);
+  assert(!markdownFree[0]?.text.includes("**") && !markdownFree[0]?.text.includes("`"), "M8: customer-visible LINE replies must strip unsupported Markdown markers");
 
   const unsafeOutputs: Array<[string, string, RegExp]> = [
     ["M9-price-ascii", "這個療程優惠價16888元。", /16888|優惠價/u],
