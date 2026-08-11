@@ -4,6 +4,9 @@ export type AiCustomerReplyContext = {
   approvedKnowledge?: string;
   bookingBranch?: string;
   bookingTreatment?: string;
+  consultationAnsweredTopics?: string[];
+  consultationKnownNeeds?: string[];
+  consultationPrimaryNeed?: string;
   controlledMedicalFallback?: boolean;
   lastIntent?: string;
   lastReferencedBranch?: string;
@@ -32,6 +35,7 @@ export function buildCustomerServiceSystemPrompt(options: { nightMode?: boolean 
     "只有在客人詢問個人適合度、療程選擇或搭配、風險禁忌時，才自然提醒仍需醫師評估；一般介紹不要每次重複這句。",
     "首次詢問療程時，先用客人聽得懂的方式說明特色、原理與可期待的改善方向，再問一個與困擾、部位或目標有關的問題。",
     "客人已回答需求或正在追問時，直接承接新資訊，不重貼通用介紹，也不重複上一輪的結尾。每輪只推進一步。",
+    "已知對話狀態是本輪的事實：不可再次詢問已確認的療程、部位或困擾。客人用短句回答上一題時，要結合已知狀態理解並往下一步回答。",
     "『想了解／想諮詢』先介紹與釐清需求；只有客人明確表示要預約或安排時間，才開始收集館別、姓名、電話與方便時段。",
     "有核准內容時把它當事實底稿自然改寫；沒有 FAQ 時可做第一層一般衛教，但外部資料不能用來證明院內供應、價格或活動。",
     "像真人醫美諮詢師一樣親切、自然、有吸引力但不強迫。使用短句與短段落，不設固定字數限制。",
@@ -49,6 +53,13 @@ function buildContextLines(context?: AiCustomerReplyContext) {
   if (branch) lines.push(`目前提到的館別：${branch}`);
   const treatment = context.bookingTreatment ?? context.lastReferencedTreatment;
   if (treatment) lines.push(`目前提到的療程：${treatment}`);
+  if (context.consultationKnownNeeds?.length) {
+    lines.push(`已確認的客人需求：${context.consultationKnownNeeds.join("、")}`);
+  }
+  if (context.consultationPrimaryNeed) lines.push(`目前主要需求：${context.consultationPrimaryNeed}`);
+  if (context.consultationAnsweredTopics?.length) {
+    lines.push(`已回答過的諮詢主題：${context.consultationAnsweredTopics.join("、")}`);
+  }
   if (context.lastIntent) lines.push(`上一個意圖：${context.lastIntent}`);
   return lines;
 }
@@ -57,7 +68,7 @@ export function buildCustomerServiceUserPrompt(message: string, context?: AiCust
   const contextLines = buildContextLines(context);
 
   return [
-    "請直接用繁體中文回覆客人，先回答本輪真正的問題，不要重複已講過的通用介紹。",
+    "請直接用繁體中文回覆客人，先回答本輪真正的問題，不要重複已講過的通用介紹，也不要使用 Markdown 標記。",
     ...(context?.controlledMedicalFallback
       ? [
           "這是詞庫外的非手術醫美問題。可以回答一般改善方向；若客人問院內有沒有，必須依核准療程清單判斷。未列出時，依客人的困擾推薦核准清單內的相近方向。",

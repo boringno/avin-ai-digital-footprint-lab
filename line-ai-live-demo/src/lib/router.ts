@@ -1804,7 +1804,7 @@ function buildConsultationConcernReply(
     if (activeConsultation?.primaryConcernKey === concernKey) {
       return {
         aspectKey: "followup:primary",
-        replyText: `了解😊 我們先以 ${concernKeyword} 為主安排。您想接著了解這個部位的體驗價，還是安排免費諮詢呢？`,
+        replyText: `了解😊 已記下您主要在意 ${concernKeyword}。您想接著了解這個部位的作用方式、搭配差異，還是體驗價呢？`,
       };
     }
 
@@ -1864,18 +1864,20 @@ function getActiveTreatmentConsultation(context: ConversationContext, treatmentK
   };
 }
 
+function getTreatmentConsultationConcernLabel(concernKey: string) {
+  if (concernKey === "jawline_looseness") {
+    return "雙下巴／嘴邊肉等臉部輪廓";
+  }
+  if (concernKey === "local_contour") {
+    return "手臂、腹部或大腿等身體局部";
+  }
+
+  const concern = clinicConfig.concernList.find((item) => item.key === concernKey);
+  return concern?.keywords.slice(0, 3).join("／") ?? concernKey;
+}
+
 function formatTreatmentConsultationConcerns(concernKeys: string[]) {
-  const labels = concernKeys
-    .map((concernKey) => {
-      if (concernKey === "jawline_looseness") {
-        return "雙下巴／嘴邊肉等臉部輪廓";
-      }
-      if (concernKey === "local_contour") {
-        return "手臂、腹部或大腿等身體局部";
-      }
-      return null;
-    })
-    .filter((label) => label !== null);
+  const labels = concernKeys.map(getTreatmentConsultationConcernLabel);
 
   return labels.join("、") || "局部輪廓需求";
 }
@@ -1889,13 +1891,15 @@ function recordTreatmentConsultationConcern(
   const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
   const previousConcernKeys = activeConsultation?.concernKeys ?? [];
   const previousAnsweredAspectKeys = activeConsultation?.answeredAspectKeys ?? [];
+  const primaryConcernKey = activeConsultation?.primaryConcernKey ??
+    (previousConcernKeys.length === 0 ? concernKey : undefined);
   context.treatmentConsultation = {
     answeredAspectKeys: answeredAspectKey
       ? Array.from(new Set([...previousAnsweredAspectKeys, answeredAspectKey]))
       : previousAnsweredAspectKeys,
     concernKeys: Array.from(new Set([...previousConcernKeys, concernKey])),
-    primaryConcernKey: activeConsultation?.primaryConcernKey,
-    stage: activeConsultation?.stage ?? "needs_discovery",
+    primaryConcernKey,
+    stage: primaryConcernKey ? "priority_selected" : activeConsultation?.stage ?? "needs_discovery",
     treatmentKey,
   };
 }
@@ -1988,6 +1992,39 @@ function getConcernReply(message: string, context: ConversationContext): Consult
   const matchedConcern = selectedConcernReply
     ? clinicConfig.concernList.find((item) => item.key === selectedConcernReply.concernKey) ?? null
     : findConcernByMessage(message);
+
+  if (!matchedConcern && consultationTreatment) {
+    const activeConsultation = getActiveTreatmentConsultation(context, consultationTreatment.key);
+    const contextualConcernKey = activeConsultation?.primaryConcernKey ??
+      (activeConsultation?.concernKeys.length === 1 ? activeConsultation.concernKeys[0] : undefined);
+    const matchesContextualDetail = Boolean(
+      contextualConcernKey &&
+      consultationTreatment.consultationGuide?.detailReplies?.some(
+        (item) => item.concernKey === contextualConcernKey && includesAnyTerm(message, item.terms),
+      ),
+    );
+
+    if (contextualConcernKey && matchesContextualDetail) {
+      const contextualReply = buildConsultationConcernReply(
+        consultationTreatment,
+        contextualConcernKey,
+        getTreatmentConsultationConcernLabel(contextualConcernKey),
+        context,
+        message,
+      );
+      if (contextualReply) {
+        return {
+          decisionType: "treatment_intro_reply",
+          matchedKey: `treatment_consult:${consultationTreatment.key}`,
+          matchedType: "guided_reply",
+          replyText: contextualReply.replyText,
+          consultationAspectKey: contextualReply.aspectKey,
+          consultationConcernKey: contextualConcernKey,
+        } satisfies ConsultationConcernDecision;
+      }
+    }
+  }
+
   if (!matchedConcern) {
     return null;
   }

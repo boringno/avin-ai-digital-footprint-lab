@@ -93,6 +93,20 @@ async function main() {
   assert(concern.decisionType === "treatment_intro_reply", "T9: ONDA concern response must remain an approved treatment reply");
   assert(concern.matchedKey === "treatment_consult:onda_pro", "T9: ONDA concern must use the reusable consultation path");
   assert(concern.replyText.includes("雙下巴") && !concern.replyText.includes("12,999元"), "T9: ONDA concern response must use the approved face content without unsolicited pricing");
+  assert(concern.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T9: the first selected concern must become the active need without asking the customer to select it again");
+
+  const shortFatAnswer = await route("脂肪", concern.nextContext);
+  assert(shortFatAnswer.matchedKey === "treatment_consult:onda_pro", "T9: a short answer must remain in the active ONDA consultation");
+  assert(shortFatAnswer.replyText.includes("雙下巴的脂肪型困擾"), "T9: a short fat answer must inherit the confirmed double-chin context");
+  assert(!shortFatAnswer.replyText.includes("手臂、腹部、腰側") && !shortFatAnswer.replyText.includes("您在意的是哪個部位"), "T9: a known double-chin answer must not ask for the body area again");
+
+  const repeatedKnownConcern = await route("雙下巴", shortFatAnswer.nextContext);
+  assert(/已記下您主要在意\s*雙下巴/u.test(repeatedKnownConcern.replyText), "T9: repeating the confirmed need must acknowledge it instead of restarting discovery");
+  assert(!repeatedKnownConcern.replyText.includes("脂肪厚度，還是下顎線"), "T9: repeating a confirmed need must not repeat the previous fork");
+
+  const repeatedFatAnswer = await route("脂肪堆積", repeatedKnownConcern.nextContext);
+  assert(repeatedFatAnswer.matchedKey === "treatment_consult:onda_pro", "T9: a repeated fat answer must remain in the active consultation");
+  assert(!repeatedFatAnswer.replyText.includes("您在意的是哪個部位") && !repeatedFatAnswer.replyText.includes("手臂、腹部、腰側"), "T9: a repeated fat answer must not restart body discovery");
 
   const naturalLanguageConcern = await route("我有肉肉的雙下巴");
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");

@@ -113,12 +113,12 @@ async function validateConsultationExpiry() {
 
   assert(restarted.matchedKey === "treatment_consult:onda_pro", "CF6: a stale consultation must still route a known concern safely");
   assert(
-    restarted.nextContext.treatmentConsultation?.stage === "needs_discovery",
-    "CF6: a stale consultation must restart instead of retaining the old primary stage",
+    restarted.nextContext.treatmentConsultation?.stage === "priority_selected",
+    "CF6: a stale consultation must discard the old stage and promote the newly stated concern",
   );
   assert(
-    restarted.nextContext.treatmentConsultation?.primaryConcernKey === undefined,
-    "CF6: a stale consultation must not retain a previous primary concern",
+    restarted.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness",
+    "CF6: a stale consultation must use the newly stated concern instead of retaining hidden old needs",
   );
   console.log("PASS: CF6 stale consultation state is cleared before a new turn");
 }

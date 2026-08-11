@@ -68,7 +68,8 @@ async function validatePrimaryConcernDoesNotLoop() {
   const { decisions } = await runTurns(["我想改善雙下巴", "主要是雙下巴", "雙下巴"]);
 
   assert(
-    decisions[2].replyText.includes("我們先以 雙下巴 為主安排"),
+    /已記下您主要在意\s*雙下巴/u.test(decisions[2].replyText) &&
+      !decisions[2].replyText.includes("您想先以哪個部位為主"),
     "TP3: repeating a selected primary concern must advance to the next action instead of asking the same priority question",
   );
   console.log("PASS: TP3 selected primary concern does not loop back to discovery");
