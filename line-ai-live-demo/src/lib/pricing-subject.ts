@@ -6,7 +6,7 @@ import {
 } from "@/lib/clinic-config";
 import type { ConversationContext } from "@/lib/conversation-context";
 
-export const PRICE_ASK_TERMS = ["價格", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
+export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
 
 export type PricingSubjectResolution =
   | { kind: "explicit"; treatmentKey: string }

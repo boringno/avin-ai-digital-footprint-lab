@@ -390,9 +390,10 @@ const TEST_CASES: TestCase[] = [
     replyIncludes: ["其他電音波目前沒有提供", "院內療程"],
   },
   {
-    expectedDecisionType: "handoff_pending",
-    expectedMatchedKey: "effect_guarantee_request",
+    expectedDecisionType: "treatment_intro_reply",
+    expectedMatchedKey: "treatment_intro:tenthermage",
     message: "十蓓電波可以保證有效嗎？",
+    replyIncludes: ["實際是否適合", "現場評估"],
   },
   {
     expectedDecisionType: "handoff_pending",
@@ -400,8 +401,8 @@ const TEST_CASES: TestCase[] = [
     message: "皮秒可以先報死價嗎？",
   },
   {
-    expectedDecisionType: "handoff_pending",
-    expectedMatchedKey: "personalized_consult",
+    expectedDecisionType: "fallback_reply",
+    expectedMatchedKey: "generic_fallback",
     message: "我適合做哪個療程？",
   },
   {

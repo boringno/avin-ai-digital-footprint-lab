@@ -298,6 +298,7 @@ async function insertAiMessage(conversationId: string, result: ProcessedWebhookR
         matched_key: result.decision.matchedKey,
         matched_type: result.decision.matchedType,
         message_count: result.replyPayload.messages.length,
+        official_source_url: result.aiSourceUrl ?? null,
         reply_status: replyResult?.status ?? null,
         used_ai_humanizer: result.usedAiHumanizer,
         used_ai_reply_generator: result.usedAiReplyGenerator,

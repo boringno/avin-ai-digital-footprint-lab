@@ -6,7 +6,7 @@ import {
   getVisibleReplyLength,
 } from "../src/lib/ai-fallback-guard";
 import { buildClaudeSystemPrompt, buildClaudeUserPrompt, generateClaudeReply } from "../src/lib/claude-client";
-import { buildReplyPayload } from "../src/lib/line-webhook";
+import { buildReplyPayload, processWebhookRequestBody } from "../src/lib/line-webhook";
 import { buildOpenAiUserPrompt, buildSystemPrompt, generateOpenAiReply } from "../src/lib/openai-client";
 import {
   isMedicalAestheticFallbackCandidate,
@@ -98,15 +98,16 @@ async function assertOfficialSearchIsConstrained() {
     openAiApiKey: process.env.OPENAI_API_KEY,
     searchTimeout: process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS,
   };
-  let requestBodyJson = "";
+  const requestBodyJson: string[] = [];
 
   try {
     process.env.AI_PROVIDER = "openai";
     process.env.OPENAI_API_KEY = "validator-only";
     process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS = "200";
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBodyJson = String(init?.body ?? "{}");
-      return new Response(JSON.stringify({
+      requestBodyJson.push(String(init?.body ?? "{}"));
+      const isSearch = requestBodyJson.length === 1;
+      return new Response(JSON.stringify(isSearch ? {
         output: [{
           content: [{
             annotations: [{
@@ -120,6 +121,16 @@ async function assertOfficialSearchIsConstrained() {
           type: "message",
         }],
         usage: { input_tokens: 20, output_tokens: 30 },
+      } : {
+        output: [{
+          content: [{
+            annotations: [],
+            text: "M22 彩衝光可依膚況討論泛紅、色素與整體膚質，實際仍需由醫師現場評估。",
+            type: "output_text",
+          }],
+          type: "message",
+        }],
+        usage: { input_tokens: 15, output_tokens: 20 },
       }), { headers: { "content-type": "application/json" }, status: 200 });
     }) as typeof fetch;
 
@@ -128,7 +139,8 @@ async function assertOfficialSearchIsConstrained() {
       officialEducationTreatmentKey: "m22_ipl",
     });
     assert(reply?.sourceUrl === "https://lumenis.com/aesthetics/products/m22/", "M12: official citation must be preserved");
-    const requestBody = JSON.parse(requestBodyJson) as Record<string, unknown>;
+    assert(requestBodyJson.length === 2, "M12: official lookup must be converted into a separate customer-facing draft");
+    const requestBody = JSON.parse(requestBodyJson[0] ?? "{}") as Record<string, unknown>;
     const tools = requestBody?.tools as Array<Record<string, unknown>> | undefined;
     const filters = tools?.[0]?.filters as { allowed_domains?: string[] } | undefined;
     assert(tools?.[0]?.type === "web_search", "M12: missing FAQ must use the Responses web search tool");
@@ -137,13 +149,14 @@ async function assertOfficialSearchIsConstrained() {
     assert(filters?.allowed_domains?.includes("fda.gov"), "M12: official search must include the approved regulator domain");
     assert(!filters?.allowed_domains?.includes("wikipedia.org"), "M12: open-web domains must not enter the allowlist");
 
-    const messages = buildLimitedAiReplyMessages(reply.text, FOOTER, {
-      medical: true,
-      sourceUrl: reply.sourceUrl,
-    });
+    const customerDraftRequest = JSON.parse(requestBodyJson[1] ?? "{}") as { input?: string; tools?: unknown };
+    assert(customerDraftRequest.tools === undefined, "M12: customer-facing draft must not call web search directly");
+    assert(customerDraftRequest.input?.includes("內部知識"), "M12: verified official notes must become internal knowledge");
+
+    const messages = buildLimitedAiReplyMessages(reply.text, FOOTER, { medical: true });
     assert(messages.length <= 2, "M12: cited response must remain within two LINE messages");
     assert(messages.every((item) => getVisibleReplyLength(item.text) <= 100), "M12: cited response must remain within 100 characters per message");
-    assert(messages.some((item) => item.text.includes("https://lumenis.com/")), "M12: official citation must be visible and clickable");
+    assert(messages.every((item) => !item.text.includes("http") && !item.text.includes("資料來源")), "M12: official source must never be customer-visible");
 
     globalThis.fetch = (async () => new Response(JSON.stringify({
       output: [{ content: [{ annotations: [], text: "沒有引用的回答", type: "output_text" }], type: "message" }],
@@ -172,6 +185,135 @@ async function assertOfficialSearchIsConstrained() {
       AI_PROVIDER: originalEnvironment.aiProvider,
       OPENAI_API_KEY: originalEnvironment.openAiApiKey,
       AI_OFFICIAL_SEARCH_TIMEOUT_MS: originalEnvironment.searchTimeout,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function assertOfficialSearchWebhookFlow() {
+  const originalFetch = globalThis.fetch;
+  const originalEnvironment = {
+    aiProvider: process.env.AI_PROVIDER,
+    openAiApiKey: process.env.OPENAI_API_KEY,
+  };
+  const requestBodies: string[] = [];
+
+  try {
+    process.env.AI_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "validator-only";
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(String(init?.body ?? "{}"));
+      const isSearch = requestBodies.length === 1;
+      return new Response(JSON.stringify(isSearch ? {
+        output: [{
+          content: [{
+            annotations: [{
+              title: "M22 official",
+              type: "url_citation",
+              url: "https://lumenis.com/aesthetics/products/m22/",
+            }],
+            text: "M22 彩衝光可依不同光學條件討論泛紅、色素與整體膚況。",
+            type: "output_text",
+          }],
+          type: "message",
+        }],
+        usage: { input_tokens: 20, output_tokens: 30 },
+      } : {
+        output: [{
+          content: [{
+            annotations: [],
+            text: "M22 彩衝光常用於討論泛紅、色素與整體膚況，實際仍需由醫師現場評估。",
+            type: "output_text",
+          }],
+          type: "message",
+        }],
+        usage: { input_tokens: 15, output_tokens: 20 },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await processWebhookRequestBody(JSON.stringify({
+      events: [{
+        message: { id: "official-search-message", text: "M22 彩衝光原理是什麼", type: "text" },
+        replyToken: "official-search-reply-token",
+        source: { type: "user" },
+        type: "message",
+        webhookEventId: "official-search-event",
+      }],
+    }), { includePending: false });
+    const webhookResult = result.results[0];
+    assert(webhookResult.usedAiReplyGenerator, "M13: official route must invoke the guarded reply generator");
+    assert(webhookResult.aiSourceUrl === "https://lumenis.com/aesthetics/products/m22/", "M13: exact source URL must remain in internal metadata");
+    const texts = (webhookResult.replyPayload?.messages ?? [])
+      .flatMap((item) => item.type === "text" ? [item.text] : []);
+    assert(texts.length > 0 && texts.length <= 2, "M13: final LINE payload must contain one or two text messages");
+    assert(texts.every((text) => getVisibleReplyLength(text) <= 100), "M13: final LINE payload must keep every message within 100 characters");
+    assert(texts.every((text) => !text.includes("http") && !text.includes("資料來源")), "M13: final LINE payload must not expose source URLs");
+    assert(texts.filter((text) => text.includes(FOOTER)).length === 1, "M13: final LINE payload must contain the AI disclosure exactly once");
+    assert(requestBodies.length === 2, "M13: official lookup and customer drafting must remain separate calls");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries({
+      AI_PROVIDER: originalEnvironment.aiProvider,
+      OPENAI_API_KEY: originalEnvironment.openAiApiKey,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function assertApprovedKnowledgeIsNaturalized() {
+  const originalFetch = globalThis.fetch;
+  const originalEnvironment = {
+    aiProvider: process.env.AI_PROVIDER,
+    openAiApiKey: process.env.OPENAI_API_KEY,
+  };
+  let requestBodyJson = "";
+
+  try {
+    process.env.AI_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "validator-only";
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodyJson = String(init?.body ?? "{}");
+      return new Response(JSON.stringify({
+        output: [{
+          content: [{
+            annotations: [],
+            text: "如果您主要在意鬆弛、嘴邊肉或輪廓線，可以先從院內電音波方向了解；想改善哪個部位呢？",
+            type: "output_text",
+          }],
+          type: "message",
+        }],
+        usage: { input_tokens: 12, output_tokens: 16 },
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await processWebhookRequestBody(JSON.stringify({
+      events: [{
+        message: { id: "approved-faq-message", text: "你們主打什麼療程", type: "text" },
+        replyToken: "approved-faq-reply-token",
+        source: { type: "user" },
+        type: "message",
+        webhookEventId: "approved-faq-event",
+      }],
+    }), { includePending: false });
+    const webhookResult = result.results[0];
+    assert(webhookResult.usedAiReplyGenerator, "M14: approved FAQ must be available to the natural reply generator");
+    assert(webhookResult.decision.decisionType === "faq_auto_reply", "M14: naturalizing an FAQ must preserve its factual decision type");
+    const prompt = String((JSON.parse(requestBodyJson) as Record<string, unknown>).input ?? "");
+    assert(prompt.includes("內部知識"), "M14: approved FAQ must be supplied as internal knowledge");
+    assert(prompt.includes("十蓓電波、鳳凰電波、美國音波 2.0、Q+音波"), "M14: approved FAQ facts must reach the generator");
+    const texts = (webhookResult.replyPayload?.messages ?? [])
+      .flatMap((item) => item.type === "text" ? [item.text] : []);
+    assert(texts.join("").includes("主要在意鬆弛"), "M14: customer must receive the naturalized answer");
+    assert(texts.every((text) => getVisibleReplyLength(text) <= 100), "M14: naturalized FAQ must obey the universal text limit");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries({
+      AI_PROVIDER: originalEnvironment.aiProvider,
+      OPENAI_API_KEY: originalEnvironment.openAiApiKey,
     })) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -227,6 +369,13 @@ async function main() {
 
   const postoperative = await route("打完玻尿酸很腫");
   assert(postoperative.matchedKey === "post_procedure_issue" && postoperative.replyText.includes("撥打診所電話"), "M6: non-emergency postoperative issue must call clinic");
+
+  const sideEffectEducation = await route("肉毒副作用是什麼");
+  assert(sideEffectEducation.matchedKey !== "post_procedure_issue", "M6: a general side-effect question must not be treated as a postoperative event");
+  const personalized = await route("我適合肉毒嗎");
+  assert(personalized.matchedKey !== "personalized_consult", "M6: a suitability question must stay in guided consultation instead of immediate handoff");
+  const consultationQuestion = await route("我想諮詢肉毒效果");
+  assert(consultationQuestion.decisionType !== "booking_intake_reply", "M6: a consultation question must not start booking before the customer asks to book");
 
   const requiredPromptRules = [
     "非手術微整形",
@@ -303,6 +452,8 @@ async function main() {
 
   const qualifiedSafety = constrainMedicalAiReply("微整療程的疼痛感可能依個人狀況不同。", FOOTER);
   assert(qualifiedSafety.includes("可能依個人狀況不同"), "M9: qualified safety language must remain answerable");
+  const numericEducation = constrainMedicalAiReply("療程反應可能持續 2 至 4 週，實際仍需由醫師現場評估。", FOOTER);
+  assert(numericEducation.includes("2 至 4 週"), "M9: non-price medical numbers must remain answerable");
 
   const general = constrainMedicalAiReply("可以協助您確認停車方向。", FOOTER, { medical: false });
   assert(!general.includes("醫師現場評估"), "M9: non-medical fallback must not add medical guidance");
@@ -326,7 +477,7 @@ async function main() {
   assert(AI_FALLBACK_MAX_MESSAGES === 2, "M10: generated reply must remain capped at exactly two messages");
   assert(messages.length <= AI_FALLBACK_MAX_MESSAGES, "M10: generated reply must use at most two LINE messages");
   assert(messages.every((message) => getVisibleReplyLength(message.text) <= AI_FALLBACK_MESSAGE_LIMIT), "M10: every message must be at most 100 visible characters");
-  assert(messages.at(-1)?.text.includes(FOOTER), "M10: final message must include AI disclosure");
+  assert(messages.at(-1)?.text.includes(FOOTER), `M10: final message must include AI disclosure: ${JSON.stringify(messages)}`);
   assert(messages.filter((message) => message.text.includes(FOOTER)).length === 1, "M10: AI disclosure must appear exactly once");
 
   const payload = buildReplyPayload("test-reply-token", longAnswer, true, messages, true);
@@ -335,10 +486,17 @@ async function main() {
   assert(payloadTexts.every((text) => getVisibleReplyLength(text) <= 100), "M10: final LINE payload text must stay within 100 characters");
   assert(payloadTexts.filter((text) => text.includes(FOOTER)).length === 1, "M10: final LINE payload must contain the disclosure exactly once");
 
+  const deterministicPayload = buildReplyPayload("test-reply-token", "固定規則內容。".repeat(80), false);
+  const deterministicTexts = deterministicPayload.messages.flatMap((message) => message.type === "text" ? [message.text] : []);
+  assert(deterministicTexts.length <= 2, `M10: deterministic text must also use at most two LINE messages: ${JSON.stringify(deterministicPayload.messages)}`);
+  assert(deterministicTexts.every((text) => getVisibleReplyLength(text) <= 100), "M10: deterministic text must also stay within 100 characters per message");
+
   await assertReplyGeneratorsTimeOut();
   await assertOfficialSearchIsConstrained();
+  await assertOfficialSearchWebhookFlow();
+  await assertApprovedKnowledgeIsNaturalized();
 
-  console.log("M0-M12 passed: controlled medical fallback, official-source search, hard boundaries, and bounded delivery.");
+  console.log("M0-M14 passed: flexible consultation, naturalized approved knowledge, internal official sources, and bounded delivery.");
 }
 
 main().catch((error) => {

@@ -58,8 +58,10 @@ async function main() {
   assert(!/完全無痛|無副作用|零修復期/.test(comfort.replyText), "T5: ONDA comfort answers must not promise a medical outcome");
 
   const consultation = await route("想諮詢 ONDA", comfort.nextContext);
-  assert(consultation.matchedKey === "booking_intake", "T6: an explicit ONDA consultation request must enter booking intake");
-  assert(consultation.nextContext.bookingDraft.treatment === "ONDA PRO", "T6: booking intake must preserve the requested ONDA treatment");
+  assert(consultation.matchedKey === "treatment_intro:onda_pro", "T6: a consultation question must stay in treatment discovery");
+  assert(consultation.nextContext.bookingDraft.treatment === "ONDA PRO", "T6: consultation discovery must preserve the requested ONDA treatment");
+  const consultationBooking = await route("想預約諮詢 ONDA", consultation.nextContext);
+  assert(consultationBooking.matchedKey === "booking_intake", "T6: an explicit consultation booking request must enter booking intake");
 
   const bookingAfterOlderTreatment = createEmptyConversationContext("onda-booking-after-botox-test");
   bookingAfterOlderTreatment.bookingDraft.treatment = "肉毒";
@@ -165,7 +167,7 @@ async function main() {
   assert(payment.matchedKey === "payment_methods", "T13: unrelated clinic FAQ must not get trapped in ONDA consultation");
 
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
-  assert(guarantee.matchedKey === "effect_guarantee_request", "T14: outcome guarantee must still route to human handoff");
+  assert(guarantee.matchedKey === "treatment_intro:onda_pro", "T14: an outcome question must stay in treatment guidance for natural qualification");
 
   console.log("treatment consultation flow validation passed (34 checks)");
 }

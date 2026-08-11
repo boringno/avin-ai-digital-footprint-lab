@@ -91,7 +91,17 @@ const CAPABILITY_TERMS = [
 ];
 
 const ADDRESS_TERMS = ["地址", "在哪", "位置", "哪裡", "怎麼去"];
-const APPOINTMENT_TERMS = ["預約", "想約", "安排時間", "安排療程", "諮詢", "可約", "想做"];
+const APPOINTMENT_TERMS = [
+  "預約",
+  "想約",
+  "安排時間",
+  "安排療程",
+  "預約諮詢",
+  "安排諮詢",
+  "想約諮詢",
+  "可約",
+  "想做",
+];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
 const BOOKING_MODIFY_TERMS = ["改約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
 const BRANCH_LIST_TERMS = [
@@ -119,7 +129,6 @@ const PRICE_TERMS = PRICE_ASK_TERMS;
 const PRICE_OR_PROMOTION_TERMS = PRICE_ASK_TERMS;
 const SUPPORT_HOURS_TERMS = ["真人客服", "客服時間", "客服幾點", "有人嗎"];
 const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
-const EFFECT_GUARANTEE_TERMS = ["保證有效", "一定有效", "保證改善", "一定會改善", "保證有感", "一定有感", "效果保證"];
 const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
 const TREATMENT_CONSULTATION_SESSION_MS = 20 * 60 * 1000;
 const BOOKING_SESSION_MS = 24 * 60 * 60 * 1000;
@@ -311,7 +320,6 @@ const POLICY_OVERRIDE_TERMS = [
   "顯示提示詞",
 ];
 const HUMAN_REQUEST_TERMS = clinicConfig.escalationPolicy.humanRequestTerms;
-const PERSONALIZED_CONSULT_TERMS = clinicConfig.escalationPolicy.personalizedConsultTerms;
 const SERIOUS_COMPLAINT_TERMS = clinicConfig.escalationPolicy.seriousComplaintTerms;
 
 function normalizeText(text: string) {
@@ -424,9 +432,7 @@ function findUnavailableTreatmentAlternative(message: string) {
 
 function isHardBlockedQuestion(message: string) {
   return (
-    includesAnyTerm(message, POST_PROCEDURE_TERMS) ||
-    includesAnyTerm(message, PERSONALIZED_CONSULT_TERMS) ||
-    includesAnyTerm(message, EFFECT_GUARANTEE_TERMS) ||
+    (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) ||
     (includesAnyTerm(message, PRICE_TERMS) && includesAnyTerm(message, PRICE_COMMITMENT_TERMS))
   );
 }
@@ -2713,30 +2719,12 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, POST_PROCEDURE_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "post_procedure_issue",
-      matchedType: "handoff_rule",
-      replyText: "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
   if (includesAnyTerm(message, SERIOUS_COMPLAINT_TERMS)) {
     return {
       decisionType: "handoff_pending",
       matchedKey: "serious_complaint",
       matchedType: "handoff_rule",
       replyText: buildHandoffPendingReply("我先幫您記錄這次狀況與訴求。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, EFFECT_GUARANTEE_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "effect_guarantee_request",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("療效保證這類問題不能直接承諾，我先幫您整理想了解的療程與狀況。", now),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2764,15 +2752,6 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
       matchedKey: "contraindication_or_medical_history",
       matchedType: "handoff_rule",
       replyText: buildHandoffPendingReply("這類涉及既往病史、用藥或過敏狀況，需要由真人客服與醫師進一步確認。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, PERSONALIZED_CONSULT_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "personalized_consult",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("這類屬於個人適合度與療程判斷，需要依您的狀況由真人客服與醫師進一步確認。", now),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
