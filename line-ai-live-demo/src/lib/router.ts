@@ -1891,13 +1891,14 @@ function recordTreatmentConsultationConcern(
   const activeConsultation = getActiveTreatmentConsultation(context, treatmentKey);
   const previousConcernKeys = activeConsultation?.concernKeys ?? [];
   const previousAnsweredAspectKeys = activeConsultation?.answeredAspectKeys ?? [];
+  const nextConcernKeys = Array.from(new Set([...previousConcernKeys, concernKey]));
   const primaryConcernKey = activeConsultation?.primaryConcernKey ??
-    (previousConcernKeys.length === 0 ? concernKey : undefined);
+    (nextConcernKeys.length === 1 ? concernKey : undefined);
   context.treatmentConsultation = {
     answeredAspectKeys: answeredAspectKey
       ? Array.from(new Set([...previousAnsweredAspectKeys, answeredAspectKey]))
       : previousAnsweredAspectKeys,
-    concernKeys: Array.from(new Set([...previousConcernKeys, concernKey])),
+    concernKeys: nextConcernKeys,
     primaryConcernKey,
     stage: primaryConcernKey ? "priority_selected" : activeConsultation?.stage ?? "needs_discovery",
     treatmentKey,

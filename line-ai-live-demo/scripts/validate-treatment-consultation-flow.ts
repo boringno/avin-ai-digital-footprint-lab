@@ -108,6 +108,20 @@ async function main() {
   assert(repeatedFatAnswer.matchedKey === "treatment_consult:onda_pro", "T9: a repeated fat answer must remain in the active consultation");
   assert(!repeatedFatAnswer.replyText.includes("您在意的是哪個部位") && !repeatedFatAnswer.replyText.includes("手臂、腹部、腰側"), "T9: a repeated fat answer must not restart body discovery");
 
+  const legacyContext = createEmptyConversationContext("onda-legacy-loop-state");
+  legacyContext.lastReferencedTreatment = "ONDA PRO";
+  legacyContext.lastSeenAt = NOW.toISOString();
+  legacyContext.treatmentConsultation = {
+    answeredAspectKeys: ["concern:jawline_looseness:overview"],
+    concernKeys: ["jawline_looseness"],
+    stage: "needs_discovery",
+    treatmentKey: "onda_pro",
+  };
+  const repairedLegacyState = await route("脂肪", legacyContext);
+  assert(repairedLegacyState.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T9: an existing single-concern session must repair its missing primary need in place");
+  const continuedLegacyState = await route("雙下巴", repairedLegacyState.nextContext);
+  assert(/已記下您主要在意\s*雙下巴/u.test(continuedLegacyState.replyText), "T9: a repaired existing session must continue without asking the customer to restart");
+
   const naturalLanguageConcern = await route("我有肉肉的雙下巴");
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");
   assert(naturalLanguageConcern.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "T9a: natural double-chin wording must receive the Xiaoying face reply");
