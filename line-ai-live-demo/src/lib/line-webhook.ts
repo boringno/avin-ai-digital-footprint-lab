@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { buildLimitedAiReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
 import { generateAiReply } from "@/lib/ai-reply-client";
 import {
   classifyControlledIntent,
@@ -25,7 +26,7 @@ import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { addCustomerReplyTone } from "@/lib/reply-tone";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
-import { routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
+import { isMedicalAestheticFallbackCandidate, routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
@@ -63,7 +64,7 @@ type ClassifiedDecision = {
   usedAiReplyGenerator: boolean;
 };
 
-const HIGH_RISK_HANDOFF_REASONS = new Set(["post_procedure_issue", "serious_complaint"]);
+const HIGH_RISK_HANDOFF_REASONS = new Set(["post_procedure_emergency", "post_procedure_issue", "serious_complaint"]);
 
 export function isHighRiskHandoffReason(reason: string) {
   return HIGH_RISK_HANDOFF_REASONS.has(reason);
@@ -169,7 +170,7 @@ function appendAiFooter(text: string) {
   return text.includes("AI 客服") ? text : `${text}\n\n${AI_REPLY_FOOTER}`;
 }
 
-function buildReplyPayload(
+export function buildReplyPayload(
   replyToken: string,
   replyText: string,
   shouldIntroduce: boolean,
@@ -322,7 +323,8 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let aiTokensOut: number | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
-  let controlledClassifierAttempted = false;
+  let controlledClassifierResolved = false;
+  let generatedReplyIsMedical = false;
 
   if (routedDecision.decisionType === "handoff_pending") {
     const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
@@ -360,7 +362,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     shouldAllowAiFallbackReply(event.message.text ?? "") &&
     shouldUseControlledIntentClassifier(event.message.text ?? "")
   ) {
-    controlledClassifierAttempted = true;
     const controlledIntent = await classifyControlledIntent(event.message.text ?? "");
     const config = getRuntimeConfig();
     if (controlledIntent) {
@@ -387,6 +388,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         },
       };
       replyText = scheduleDecision.replyText;
+      controlledClassifierResolved = true;
     } else if (
       controlledIntent &&
       isHighConfidenceControlledIntent(controlledIntent, config.openAiIntentClassifierMinConfidence) &&
@@ -406,6 +408,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         },
       });
       replyText = routedDecision.replyText;
+      controlledClassifierResolved = true;
     }
   }
 
@@ -423,10 +426,11 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       usedAiHumanizer = true;
     }
   } else if (
-    !controlledClassifierAttempted &&
+    !controlledClassifierResolved &&
     routedDecision.decisionType === "fallback_reply" &&
     shouldAllowAiFallbackReply(event.message.text ?? "")
   ) {
+    generatedReplyIsMedical = isMedicalAestheticFallbackCandidate(event.message.text ?? "");
     const aiReply = await generateAiReply(event.message.text ?? "", {
       bookingBranch: routedDecision.nextContext.bookingDraft.branch,
       bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
@@ -435,9 +439,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,
       locationPreference: routedDecision.nextContext.locationPreference,
       preferredBranch: routedDecision.nextContext.preferredBranch,
+      controlledMedicalFallback: generatedReplyIsMedical,
     });
     if (aiReply) {
-      replyText = aiReply.text;
+      replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical });
       aiModel = aiReply.model;
       aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
       aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
@@ -450,8 +455,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
   };
   replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
-  const replyMessages = usedAiReplyGenerator || usedAiHumanizer || !routedDecision.replyMessages
-    ? undefined
+  const replyMessages = usedAiReplyGenerator
+    ? formatReplyMessages(buildLimitedAiReplyMessages(replyText, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical }))
+    : usedAiHumanizer || !routedDecision.replyMessages
+      ? undefined
     : formatReplyMessages(routedDecision.replyMessages.map((message) => {
       if (message.type !== "text") {
         return message;
@@ -486,14 +493,15 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       updatedAt: currentIso,
     },
     decisionType: usedAiReplyGenerator ? "ai_auto_reply" : routedDecision.decisionType,
-      matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
+    matchedKey: usedAiReplyGenerator ? "ai_controlled_fallback" : routedDecision.matchedKey,
     matchedType: usedAiReplyGenerator ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     replyMessages,
     replyText,
-    // Keep the AI disclosure consistent on every customer-facing response.
-    suppressAiFooter: false,
-    shouldIntroduce: !existingContext.introSent && !introducedInReply,
+    // Generated fallback messages already include the disclosure in the final
+    // <=100-character bubble, so do not append a third footer message.
+    suppressAiFooter: usedAiReplyGenerator,
+    shouldIntroduce: usedAiReplyGenerator ? false : !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
   };

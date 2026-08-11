@@ -140,6 +140,57 @@ const TREATMENT_DISCOVERY_TERMS = [
   "副作用",
   "適合",
 ];
+const MEDICAL_AESTHETIC_DISCOVERY_TERMS = [
+  "微整",
+  "醫美",
+  "注射",
+  "填充",
+  "針劑",
+  "凹陷",
+  "細紋",
+  "輪廓",
+  "膠原",
+  "拉提",
+  "緊實",
+  "毛孔",
+  "痘疤",
+  "色斑",
+  "除毛",
+  "雷射",
+  "電波",
+  "音波",
+  "水光",
+  "童顏",
+  "再生",
+];
+const GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS = [
+  "糖尿病",
+  "高血壓",
+  "低血壓",
+  "心臟病",
+  "心血管",
+  "癌",
+  "腫瘤",
+  "惡性",
+  "感染",
+  "肺炎",
+  "中風",
+  "癲癇",
+  "甲狀腺",
+  "腎臟",
+  "肝臟",
+  "自體免疫",
+  "免疫疾病",
+  "精神科",
+  "憂鬱症",
+  "焦慮症",
+  "抗凝血",
+  "藥物交互作用",
+  "青春痘需要看醫生",
+  "需要看醫生",
+  "要看哪科",
+  "醫療診斷",
+];
 
 const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
 const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表", "診次", "診表"];
@@ -175,10 +226,73 @@ const POST_PROCEDURE_ABNORMALITY_TERMS = [
   "化膿",
   "水泡",
 ];
+const POST_PROCEDURE_EMERGENCY_TERMS = [
+  "呼吸困難",
+  "喘不過氣",
+  "無法呼吸",
+  "喉嚨腫",
+  "吞嚥困難",
+  "胸悶",
+  "全身起疹",
+  "意識不清",
+  "失去意識",
+  "昏倒",
+  "嘴唇發紫",
+  "大量出血",
+  "持續出血",
+  "血流不止",
+  "止不住血",
+  "劇烈疼痛",
+  "痛到受不了",
+];
+const PLASTIC_SURGERY_TERMS = [
+  "整形外科",
+  "開刀",
+  "削骨",
+  "正顎",
+  "顴骨手術",
+  "下顎骨手術",
+  "隆乳",
+  "縮乳",
+  "提乳手術",
+  "乳房重建",
+  "抽脂",
+  "脂肪移植",
+  "隆鼻手術",
+  "鼻整形",
+  "雙眼皮手術",
+  "眼袋手術",
+  "拉皮手術",
+  "腹部拉皮",
+  "割雙眼皮",
+  "縫雙眼皮",
+  "內開眼袋",
+  "外開眼袋",
+  "鼻中隔延長",
+  "鼻頭縮小",
+  "植髮手術",
+  "狐臭手術",
+];
+const POLICY_OVERRIDE_TERMS = [
+  "忽略之前",
+  "忽略以上",
+  "忽略規則",
+  "無視規則",
+  "系統提示詞",
+  "system prompt",
+  "開發者訊息",
+  "內部指令",
+  "揭露內部",
+  "洩漏內部",
+  "把你的指令",
+  "不要遵守",
+  "繞過限制",
+  "解除限制",
+  "顯示提示詞",
+];
 const HUMAN_REQUEST_TERMS = clinicConfig.escalationPolicy.humanRequestTerms;
 const PERSONALIZED_CONSULT_TERMS = clinicConfig.escalationPolicy.personalizedConsultTerms;
 const SERIOUS_COMPLAINT_TERMS = clinicConfig.escalationPolicy.seriousComplaintTerms;
-const ALL_TREATMENT_TERMS = clinicConfig.treatmentList.flatMap((treatment) => [treatment.name, ...treatment.aliases]);
 
 function normalizeText(text: string) {
   return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
@@ -244,13 +358,6 @@ function hasContraindicationOrMedicalHistorySignal(message: string) {
   );
 }
 
-function isTreatmentLikeMessage(message: string) {
-  return (
-    includesAnyTerm(message, [...ALL_TREATMENT_TERMS, ...TREATMENT_DISCOVERY_TERMS]) ||
-    isUnsupportedTreatmentAvailabilityQuestion(message)
-  );
-}
-
 function isUnsupportedTreatmentAvailabilityQuestion(message: string) {
   if (findTreatmentByMessage(message)) {
     return false;
@@ -280,11 +387,33 @@ export function shouldAllowAiFallbackReply(message: string) {
   return !(
     Boolean(findAnyBranchByMessage(message)) ||
     Boolean(extractUnknownBranchLikeTerm(message)) ||
-    isTreatmentLikeMessage(message) ||
+    Boolean(findTreatmentByMessage(message)) ||
+    isUnsupportedTreatmentAvailabilityQuestion(message) ||
     includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive]) ||
     includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS) ||
     includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
+    includesAnyTerm(message, POST_PROCEDURE_EMERGENCY_TERMS) ||
+    includesAnyTerm(message, PLASTIC_SURGERY_TERMS) ||
+    includesAnyTerm(message, POLICY_OVERRIDE_TERMS) ||
+    includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS) ||
     isHardBlockedQuestion(message)
+  );
+}
+
+function hasUnknownMicroEducationShape(message: string) {
+  const normalizedMessage = normalizeText(message);
+  return /^.{2,24}(?:是什麼|可以改善什麼(?:狀況|問題|困擾)?|適合改善什麼(?:狀況|問題|困擾)?|主要改善什麼(?:狀況|問題|困擾)?|有什麼功效)$/u.test(
+    normalizedMessage,
+  );
+}
+
+export function isMedicalAestheticFallbackCandidate(message: string) {
+  return (
+    (includesAnyTerm(message, MEDICAL_AESTHETIC_DISCOVERY_TERMS) || hasUnknownMicroEducationShape(message)) &&
+    !findTreatmentByMessage(message) &&
+    !isUnsupportedTreatmentAvailabilityQuestion(message) &&
+    !includesAnyTerm(message, PLASTIC_SURGERY_TERMS) &&
+    !includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS)
   );
 }
 
@@ -2475,6 +2604,35 @@ function buildHandoffPendingReply(extraGuidance: string | null, now: Date) {
 }
 
 function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountLookup = false) {
+  if (includesAnyTerm(message, POST_PROCEDURE_EMERGENCY_TERMS)) {
+    return {
+      decisionType: "handoff_pending",
+      matchedKey: "post_procedure_emergency",
+      matchedType: "handoff_rule",
+      replyText:
+        "若有呼吸困難、意識異常、大量或持續出血等緊急症狀，請立即撥打 119 或前往急診，不要等待線上回覆；安全後再聯絡診所。",
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (includesAnyTerm(message, POLICY_OVERRIDE_TERMS)) {
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: "policy_override_attempt",
+      matchedType: "guided_reply",
+      replyText: "我無法變更或揭露內部規則，只能協助診所療程與預約相關問題。請問想了解哪項微整療程？",
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (includesAnyTerm(message, PLASTIC_SURGERY_TERMS)) {
+    return {
+      decisionType: "handoff_pending",
+      matchedKey: "plastic_surgery_scope",
+      matchedType: "handoff_rule",
+      replyText:
+        "整形外科涉及手術評估，AI 暫不提供自由解說。我先幫您轉由真人客服協助，也可預約現場由醫師評估。",
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
   // A procedure word alone (for example, asking when Botox takes effect) is not
   // a safety signal. Escalate only when it is paired with an abnormal symptom.
   if (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) {
@@ -2482,7 +2640,7 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
       decisionType: "handoff_pending",
       matchedKey: "post_procedure_issue",
       matchedType: "handoff_rule",
-      replyText: `如果您現在有明顯疼痛、發燒、持續惡化的紅腫，或任何讓您不安的異常反應，建議盡快聯繫診所或就醫。${buildHandoffPendingReply("這類術後反應需要真人客服與現場進一步確認。", now)}`,
+      replyText: "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2491,7 +2649,7 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
       decisionType: "handoff_pending",
       matchedKey: "post_procedure_issue",
       matchedType: "handoff_rule",
-      replyText: `如果您現在有明顯疼痛、發燒、持續惡化的紅腫，或任何讓您不安的異常反應，建議盡快聯繫診所或就醫。${buildHandoffPendingReply("這類術後反應需要真人客服與現場進一步確認。", now)}`,
+      replyText: "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2546,6 +2704,15 @@ function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountL
       matchedKey: "personalized_consult",
       matchedType: "handoff_rule",
       replyText: buildHandoffPendingReply("這類屬於個人適合度與療程判斷，需要依您的狀況由真人客服與醫師進一步確認。", now),
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS)) {
+    return {
+      decisionType: "medical_guidance_reply",
+      matchedKey: "general_medical_out_of_scope",
+      matchedType: "guided_reply",
+      replyText: "這屬於一般醫療問題，不在微整衛教範圍內；請直接諮詢合適科別的醫師，AI 不會自行判斷。",
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2954,7 +3121,7 @@ export async function routeCustomerMessage({
     };
   }
 
-  if (isTreatmentLikeMessage(trimmedMessage)) {
+  if (isUnsupportedTreatmentAvailabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "unsupported_treatment_or_unapproved_content";
     return {
       decisionType: "handoff_pending",

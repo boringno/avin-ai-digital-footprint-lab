@@ -303,10 +303,10 @@ const TEST_CASES: TestCase[] = [
     replyExcludes: ["真人客服", "未核准"],
   },
   {
-    expectedDecisionType: "handoff_pending",
-    expectedMatchedKey: "unsupported_treatment_or_unapproved_content",
+    expectedDecisionType: "fallback_reply",
+    expectedMatchedKey: "generic_fallback",
     message: "海芙是什麼？",
-    replyIncludes: ["院內核准內容", "真人客服"],
+    replyIncludes: ["療程第一層介紹"],
   },
   {
     expectedDecisionType: "handoff_pending",
