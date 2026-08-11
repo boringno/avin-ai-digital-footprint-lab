@@ -27,11 +27,13 @@ async function main() {
   const face = await route("①", intro.nextContext);
   assert(face.matchedKey === "treatment_consult:onda_pro", "X2: choice one must select the ONDA face scenario");
   assert(face.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "X2: face scenario must use Xiaoying copy");
-  assert(face.replyText.includes("12,999元") && face.replyText.includes("全館適用"), "X2: face scenario must quote the approved combo");
-  assert(face.nextContext.lastIntent === "booking_intake", "X2: an understood face need must start booking intake");
-  assert(face.nextContext.bookingDraft.treatment === "ONDA PRO、肉毒", "X2: face combo must preserve both booking treatments");
+  assert(!face.replyText.includes("12,999元"), "X2: selecting a concern must not quote before a price question");
+  assert(face.nextContext.lastIntent === "treatment_consult:onda_pro", "X2: an understood face need must remain consultation");
+  assert(!face.nextContext.bookingDraft.treatment, "X2: consultation must not populate a booking draft");
 
-  const weekday = await route("平日", face.nextContext);
+  const bookingStart = await route("想預約諮詢 ONDA", face.nextContext);
+  assert(bookingStart.matchedKey === "booking_intake", "X3: only an explicit booking request may start intake");
+  const weekday = await route("平日", bookingStart.nextContext);
   assert(weekday.matchedKey === "booking_intake", "X3: weekday preference must continue booking intake");
   assert(weekday.nextContext.bookingDraft.timeSlots.includes("平日"), "X3: weekday preference must be collected");
   const contact = await route("我叫王小明，電話0912345678", weekday.nextContext);
@@ -45,19 +47,21 @@ async function main() {
   assert(body.matchedKey === "treatment_consult:onda_pro", "X4: choice two must select the ONDA body scenario");
   assert(body.replyText.includes("破壞頑固脂肪／減少脂肪厚度"), "X4: body scenario must preserve Xiaoying copy");
   assert(body.replyText.includes("安全無副作用"), "X4: body scenario must preserve clinic-approved wording");
-  assert(body.replyText.includes("體驗價 16,888") && body.replyText.includes("全館適用"), "X4: body scenario must quote the ONDA experience price");
-  assert(body.nextContext.bookingDraft.treatment === "ONDA PRO", "X4: body scenario must book ONDA only");
+  assert(!body.replyText.includes("體驗價 16,888"), "X4: body concern must not quote before a price question");
+  assert(!body.nextContext.bookingDraft.treatment, "X4: body consultation must not start booking");
 
   const naturalFace = await route("我有肉肉的雙下巴");
-  assert(naturalFace.replyText.includes("12,999元"), "X5: a natural face concern must use the combo price");
+  assert(naturalFace.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "X5: a natural face concern must use the approved scenario");
+  assert(!naturalFace.replyText.includes("12,999元"), "X5: a natural face concern must not quote without a price question");
   const naturalBody = await route("蝴蝶袖想改善");
-  assert(naturalBody.replyText.includes("體驗價 16,888"), "X5: a natural body concern must use the standalone price");
+  assert(naturalBody.replyText.includes("身體局部脂肪堆積"), "X5: a natural body concern must use the approved scenario");
+  assert(!naturalBody.replyText.includes("體驗價 16,888"), "X5: a natural body concern must not quote without a price question");
 
   const botox = await route("肉毒功效是什麼", face.nextContext);
   assert(botox.matchedKey === "treatment_consult:onda_pro:related:botox_small_face", `X6: ONDA combo context must use the related Botox reply, got ${botox.matchedKey}`);
   assert(botox.replyText.includes("韓國原廠 Neuronox 肉毒桿菌"), "X6: related Botox reply must use Xiaoying copy");
   assert(botox.replyText.includes("約2～4週效果逐漸明顯"), "X6: related Botox reply must preserve approved timing copy");
-  assert(botox.replyText.includes("12,999元"), "X6: related Botox reply must retain the combo quote");
+  assert(!botox.replyText.includes("12,999元"), "X6: related treatment education must not quote without a price question");
 
   const directPrice = await route("ONDA 多少錢");
   assert(directPrice.decisionType === "pricing_auto_reply", "X7: a direct ONDA price question must use controlled pricing");
@@ -102,12 +106,12 @@ async function main() {
   for (const bodyTerm of bodyTerms) {
     const restartedBody = await route(bodyTerm, restartedIntro.nextContext);
     assert(
-      restartedBody.replyText.includes("16,888"),
-      `X11: body term ${bodyTerm} after restart must use the ONDA body price`,
+      restartedBody.replyText.includes("身體局部脂肪堆積"),
+      `X11: body term ${bodyTerm} after restart must use the ONDA body scenario`,
     );
     assert(
-      !restartedBody.replyText.includes("12,999"),
-      `X11: an old face concern must not contaminate body term ${bodyTerm}`,
+      !restartedBody.replyText.includes("12,999") && !restartedBody.replyText.includes("16,888"),
+      `X11: body term ${bodyTerm} must not quote without a price question`,
     );
     assert(
       restartedBody.nextContext.treatmentConsultation?.concernKeys.join(",") === "local_contour",

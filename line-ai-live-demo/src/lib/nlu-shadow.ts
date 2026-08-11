@@ -25,6 +25,7 @@ export async function runNluShadow(message: string, decision: DecisionSnapshot) 
         instructions: buildNluInstructions(),
         max_output_tokens: 320,
         model: config.openAiModel,
+        reasoning: { effort: "none" },
         text: buildNluResponseFormat(),
       }),
       signal: controller.signal,

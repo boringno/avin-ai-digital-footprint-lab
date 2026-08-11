@@ -17,6 +17,7 @@ const originalEnvironment = {
   enabled: process.env.OPENAI_INTENT_CLASSIFIER_ENABLED,
   timeout: process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS,
 };
+let capturedClassifierBody: { reasoning?: { effort?: string } } | null = null;
 
 process.env.AI_PROVIDER = "openai";
 process.env.OPENAI_API_KEY = "test-key";
@@ -33,7 +34,9 @@ const timeoutStartedAt = Date.now();
 const timedOutClassification = await classifyControlledIntent("想看高雄本月門診時間");
 const timeoutElapsedMs = Date.now() - timeoutStartedAt;
 
-globalThis.fetch = async () => new Response(JSON.stringify({
+globalThis.fetch = async (_input, init) => {
+  capturedClassifierBody = JSON.parse(String(init?.body ?? "{}")) as { reasoning?: { effort?: string } };
+  return new Response(JSON.stringify({
   output: [
     { type: "reasoning", summary: [] },
     {
@@ -45,7 +48,8 @@ globalThis.fetch = async () => new Response(JSON.stringify({
     },
   ],
   usage: { input_tokens: 10, output_tokens: 8 },
-}), { status: 200 });
+  }), { status: 200 });
+};
 const restPayloadClassification = await classifyControlledIntent("想看高雄本月門診時間");
 
 globalThis.fetch = originalFetch;
@@ -139,6 +143,10 @@ const cases = [
   {
     name: "raw Responses REST output array is parsed",
     passed: restPayloadClassification?.intent === "doctor_schedule" && restPayloadClassification.branch === "高雄館",
+  },
+  {
+    name: "classifier preserves none reasoning for GPT-5.6 latency",
+    passed: (capturedClassifierBody as { reasoning?: { effort?: string } } | null)?.reasoning?.effort === "none",
   },
   {
     name: "generic fallback message skips classifier",

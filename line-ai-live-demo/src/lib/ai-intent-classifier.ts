@@ -190,6 +190,7 @@ export async function classifyControlledIntent(message: string): Promise<Control
         instructions: buildClassifierInstructions(),
         max_output_tokens: config.openAiIntentClassifierMaxTokens,
         model: config.openAiModel,
+        reasoning: { effort: "none" },
       }),
       signal: abortController.signal,
     });

@@ -129,13 +129,13 @@ async function main() {
   console.log("PASS: PS10 browse and clarify promotion wording remain intentionally distinct");
 
   const staleOnda = await getActiveOndaConsultation("pricing-subject-ps11");
-  const expiredConsultationActiveBooking: ConversationContext = {
+  const expiredConsultation: ConversationContext = {
     ...staleOnda.context,
     lastSeenAt: new Date(NOW.getTime() - 21 * 60 * 1000).toISOString(),
   };
-  const ps11a = await route("多少錢", expiredConsultationActiveBooking);
-  assertOndaFaceComboPrice(ps11a, "PS11a");
-  console.log("PASS: PS11a active booking preserves its quoted combo after consultation context expires");
+  const ps11a = await route("多少錢", expiredConsultation);
+  assert(ps11a.matchedKey === "pricing_followup", "PS11a: an expired consultation must ask which treatment the customer means");
+  console.log("PASS: PS11a consultation context expires without an implicit booking fallback");
 
   const staleContext: ConversationContext = {
     ...staleOnda.context,
@@ -151,10 +151,12 @@ async function main() {
   assert(ps11.matchedKey === "pricing_followup", "PS11: expired consultation context must not answer a generic price question");
   console.log("PASS: PS11 stale treatment and booking context expire before generic price handling");
 
-  const ps12 = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋"], "pricing-subject-ps12");
-  assert(ps12.decisions[2].replyText.includes("盛夏光采：999"), "PS12: Botox wrinkle flow must keep the campaign label and price");
+  const ps12 = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋", "價錢"], "pricing-subject-ps12");
+  assert(!ps12.decisions[2].replyText.includes("999"), "PS12: Botox wrinkle education must not quote without a price question");
+  assert(ps12.decisions[4].replyText.includes("999"), "PS12: an explicit Botox price question must return the approved campaign");
   assertNoCustomerVisibleCampaignDate(ps12.decisions[2], "PS12 initial quote");
   assertNoCustomerVisibleCampaignDate(ps12.decisions[3], "PS12 repeated detail");
+  assertNoCustomerVisibleCampaignDate(ps12.decisions[4], "PS12 explicit price");
 
   const legacyCampaignContext = ps12.context;
   legacyCampaignContext.bookingDraft.campaignName = "2026/07/09-08/31 盛夏光采";

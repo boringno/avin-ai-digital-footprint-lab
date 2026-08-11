@@ -28,7 +28,8 @@ async function main() {
   assert(proactiveRecommendation.matchedKey === "treatment_consult:onda_pro", "T1: double-chin concern must proactively recommend ONDA");
   assert(proactiveRecommendation.replyText.includes("ONDA Pro"), "T1: proactive recommendation must name ONDA Pro");
   assert(proactiveRecommendation.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "T1: double-chin concern must use its approved scenario reply");
-  assert(proactiveRecommendation.replyText.includes("12,999元") && proactiveRecommendation.replyText.includes("😊"), "T1: ONDA face reply must quote the approved combo and keep Xiaoying tone");
+  assert(!proactiveRecommendation.replyText.includes("12,999元") && proactiveRecommendation.replyText.includes("😊"), "T1: ONDA face reply must keep Xiaoying tone without unsolicited pricing");
+  assert(proactiveRecommendation.nextContext.lastIntent !== "booking_intake", "T1: stating a concern must not start booking");
   assert(proactiveRecommendation.nextContext.lastReferencedTreatment === "ONDA PRO", "T1: proactive recommendation must preserve ONDA context");
 
   const contextualPrice = await route("多少錢", proactiveRecommendation.nextContext);
@@ -59,7 +60,7 @@ async function main() {
 
   const consultation = await route("想諮詢 ONDA", comfort.nextContext);
   assert(consultation.matchedKey === "treatment_intro:onda_pro", "T6: a consultation question must stay in treatment discovery");
-  assert(consultation.nextContext.bookingDraft.treatment === "ONDA PRO", "T6: consultation discovery must preserve the requested ONDA treatment");
+  assert(!consultation.nextContext.bookingDraft.treatment, "T6: consultation discovery must not populate a booking draft");
   const consultationBooking = await route("想預約諮詢 ONDA", consultation.nextContext);
   assert(consultationBooking.matchedKey === "booking_intake", "T6: an explicit consultation booking request must enter booking intake");
 
@@ -80,7 +81,7 @@ async function main() {
   const bodyConcern = await route("我想改善腹部脂肪");
   assert(bodyConcern.matchedKey === "treatment_consult:onda_pro", "T7: local body-fat concern must proactively recommend ONDA");
   assert(bodyConcern.replyText.includes("ONDA PRO"), "T7: local body-fat recommendation must name ONDA PRO");
-  assert(bodyConcern.replyText.includes("身體局部脂肪堆積") && bodyConcern.replyText.includes("體驗價 16,888"), "T7: local body-fat concern must use Xiaoying copy and quote the standalone price");
+  assert(bodyConcern.replyText.includes("身體局部脂肪堆積") && !bodyConcern.replyText.includes("體驗價 16,888"), "T7: local body-fat concern must use Xiaoying copy without unsolicited pricing");
 
   const intro = await route("想了解 ONDA PRO");
   assert(intro.decisionType === "treatment_intro_reply", "T8: ONDA introduction must stay a treatment reply");
@@ -91,7 +92,7 @@ async function main() {
   const concern = await route("我想改善雙下巴，想了解 ONDA", intro.nextContext);
   assert(concern.decisionType === "treatment_intro_reply", "T9: ONDA concern response must remain an approved treatment reply");
   assert(concern.matchedKey === "treatment_consult:onda_pro", "T9: ONDA concern must use the reusable consultation path");
-  assert(concern.replyText.includes("雙下巴") && concern.replyText.includes("12,999元"), "T9: ONDA concern response must use the approved face combo");
+  assert(concern.replyText.includes("雙下巴") && !concern.replyText.includes("12,999元"), "T9: ONDA concern response must use the approved face content without unsolicited pricing");
 
   const naturalLanguageConcern = await route("我有肉肉的雙下巴");
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");
@@ -100,7 +101,7 @@ async function main() {
   const doubleChinDetail = await route("我在意厚度，這個能消除雙下巴嗎？", concern.nextContext);
   assert(doubleChinDetail.matchedKey === "treatment_consult:onda_pro", "T9aa: a detail question must stay in the ONDA consultation path");
   assert(doubleChinDetail.replyText.includes("肉感／厚度"), "T9aa: a double-chin thickness question must answer the stated concern");
-  assert(doubleChinDetail.replyText.includes("12,999元") && doubleChinDetail.replyText.includes("免費"), "T9aa: a detail question must retain the face combo and booking next step");
+  assert(!doubleChinDetail.replyText.includes("12,999元") && !doubleChinDetail.replyText.includes("平日還是假日"), "T9aa: a detail question must not quote or start booking");
   assert(!doubleChinDetail.replyText.includes("雙下巴／嘴邊肉，還是身體局部脂肪"), "T9aa: a detail question must not repeat the first-turn choice");
 
   const doubleChinIntroduction = await route("幫我介紹雙下巴的部分", concern.nextContext);
@@ -109,7 +110,7 @@ async function main() {
 
   const armConcern = await route("蝴蝶袖想改善");
   assert(armConcern.matchedKey === "treatment_consult:onda_pro", "T9b: natural arm-fat wording must use the ONDA scenario reply");
-  assert(armConcern.replyText.includes("身體局部脂肪堆積") && armConcern.replyText.includes("16,888"), "T9b: natural arm-fat wording must receive Xiaoying body copy and price");
+  assert(armConcern.replyText.includes("身體局部脂肪堆積") && !armConcern.replyText.includes("16,888"), "T9b: natural arm-fat wording must receive Xiaoying body copy without unsolicited pricing");
 
   const followup = await route("我覺得脂肪感比較明顯", concern.nextContext);
   assert(followup.matchedKey === "treatment_consult:onda_pro", "T10: ONDA follow-up must preserve the consultation path");

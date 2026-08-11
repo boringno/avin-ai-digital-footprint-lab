@@ -139,6 +139,7 @@ async function assertOfficialSearchIsConstrained() {
     assert(reply?.sourceUrl === "https://lumenis.com/aesthetics/products/m22/", "M12: official citation must be preserved");
     assert(requestBodyJson.length === 2, "M12: official lookup must be converted into a separate customer-facing draft");
     const requestBody = JSON.parse(requestBodyJson[0] ?? "{}") as Record<string, unknown>;
+    assert((requestBody.reasoning as { effort?: string } | undefined)?.effort === "none", "M12: GPT-5.6 official search must preserve the low-latency none reasoning baseline");
     const tools = requestBody?.tools as Array<Record<string, unknown>> | undefined;
     const filters = tools?.[0]?.filters as { allowed_domains?: string[] } | undefined;
     assert(tools?.[0]?.type === "web_search", "M12: missing FAQ must use the Responses web search tool");
@@ -147,8 +148,9 @@ async function assertOfficialSearchIsConstrained() {
     assert(filters?.allowed_domains?.includes("fda.gov"), "M12: official search must include the approved regulator domain");
     assert(!filters?.allowed_domains?.includes("wikipedia.org"), "M12: open-web domains must not enter the allowlist");
 
-    const customerDraftRequest = JSON.parse(requestBodyJson[1] ?? "{}") as { input?: string; tools?: unknown };
+    const customerDraftRequest = JSON.parse(requestBodyJson[1] ?? "{}") as { input?: string; reasoning?: { effort?: string }; tools?: unknown };
     assert(customerDraftRequest.tools === undefined, "M12: customer-facing draft must not call web search directly");
+    assert(customerDraftRequest.reasoning?.effort === "none", "M12: GPT-5.6 customer reply must use none reasoning for LINE latency");
     assert(customerDraftRequest.input?.includes("內部知識"), "M12: verified official notes must become internal knowledge");
 
     const messages = buildAiReplyMessages(reply.text, FOOTER, { medical: true });
@@ -374,13 +376,13 @@ async function main() {
   assert(consultationQuestion.decisionType !== "booking_intake_reply", "M6: a consultation question must not start booking before the customer asks to book");
 
   const requiredPromptRules = [
-    "非手術微整形",
-    "不得輸出",
-    "整形外科",
-    "醫師現場評估",
+    "LINE AI 客服",
+    "核准清單內的療程可以自然確認診所有提供",
+    "未列出的療程不能說診所有提供",
+    "價格與活動由系統規則另行回答",
+    "不重貼通用介紹",
+    "只有客人明確表示要預約或安排時間",
     "不設固定字數限制",
-    "不得使用本院",
-    "一般疾病",
   ];
   for (const [provider, prompt] of [["OpenAI", buildSystemPrompt()], ["Claude", buildClaudeSystemPrompt()]] as const) {
     for (const rule of requiredPromptRules) {
@@ -392,18 +394,15 @@ async function main() {
     for (const skuDetail of ["900發", "1200發", "6堂", "10堂", "100u"]) {
       assert(!prompt.includes(skuDetail), `M7: ${provider} prompt must not expose inventory SKU detail: ${skuDetail}`);
     }
-    assert(prompt.includes("不代表任何劑量、發數、支數、堂數、組合或價格已核准公開"), `M7: ${provider} prompt missing SKU/pricing boundary`);
+    assert(prompt.includes("療程清單不代表劑量、發數、支數、堂數、組合或價格已核准公開"), `M7: ${provider} prompt missing SKU/pricing boundary`);
   }
 
   const controlledPromptRules = [
     "詞庫外",
-    "非手術微整形",
-    "只回答一般改善方向",
+    "非手術醫美",
+    "一般改善方向",
     "核准療程清單",
-    "只能從清單內推薦相近方向",
-    "免費諮詢",
-    "醫師現場評估",
-    "姓名、電話與方便時段",
+    "依客人的困擾推薦核准清單內的相近方向",
   ];
   for (const [provider, buildPrompt] of [
     ["OpenAI", buildOpenAiUserPrompt],
@@ -414,11 +413,11 @@ async function main() {
     for (const rule of controlledPromptRules) {
       assert(controlledPrompt.includes(rule), `M7: ${provider} controlled medical prompt missing rule: ${rule}`);
     }
-    assert(!ordinaryPrompt.includes("詞庫外的非手術微整形衛教候選"), `M7: ${provider} must not apply the controlled medical instruction to ordinary replies`);
+    assert(!ordinaryPrompt.includes("詞庫外的非手術醫美問題"), `M7: ${provider} must not apply the controlled medical instruction to ordinary replies`);
   }
 
   const safe = constrainMedicalAiReply("洢蓮絲通常用於支撐輪廓與改善凹陷感。", FOOTER);
-  assert(safe.includes("醫師現場評估"), "M8: generated education must end with medical assessment guidance");
+  assert(safe === "洢蓮絲通常用於支撐輪廓與改善凹陷感。", "M8: ordinary education must not gain repetitive medical-assessment wording");
 
   const unsafeOutputs: Array<[string, string, RegExp]> = [
     ["M9-price-ascii", "這個療程優惠價16888元。", /16888|優惠價/u],
@@ -440,7 +439,6 @@ async function main() {
     ["M9-unapproved-device", "我們使用德國原廠海芙儀器。", /我們使用|德國原廠/u],
     ["M9-branch-fact", "高雄館有提供洢蓮絲。", /高雄館有提供/u],
     ["M9-doctor-fact", "王醫師擅長洢蓮絲療程。", /王醫師擅長/u],
-    ["M9-general-disease-output", "糖尿病是一種慢性疾病，常見症狀包括口渴。", /糖尿病|慢性疾病/u],
   ];
   for (const [caseId, input, forbidden] of unsafeOutputs) {
     assertOutputBlocked(caseId, input, forbidden);
@@ -450,6 +448,15 @@ async function main() {
   assert(qualifiedSafety.includes("可能依個人狀況不同"), "M9: qualified safety language must remain answerable");
   const numericEducation = constrainMedicalAiReply("療程反應可能持續 2 至 4 週，實際仍需由醫師現場評估。", FOOTER);
   assert(numericEducation.includes("2 至 4 週"), "M9: non-price medical numbers must remain answerable");
+  const groundedClinicCopy = constrainMedicalAiReply(
+    "本院有提供 ONDA PRO，搭配原廠設備，療程全程無痛。",
+    FOOTER,
+    { groundedByApprovedKnowledge: true, medical: true },
+  );
+  assert(groundedClinicCopy.includes("本院有提供 ONDA PRO"), "M9: approved clinic facts must not be replaced by a generic fallback");
+  assert(groundedClinicCopy.includes("全程無痛"), "M9: explicitly approved clinic copy must remain usable as the clinic requested");
+  const groundedPrice = constrainMedicalAiReply("診所核准價格為 16888 元。", FOOTER, { groundedByApprovedKnowledge: true, medical: true });
+  assert(!groundedPrice.includes("16888"), "M9: prices must stay on the deterministic pricing route even when knowledge is grounded");
 
   const general = constrainMedicalAiReply("可以協助您確認停車方向。", FOOTER, { medical: false });
   assert(!general.includes("醫師現場評估"), "M9: non-medical fallback must not add medical guidance");
