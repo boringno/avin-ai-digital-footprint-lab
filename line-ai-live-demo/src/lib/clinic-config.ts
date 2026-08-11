@@ -69,6 +69,7 @@ export type TreatmentConfig = {
   availableBrands?: string[];
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
+  educationMode?: "general_education" | "human_only";
   consultationGuide?: TreatmentConversationPack;
   evaluationNote: string;
   intro: string;
@@ -309,7 +310,7 @@ export const clinicConfig: ClinicConfig = {
       areaKeys: ["skin", "face"],
       key: "pores_texture",
       keywords: ["毛孔", "膚質", "粗糙", "粉刺", "出油", "皮膚粗糙"],
-      recommendedTreatmentKeys: ["pico", "hydrafacial", "hydrafacial_elite", "skin_booster", "fisbo"],
+      recommendedTreatmentKeys: ["pico", "hydrafacial", "skin_booster", "fisbo"],
       summary: "這類通常會先往膚質整理、清潔保養與整體細緻度方向評估。",
     },
     {
@@ -323,7 +324,7 @@ export const clinicConfig: ClinicConfig = {
       areaKeys: ["skin", "face"],
       key: "dullness_brightening",
       keywords: ["暗沉", "提亮", "膚色不均", "氣色差", "美白"],
-      recommendedTreatmentKeys: ["pico", "skin_booster", "hydrafacial", "hydrafacial_elite"],
+      recommendedTreatmentKeys: ["pico", "skin_booster", "hydrafacial"],
       summary: "這類通常會先往亮白、膚色均勻與整體膚況整理方向評估。",
     },
     {
@@ -507,12 +508,12 @@ export const clinicConfig: ClinicConfig = {
       name: "十蓓電波",
     },
     {
-      aliases: ["蝴蝶電波"],
+      aliases: ["鳳凰電波", "鳳凰"],
       category: "energy",
-      evaluationNote: "實際是否適合、施作部位與安排方式仍需依現場評估為主。",
-      intro: "蝴蝶電波主要可先理解為私密處緊實與保養評估方向之一，通常會依個人需求與現場狀況做進一步規劃。",
-      key: "butterfly_thermage",
-      name: "蝴蝶電波",
+      evaluationNote: "實際是否適合仍需依部位狀況與醫師現場評估為主。",
+      intro: "鳳凰電波是院內提供的電波療程之一；若您想了解，可以先告訴我在意的部位或困擾，我幫您整理諮詢方向，實際仍需由醫師現場評估。",
+      key: "phoenix_thermage",
+      name: "鳳凰電波",
     },
     {
       aliases: ["美國音波", "美國音波2.0", "音波拉提"],
@@ -630,11 +631,16 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["玻尿酸", "喬雅登", "緹奧希", "瑞斯朗", "restylane", "雙美膠原蛋白", "再生針"],
       availableBrands: [
+        "Cutegel 珂芮緹玻尿酸",
         "喬雅登",
         "緹奧希 1-3 號",
         "緹奧希 4 號",
+        "TEOXANE RHA",
         "瑞斯朗 Restylane",
         "瑞斯朗 Vital Light",
+        "瑞斯朗 Volyme",
+        "瑞斯朗 Defyne",
+        "瑞斯朗 Kysse",
         "貝恩希",
         "金色仙女",
         "再生針",
@@ -674,6 +680,231 @@ export const clinicConfig: ClinicConfig = {
       name: "逆時針",
     },
     {
+      aliases: ["plt", "plt生長因子", "生長因子凍晶", "自體生長因子"],
+      category: "skin_care",
+      educationMode: "general_education",
+      evaluationNote: "實際採用方式、療程安排與是否適合仍需由醫師現場評估。",
+      intro: "PLT 生長因子療程可先從膚況修護、保養需求與想改善的部位進行了解；實際採用方式與安排仍需由醫師現場評估。",
+      key: "plt_growth_factor",
+      name: "PLT 生長因子",
+    },
+    {
+      aliases: ["消脂瘦瘦針", "消脂針", "溶脂針", "ronkyla", "消脂瘦瘦"],
+      category: "injectable",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作部位與劑量仍需由醫師現場評估。",
+      intro: "消脂針屬於局部輪廓管理的評估方向之一，會依脂肪分布、部位與個人條件討論；實際是否適合與施作方式仍需由醫師現場評估。",
+      key: "fat_dissolving_injection",
+      name: "消脂針",
+    },
+    {
+      aliases: ["prp", "prp自體血小板", "自體血小板"],
+      category: "skin_care",
+      educationMode: "general_education",
+      evaluationNote: "實際採用方式、療程安排與是否適合仍需由醫師現場評估。",
+      intro: "PRP 可先從自體血小板相關的修護與膚況管理方向了解，實際採用方式、部位與療程安排仍需由醫師現場評估。",
+      key: "prp",
+      name: "PRP",
+    },
+    {
+      aliases: ["vivabella", "薇貝拉", "薇貝拉童顏針"],
+      category: "injectable",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作部位與劑量仍需由醫師現場評估。",
+      intro: "薇貝拉可先從輪廓、凹陷與膠原支撐等評估方向了解；實際施作部位與安排仍需由醫師現場評估。",
+      key: "vivabella",
+      name: "薇貝拉",
+    },
+    {
+      aliases: ["4d舒顏萃", "舒顏萃", "sculptra"],
+      category: "injectable",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作部位與劑量仍需由醫師現場評估。",
+      intro: "4D 舒顏萃可先從輪廓、凹陷與膠原支撐等評估方向了解；實際是否適合與施作安排仍需由醫師現場評估。",
+      key: "sculptra",
+      name: "4D 舒顏萃",
+    },
+    {
+      aliases: ["晶亮瓷", "radiesse"],
+      category: "injectable",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作部位與劑量仍需由醫師現場評估。",
+      intro: "晶亮瓷可先從輪廓修飾、支撐與凹陷等評估方向了解；實際是否適合與施作安排仍需由醫師現場評估。",
+      key: "radiesse",
+      name: "晶亮瓷",
+    },
+    {
+      aliases: ["mounjaro", "猛健樂"],
+      category: "injectable",
+      educationMode: "general_education",
+      evaluationNote: "這屬於需要醫師完整評估與處方管理的項目，不可自行判斷適合度或用法。",
+      intro: "猛健樂屬於需由醫師評估與處方管理的項目；如果您想了解，可以先說明目前需求，實際適應症、是否適合、用法與追蹤方式都需由醫師判斷。",
+      key: "mounjaro",
+      name: "猛健樂 Mounjaro",
+    },
+    {
+      aliases: ["ha35", "ha35活膚", "幹細胞活膚"],
+      category: "skin_care",
+      educationMode: "general_education",
+      evaluationNote: "實際成分、採用方式與療程安排仍需由醫師現場確認。",
+      intro: "HA35 活膚可先從保水、膚質與整體肌膚管理方向了解；實際成分、採用方式與療程安排仍需由醫師現場確認。",
+      key: "ha35_skin_rejuvenation",
+      name: "HA35 活膚",
+    },
+    {
+      aliases: ["dermapen4", "dermapen", "微針", "微針療程"],
+      category: "skin_care",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、搭配內容與術後照護仍需依膚況由醫師現場評估。",
+      intro: "DERMAPEN 4 微針可先從毛孔、痘疤與膚質管理方向了解；實際是否適合、搭配內容與術後照護仍需依膚況評估。",
+      key: "dermapen4",
+      name: "DERMAPEN 4 微針",
+    },
+    {
+      aliases: ["m22", "m22彩衝光", "彩衝光"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "實際模式與療程安排仍需依膚況由醫師現場評估。",
+      intro: "M22 彩衝光可先從膚色不均、泛紅、斑點與整體膚況管理方向了解；實際模式與療程安排仍需依膚況評估。",
+      key: "m22_ipl",
+      name: "M22 彩衝光",
+    },
+    {
+      aliases: ["lumecca", "lumecca三倍光", "三倍光"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "實際模式與療程安排仍需依膚況由醫師現場評估。",
+      intro: "LUMECCA 三倍光可先從斑點、泛紅、膚色不均與整體膚況管理方向了解；實際模式與療程安排仍需依膚況評估。",
+      key: "lumecca",
+      name: "LUMECCA 三倍光",
+    },
+    {
+      aliases: ["淨膚雷射", "淨膚"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合與療程安排仍需依膚況由醫師現場評估。",
+      intro: "淨膚雷射可先從暗沉、膚色不均與整體膚況整理方向了解；實際是否適合與療程安排仍需依膚況評估。",
+      key: "laser_toning",
+      name: "淨膚雷射",
+    },
+    {
+      aliases: ["光梭雷射", "光梭"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合與療程安排仍需依膚況由醫師現場評估。",
+      intro: "光梭雷射可先從膚況、毛孔與色素等需求方向了解；實際是否適合與療程安排仍需依膚況評估。",
+      key: "clear_silk_laser",
+      name: "光梭雷射",
+    },
+    {
+      aliases: ["飛梭雷射", "飛梭"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作範圍與術後照護仍需依膚況由醫師現場評估。",
+      intro: "飛梭雷射可先從毛孔、痘疤與膚質不平整等方向了解；實際是否適合、施作範圍與術後照護仍需依膚況評估。",
+      key: "fractional_laser",
+      name: "飛梭雷射",
+    },
+    {
+      aliases: ["維密g緊雷射", "g緊雷射", "維密雷射"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "私密療程需由醫師了解個人需求與健康狀況後評估。",
+      intro: "維密 G 緊雷射屬私密保養與緊實相關的評估項目；實際是否適合與療程安排需由醫師了解個人需求後判斷。",
+      key: "g_tightening_laser",
+      name: "維密 G 緊雷射",
+    },
+    {
+      aliases: ["miradry", "清新微波", "腋下微波"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合與療程安排仍需依個人狀況由醫師現場評估。",
+      intro: "miraDry 清新微波可先從腋下汗量、異味與相關困擾方向了解；實際是否適合與療程安排仍需由醫師現場評估。",
+      key: "miradry",
+      name: "miraDry 清新微波",
+    },
+    {
+      aliases: ["emfemme", "蝴蝶電波", "emfemme蝴蝶電波", "蝴蝶電波forma", "forma私密電波"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "私密療程需由醫師了解個人需求與健康狀況後評估。",
+      intro: "EMFEMME 蝴蝶電波屬私密保養與緊實相關的評估項目；實際是否適合與療程安排需由醫師了解個人需求後判斷。",
+      key: "emfemme",
+      name: "EMFEMME 蝴蝶電波",
+    },
+    {
+      aliases: ["立體電波", "立體電波拉提"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      intro: "立體電波可先從緊實、輪廓與拉提需求方向了解；實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      key: "volumetric_rf",
+      name: "立體電波",
+    },
+    {
+      aliases: ["魔塑電波", "魔塑"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      intro: "魔塑電波可先從緊實、輪廓與局部線條管理方向了解；實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      key: "morpheus_rf",
+      name: "魔塑電波",
+    },
+    {
+      aliases: ["emface"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      intro: "EMFACE 可先從臉部肌肉、緊實與輪廓管理方向了解；實際是否適合與療程安排仍需由醫師現場評估。",
+      key: "emface",
+      name: "EMFACE",
+    },
+    {
+      aliases: ["embody"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      intro: "EMBODY 可先從身體肌肉與線條管理方向了解；實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      key: "embody",
+      name: "EMBODY",
+    },
+    {
+      aliases: ["g動幸福椅", "幸福椅", "g動椅"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合與療程安排需由醫師了解個人需求與健康狀況後評估。",
+      intro: "G 動幸福椅可先從骨盆底肌相關的保養與訓練需求方向了解；實際是否適合與療程安排需由醫師評估。",
+      key: "pelvic_floor_chair",
+      name: "G 動幸福椅",
+    },
+    {
+      aliases: ["ilib", "ilib靜脈雷射", "靜脈雷射"],
+      category: "laser",
+      educationMode: "general_education",
+      evaluationNote: "這屬於需要醫師評估健康狀況與療程適應性的項目。",
+      intro: "ILIB 靜脈雷射屬需要醫師評估健康狀況與療程適應性的項目；可以先整理想了解的方向，後續由醫師進一步說明。",
+      key: "ilib",
+      name: "ILIB 靜脈雷射",
+    },
+    {
+      aliases: ["酷立塑", "coolsculpting", "冷凍減脂"],
+      category: "energy",
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、施作部位與療程安排仍需由醫師現場評估。",
+      intro: "酷立塑可先從局部脂肪與身體線條管理方向了解；實際是否適合、施作部位與療程安排仍需由醫師現場評估。",
+      key: "coolsculpting",
+      name: "酷立塑",
+    },
+    {
+      aliases: ["魔滴", "motiva", "曼陀", "mentor", "隆乳假體"],
+      category: "surgery",
+      educationMode: "human_only",
+      evaluationNote: "整形外科與植入物相關問題不由 AI 自由說明，需轉由真人客服與醫師接續。",
+      intro: "診所有提供隆乳植入物相關諮詢；這屬於整形外科項目，AI 不代替醫師說明手術內容，先幫您整理需求並由真人客服接續安排。",
+      key: "breast_implant_consultation",
+      name: "隆乳植入物諮詢",
+    },
+    {
       aliases: ["除毛", "亞歷山大", "海神"],
       category: "laser",
       evaluationNote: "實際安排仍需依部位、毛髮狀況與現場評估為主。",
@@ -696,14 +927,6 @@ export const clinicConfig: ClinicConfig = {
       intro: "水飛梭可先理解為基礎清潔與膚質保養方向之一，常見會討論粉刺、出油與整體膚況整理。",
       key: "hydrafacial",
       name: "水飛梭",
-    },
-    {
-      aliases: ["海菲秀"],
-      category: "skin_care",
-      evaluationNote: "實際安排仍需依膚況與現場評估為主。",
-      intro: "海菲秀可先理解為膚況清潔、保濕與整體膚質整理方向之一，通常會依膚況需求做評估。",
-      key: "hydrafacial_elite",
-      name: "海菲秀",
     },
     {
       aliases: ["日式光纖"],
@@ -752,7 +975,7 @@ export function findAnyBranchByMessage(message: string) {
 export function findTreatmentByMessage(message: string) {
   const normalizedMessage = normalizeClinicText(message);
   const candidates = clinicConfig.treatmentList.flatMap((treatment) =>
-    [treatment.name, ...treatment.aliases].map((alias) => ({
+    [treatment.name, ...treatment.aliases, ...(treatment.availableBrands ?? [])].map((alias) => ({
       alias,
       aliasLength: normalizeClinicText(alias).length,
       treatment,
@@ -767,6 +990,17 @@ export function findTreatmentByMessage(message: string) {
       }
       return right.treatment.name.length - left.treatment.name.length;
     })[0]?.treatment;
+}
+
+export function getClinicOfferingNames() {
+  return Array.from(
+    new Set(
+      clinicConfig.treatmentList.flatMap((treatment) => [
+        treatment.name,
+        ...(treatment.availableBrands ?? []),
+      ]),
+    ),
+  );
 }
 
 export function findTreatmentByKey(key: string) {

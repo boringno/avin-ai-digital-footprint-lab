@@ -6,6 +6,6 @@
 "肉毒除皺","Dysport 英國皇家肉毒小臉 | 皇家肉毒","not_established","not_established","not_established","這類屬肉毒桿菌素注射療程，相關安全性資料通常不足，因此在懷孕、備孕或哺乳階段一般都不建議直接安排。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
 "喬雅登 Juvéderm","長效玻尿酸 | 玻尿酸","not_established","doctor_review","doctor_review","這類屬玻尿酸填充療程，孕期通常不建議直接安排；備孕或哺乳階段也建議先由醫師評估後再決定。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
 "麗珠蘭","4D童顏針 | 薇貝拉魔法針 | 雙美熊貓針 | 再生膠原針 | 晶亮多層次建構","not_established","doctor_review","doctor_review","這類屬針劑或再生型注射療程，孕期通常不會直接安排；備孕或哺乳階段也建議先由醫師確認。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
-"水光療程","水光槍 | 水飛梭 | 海菲秀","doctor_review","doctor_review","doctor_review","這類屬膚況保養或導入型療程，是否適合仍需依當下膚況、使用成分與個人狀況判斷，建議先由醫師或現場專業人員評估。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
+"水光療程","水光槍 | 水飛梭","doctor_review","doctor_review","doctor_review","這類屬膚況保養或導入型療程，是否適合仍需依當下膚況、使用成分與個人狀況判斷，建議先由醫師或現場專業人員評估。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
 "ILIB 氦氖雷射","ILIB靜脈雷射 | 靜脈雷射","doctor_review","doctor_review","doctor_review","這類療程是否適合，仍需依個人狀況與醫師判斷，建議不要自行安排，先由醫師評估後再決定。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"
 "隆乳","眼袋手術 | 頂漿腺手術 | 鼻線雕 | 線雕隆鼻 | 天鵝頸 手術","avoid","doctor_review","doctor_review","這類屬手術型療程，孕期通常不會直接安排；若是備孕或哺乳階段，也建議先由醫師評估時機與身體狀況。","true","true","approved","2026-06-29","conservative_demo_seed_pending_clinic_medical_review"

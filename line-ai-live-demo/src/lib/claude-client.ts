@@ -1,4 +1,4 @@
-import { clinicConfig } from "@/lib/clinic-config";
+import { clinicConfig, getClinicOfferingNames } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 
@@ -41,8 +41,18 @@ export type ClaudeReplyContext = {
 let claudeReplyInvocationCount = 0;
 
 export function buildClaudeSystemPrompt() {
+  const approvedTreatmentNames = getClinicOfferingNames();
+  const humanOnlyTreatmentNames = clinicConfig.treatmentList
+    .filter((treatment) => treatment.educationMode === "human_only")
+    .map((treatment) => treatment.name);
+
   return [
     `你是${clinicConfig.clinicName}的 LINE 夜間 AI 客服。`,
+    `目前已核准可說明療程：${approvedTreatmentNames.join("、")}。`,
+    "以上清單只代表診所有此療程或品牌，不代表任何劑量、發數、支數、堂數、組合或價格已核准公開。",
+    "可針對清單內非手術療程使用一般醫療衛教知識說明常見評估方向，但不得把網路、市場或模型記憶中的價格、療效、規格、活動或診所細節當成院內資料。",
+    `只限真人與醫師接續說明的項目：${humanOnlyTreatmentNames.join("、") || "無"}。這些項目只能確認可協助諮詢與收集需求，不得自由解說手術內容。`,
+    "未列出的項目不得宣稱診所有提供；可以先問客人最在意的部位或困擾，再從已核准清單推薦相近方向，最後引導免費諮詢。",
     "你可針對詞庫外的非手術微整形問題，使用通用知識提供第一層衛教，介紹通常改善的困擾與一般原理。",
     "若無法明確確認問題屬於非手術微整形，或問題屬於一般疾病、皮膚疾病、癌症或其他科別，不得自行回答醫療內容。",
     "整形外科、手術、開刀、削骨、正顎、隆乳、手術隆鼻、抽脂等問題不得自由解說，改由真人客服協助。",
@@ -105,7 +115,7 @@ export function buildClaudeUserPrompt(message: string, context?: ClaudeReplyCont
     "如果適合，請在回答後自然收斂到預約下一步。",
     "可收斂的重點是：療程、館別、3 個方便時段。",
     ...(context?.controlledMedicalFallback
-      ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向，最後引導免費諮詢與醫師現場評估。"]
+      ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向。若客人問診所有沒有該項目，只能以核准療程清單判斷；未列出就說目前核准清單未列此項，並詢問部位或困擾，只能從清單內推薦相近方向。最後引導免費諮詢與醫師現場評估；客人願意預約時，再收集館別、姓名、電話與方便時段。"]
       : []),
     ...(contextLines.length > 0 ? ["", "已知對話上下文：", ...contextLines] : []),
     "",

@@ -98,6 +98,14 @@ async function main() {
   assert(isMedicalAestheticFallbackCandidate("洢蓮絲通常適合改善什麼狀況"), "M1: medical fallback mode must be selected");
   assert(isMedicalAestheticFallbackCandidate("海芙是什麼"), "M1: unknown micro-aesthetic name must remain eligible for general education");
 
+  const unavailableMicro = await route("你們有做麗珠蘭嗎");
+  assert(
+    unavailableMicro.decisionType === "fallback_reply" && unavailableMicro.matchedKey === "unsupported_treatment_discovery",
+    "M1: an unavailable non-surgical treatment must reach controlled needs discovery",
+  );
+  assert(shouldAllowAiFallbackReply("你們有做麗珠蘭嗎"), "M1: unavailable micro-aesthetic discovery must be eligible for guarded LLM guidance");
+  assert(isMedicalAestheticFallbackCandidate("你們有做麗珠蘭嗎"), "M1: unavailable micro-aesthetic discovery must use medical output guards");
+
   const price = await route("洢蓮絲多少錢");
   assert(price.decisionType === "pricing_auto_reply", "M2: price must stay in the deterministic pricing resolver");
   assert(!shouldAllowAiFallbackReply("洢蓮絲多少錢"), "M2: price must never reach the LLM generator");
@@ -128,9 +136,25 @@ async function main() {
     for (const rule of requiredPromptRules) {
       assert(prompt.includes(rule), `M7: ${provider} system prompt missing rule: ${rule}`);
     }
+    for (const availableTreatment of ["M22 彩衝光", "薇貝拉", "miraDry 清新微波", "EMFACE", "水飛梭"]) {
+      assert(prompt.includes(availableTreatment), `M7: ${provider} prompt missing approved clinic offering: ${availableTreatment}`);
+    }
+    for (const skuDetail of ["900發", "1200發", "6堂", "10堂", "100u"]) {
+      assert(!prompt.includes(skuDetail), `M7: ${provider} prompt must not expose inventory SKU detail: ${skuDetail}`);
+    }
+    assert(prompt.includes("不代表任何劑量、發數、支數、堂數、組合或價格已核准公開"), `M7: ${provider} prompt missing SKU/pricing boundary`);
   }
 
-  const controlledPromptRules = ["詞庫外", "非手術微整形", "只回答一般改善方向", "免費諮詢", "醫師現場評估"];
+  const controlledPromptRules = [
+    "詞庫外",
+    "非手術微整形",
+    "只回答一般改善方向",
+    "核准療程清單",
+    "只能從清單內推薦相近方向",
+    "免費諮詢",
+    "醫師現場評估",
+    "姓名、電話與方便時段",
+  ];
   for (const [provider, buildPrompt] of [
     ["OpenAI", buildOpenAiUserPrompt],
     ["Claude", buildClaudeUserPrompt],

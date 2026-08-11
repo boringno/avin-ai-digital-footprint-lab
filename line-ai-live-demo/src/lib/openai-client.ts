@@ -1,4 +1,4 @@
-import { clinicConfig } from "@/lib/clinic-config";
+import { clinicConfig, getClinicOfferingNames } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
@@ -25,12 +25,18 @@ export type GeneratedOpenAiReply = {
 
 export function buildSystemPrompt() {
   const activeBranchNames = clinicConfig.branches.filter((branch) => branch.isActive).map((branch) => branch.name);
-  const approvedTreatmentNames = clinicConfig.treatmentList.map((treatment) => treatment.name);
+  const approvedTreatmentNames = getClinicOfferingNames();
+  const humanOnlyTreatmentNames = clinicConfig.treatmentList
+    .filter((treatment) => treatment.educationMode === "human_only")
+    .map((treatment) => treatment.name);
 
   return [
     `目前實際營運館別：${activeBranchNames.join("、")}。`,
     `目前已核准可說明療程：${approvedTreatmentNames.join("、")}。`,
-    "以上清單只能用來確認診所有提供的療程；未列出的項目不得宣稱診所有提供，也不得自行補價格、活動、設備、醫師或館別。",
+    "以上清單只代表診所有此療程或品牌，不代表任何劑量、發數、支數、堂數、組合或價格已核准公開。",
+    "可針對清單內非手術療程使用一般醫療衛教知識說明常見評估方向，但不得把網路、市場或模型記憶中的價格、療效、規格、活動或診所細節當成院內資料。",
+    `只限真人與醫師接續說明的項目：${humanOnlyTreatmentNames.join("、") || "無"}。這些項目只能確認可協助諮詢與收集需求，不得自由解說手術內容。`,
+    "未列出的項目不得宣稱診所有提供；可以先問客人最在意的部位或困擾，再從已核准清單推薦相近方向，最後引導免費諮詢。",
     `你是${clinicConfig.clinicName}的 LINE AI 客服。`,
     "你的目標是先接住客人、先回答低風險問題、先整理預約需求。",
     "遇到詞庫外的微整形問題，可以使用通用知識做第一層衛教，介紹通常改善的困擾與一般原理，但不得判斷客人本人適合。",
@@ -78,7 +84,7 @@ export function buildOpenAiUserPrompt(message: string, context?: OpenAiReplyCont
     "如果能安全回答，就直接回答。",
     "如果不能安全回答，就先保守說明，再自然收斂到真人客服後續協助。",
     ...(context?.controlledMedicalFallback
-      ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向，最後引導免費諮詢與醫師現場評估。"]
+      ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向。若客人問診所有沒有該項目，只能以核准療程清單判斷；未列出就說目前核准清單未列此項，並詢問部位或困擾，只能從清單內推薦相近方向。最後引導免費諮詢與醫師現場評估；客人願意預約時，再收集館別、姓名、電話與方便時段。"]
       : []),
     ...(contextLines.length > 0 ? ["", "對話背景：", ...contextLines] : []),
     "",

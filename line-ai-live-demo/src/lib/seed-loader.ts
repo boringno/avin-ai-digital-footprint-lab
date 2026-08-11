@@ -87,7 +87,8 @@ function sanitizePricingCampaigns(rows: PricingCampaign[]) {
 async function loadCsv<T>(filePath: string): Promise<T[]> {
   try {
     const content = await fs.readFile(filePath, "utf8");
-    return parse(content, {
+    const normalizedContent = content.replace(/\r\n?/gu, "\n");
+    return parse(normalizedContent, {
       bom: true,
       columns: true,
       relax_column_count: true,
