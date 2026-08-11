@@ -91,7 +91,107 @@ async function assertReplyGeneratorsTimeOut() {
   }
 }
 
+async function assertOfficialSearchIsConstrained() {
+  const originalFetch = globalThis.fetch;
+  const originalEnvironment = {
+    aiProvider: process.env.AI_PROVIDER,
+    openAiApiKey: process.env.OPENAI_API_KEY,
+    searchTimeout: process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS,
+  };
+  let requestBodyJson = "";
+
+  try {
+    process.env.AI_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "validator-only";
+    process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS = "200";
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodyJson = String(init?.body ?? "{}");
+      return new Response(JSON.stringify({
+        output: [{
+          content: [{
+            annotations: [{
+              title: "M22 official",
+              type: "url_citation",
+              url: "https://lumenis.com/aesthetics/products/m22/",
+            }],
+            text: "M22 彩衝光通常會依不同濾光條件討論泛紅、色素與整體膚況，實際仍需由醫師現場評估。",
+            type: "output_text",
+          }],
+          type: "message",
+        }],
+        usage: { input_tokens: 20, output_tokens: 30 },
+      }), { headers: { "content-type": "application/json" }, status: 200 });
+    }) as typeof fetch;
+
+    const reply = await generateOpenAiReply("M22 彩衝光原理是什麼", {
+      controlledMedicalFallback: true,
+      officialEducationTreatmentKey: "m22_ipl",
+    });
+    assert(reply?.sourceUrl === "https://lumenis.com/aesthetics/products/m22/", "M12: official citation must be preserved");
+    const requestBody = JSON.parse(requestBodyJson) as Record<string, unknown>;
+    const tools = requestBody?.tools as Array<Record<string, unknown>> | undefined;
+    const filters = tools?.[0]?.filters as { allowed_domains?: string[] } | undefined;
+    assert(tools?.[0]?.type === "web_search", "M12: missing FAQ must use the Responses web search tool");
+    assert(requestBody?.tool_choice === "required", "M12: official search must be required, not optional");
+    assert(filters?.allowed_domains?.includes("lumenis.com"), "M12: M22 search must include its official manufacturer domain");
+    assert(filters?.allowed_domains?.includes("fda.gov"), "M12: official search must include the approved regulator domain");
+    assert(!filters?.allowed_domains?.includes("wikipedia.org"), "M12: open-web domains must not enter the allowlist");
+
+    const messages = buildLimitedAiReplyMessages(reply.text, FOOTER, {
+      medical: true,
+      sourceUrl: reply.sourceUrl,
+    });
+    assert(messages.length <= 2, "M12: cited response must remain within two LINE messages");
+    assert(messages.every((item) => getVisibleReplyLength(item.text) <= 100), "M12: cited response must remain within 100 characters per message");
+    assert(messages.some((item) => item.text.includes("https://lumenis.com/")), "M12: official citation must be visible and clickable");
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      output: [{ content: [{ annotations: [], text: "沒有引用的回答", type: "output_text" }], type: "message" }],
+    }), { status: 200 })) as typeof fetch;
+    const uncitedReply = await generateOpenAiReply("M22 彩衝光原理是什麼", {
+      controlledMedicalFallback: true,
+      officialEducationTreatmentKey: "m22_ipl",
+    });
+    assert(uncitedReply === null, "M12: a web answer without an approved official citation must fail open");
+
+    process.env.AI_OFFICIAL_SEARCH_TIMEOUT_MS = "20";
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")), { once: true });
+      })) as typeof fetch;
+    const timeoutStartedAt = Date.now();
+    const timedOutReply = await generateOpenAiReply("M22 彩衝光原理是什麼", {
+      controlledMedicalFallback: true,
+      officialEducationTreatmentKey: "m22_ipl",
+    });
+    assert(timedOutReply === null, "M12: official search timeout must fail open to the deterministic reply");
+    assert(Date.now() - timeoutStartedAt < 500, "M12: official search did not settle within its timeout budget");
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries({
+      AI_PROVIDER: originalEnvironment.aiProvider,
+      OPENAI_API_KEY: originalEnvironment.openAiApiKey,
+      AI_OFFICIAL_SEARCH_TIMEOUT_MS: originalEnvironment.searchTimeout,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function main() {
+  const missingFaq = await route("M22 彩衝光原理是什麼");
+  assert(
+    missingFaq.decisionType === "fallback_reply" && missingFaq.matchedKey === "official_treatment_education:m22_ipl",
+    "M0: a known treatment detail without an approved FAQ must use official education search",
+  );
+  const knownAvailability = await route("你們有做 M22 彩衝光嗎");
+  assert(
+    knownAvailability.decisionType === "treatment_intro_reply" && !knownAvailability.matchedKey.startsWith("official_treatment_education:"),
+    "M0: clinic availability must remain deterministic",
+  );
+  const approvedPack = await route("ONDA 是什麼");
+  assert(!approvedPack.matchedKey.startsWith("official_treatment_education:"), "M0: a treatment with an approved pack must not use web search");
   const unknownMicro = await route("洢蓮絲通常適合改善什麼狀況");
   assert(unknownMicro.decisionType === "fallback_reply", "M1: unknown micro-aesthetic question must reach controlled fallback");
   assert(shouldAllowAiFallbackReply("洢蓮絲通常適合改善什麼狀況"), "M1: controlled LLM fallback must be eligible");
@@ -109,6 +209,11 @@ async function main() {
   const price = await route("洢蓮絲多少錢");
   assert(price.decisionType === "pricing_auto_reply", "M2: price must stay in the deterministic pricing resolver");
   assert(!shouldAllowAiFallbackReply("洢蓮絲多少錢"), "M2: price must never reach the LLM generator");
+  const officialTreatmentPrice = await route("M22 彩衝光多少錢");
+  assert(
+    officialTreatmentPrice.decisionType === "pricing_auto_reply" && !officialTreatmentPrice.matchedKey.startsWith("official_treatment_education:"),
+    "M2: a known treatment price question must never use official web search",
+  );
 
   const surgery = await route("隆乳可以改善什麼");
   assert(surgery.decisionType === "handoff_pending" && surgery.matchedKey === "plastic_surgery_scope", "M3: plastic surgery must hand off");
@@ -231,8 +336,9 @@ async function main() {
   assert(payloadTexts.filter((text) => text.includes(FOOTER)).length === 1, "M10: final LINE payload must contain the disclosure exactly once");
 
   await assertReplyGeneratorsTimeOut();
+  await assertOfficialSearchIsConstrained();
 
-  console.log("M1-M11 passed: controlled micro-aesthetic fallback, hard boundaries, 100-character delivery, and bounded generation.");
+  console.log("M0-M12 passed: controlled medical fallback, official-source search, hard boundaries, and bounded delivery.");
 }
 
 main().catch((error) => {

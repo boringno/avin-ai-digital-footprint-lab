@@ -1,6 +1,15 @@
 export type OpenAiResponsesPayload = {
   output?: Array<{
-    content?: Array<{ text?: unknown; type?: unknown }>;
+    content?: Array<{
+      annotations?: Array<{
+        type?: unknown;
+        title?: unknown;
+        url?: unknown;
+        url_citation?: { title?: unknown; url?: unknown };
+      }>;
+      text?: unknown;
+      type?: unknown;
+    }>;
     type?: unknown;
   }>;
   output_text?: unknown;
@@ -9,6 +18,19 @@ export type OpenAiResponsesPayload = {
     output_tokens?: number;
   };
 };
+
+export function extractOpenAiResponseSourceUrls(payload: unknown) {
+  if (!payload || typeof payload !== "object") return [];
+  const response = payload as OpenAiResponsesPayload;
+  return Array.from(new Set(
+    (response.output ?? [])
+      .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+      .flatMap((content) => Array.isArray(content.annotations) ? content.annotations : [])
+      .filter((annotation) => annotation.type === "url_citation")
+      .map((annotation) => annotation.url ?? annotation.url_citation?.url)
+      .filter((url): url is string => typeof url === "string" && url.startsWith("https://")),
+  ));
+}
 
 export function extractOpenAiResponseText(payload: unknown) {
   if (!payload || typeof payload !== "object") return null;

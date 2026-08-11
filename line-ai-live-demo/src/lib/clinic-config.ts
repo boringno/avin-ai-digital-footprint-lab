@@ -70,6 +70,7 @@ export type TreatmentConfig = {
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
   educationMode?: "general_education" | "human_only";
+  officialSourceDomains: string[];
   consultationGuide?: TreatmentConversationPack;
   evaluationNote: string;
   intro: string;
@@ -133,8 +134,22 @@ export type ClinicConfig = {
   treatmentList: TreatmentConfig[];
 };
 
-type RawTreatmentConfig = Omit<TreatmentConfig, "approvedContent"> & {
+type RawTreatmentConfig = Omit<TreatmentConfig, "approvedContent" | "officialSourceDomains"> & {
+  officialSourceDomains?: string[];
   unsupportedReply?: string;
+};
+
+const OFFICIAL_MEDICAL_SOURCE_DOMAINS = ["fda.gov", "tfda.gov.tw", "pubmed.ncbi.nlm.nih.gov"];
+const OFFICIAL_PRODUCT_SOURCE_DOMAINS: Record<string, string[]> = {
+  coolsculpting: ["coolsculpting.com"],
+  dermapen4: ["dermapenworld.com"],
+  emface: ["btlaesthetics.com"],
+  embody: ["btlaesthetics.com"],
+  lumecca: ["inmodemd.com"],
+  m22_ipl: ["lumenis.com"],
+  miradry: ["miradry.com"],
+  morpheus_rf: ["inmodemd.com"],
+  mounjaro: ["lilly.com"],
 };
 
 function buildTreatmentUnsupportedReply(treatmentName: string, customReply?: string) {
@@ -148,6 +163,14 @@ function buildTreatmentUnsupportedReply(treatmentName: string, customReply?: str
 function withApprovedContent(treatments: RawTreatmentConfig[]): TreatmentConfig[] {
   return treatments.map((treatment) => ({
     ...treatment,
+    officialSourceDomains:
+      treatment.category === "surgery" || treatment.educationMode === "human_only"
+        ? []
+        : Array.from(new Set([
+            ...OFFICIAL_MEDICAL_SOURCE_DOMAINS,
+            ...(OFFICIAL_PRODUCT_SOURCE_DOMAINS[treatment.key] ?? []),
+            ...(treatment.officialSourceDomains ?? []),
+          ])),
     approvedContent: {
       brandReplies: treatment.brandReply ? [treatment.brandReply] : [],
       introReplies: [treatment.intro],

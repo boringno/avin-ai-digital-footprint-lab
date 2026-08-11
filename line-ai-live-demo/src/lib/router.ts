@@ -163,6 +163,18 @@ const MEDICAL_AESTHETIC_DISCOVERY_TERMS = [
   "童顏",
   "再生",
 ];
+const TREATMENT_EDUCATION_TERMS = [
+  "原理",
+  "副作用",
+  "風險",
+  "恢復期",
+  "修復期",
+  "會痛",
+  "術後照護",
+  "差在哪",
+  "有什麼不同",
+  "怎麼作用",
+];
 const UNSUPPORTED_ENERGY_DEVICE_TERMS = ["海芙", "無雙"];
 const UNAVAILABLE_TREATMENT_ALTERNATIVES = [
   {
@@ -435,6 +447,10 @@ export function shouldAllowAiFallbackReply(message: string) {
     includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS) ||
     isHardBlockedQuestion(message)
   );
+}
+
+export function isOfficialTreatmentEducationRoute(matchedKey: string) {
+  return matchedKey.startsWith("official_treatment_education:");
 }
 
 function hasUnknownMicroEducationShape(message: string) {
@@ -2455,6 +2471,21 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     : null;
   if (consultationQuickReply) {
     return consultationQuickReply;
+  }
+
+  const canUseOfficialEducation =
+    !consultationGuide &&
+    matchedTreatment.category !== "surgery" &&
+    matchedTreatment.educationMode !== "human_only" &&
+    matchedTreatment.officialSourceDomains.length > 0 &&
+    includesAnyTerm(message, TREATMENT_EDUCATION_TERMS);
+  if (canUseOfficialEducation) {
+    return {
+      decisionType: "fallback_reply",
+      matchedKey: `official_treatment_education:${matchedTreatment.key}`,
+      matchedType: "guided_reply",
+      replyText: `${approvedIntroReply} ${matchedTreatment.evaluationNote}`,
+    } satisfies Omit<RouterDecision, "nextContext">;
   }
 
   return {

@@ -26,7 +26,7 @@ import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { addCustomerReplyTone } from "@/lib/reply-tone";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
-import { isMedicalAestheticFallbackCandidate, routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
+import { isMedicalAestheticFallbackCandidate, isOfficialTreatmentEducationRoute, routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
@@ -321,6 +321,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let aiModel: string | undefined;
   let aiTokensIn: number | undefined;
   let aiTokensOut: number | undefined;
+  let aiReplySourceUrl: string | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
   let controlledClassifierResolved = false;
@@ -428,9 +429,12 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   } else if (
     !controlledClassifierResolved &&
     routedDecision.decisionType === "fallback_reply" &&
-    shouldAllowAiFallbackReply(event.message.text ?? "")
+    (shouldAllowAiFallbackReply(event.message.text ?? "") || isOfficialTreatmentEducationRoute(routedDecision.matchedKey))
   ) {
-    generatedReplyIsMedical = isMedicalAestheticFallbackCandidate(event.message.text ?? "");
+    const officialEducationTreatmentKey = isOfficialTreatmentEducationRoute(routedDecision.matchedKey)
+      ? routedDecision.matchedKey.split(":", 2)[1]
+      : undefined;
+    generatedReplyIsMedical = Boolean(officialEducationTreatmentKey) || isMedicalAestheticFallbackCandidate(event.message.text ?? "");
     const aiReply = await generateAiReply(event.message.text ?? "", {
       bookingBranch: routedDecision.nextContext.bookingDraft.branch,
       bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
@@ -440,12 +444,14 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       locationPreference: routedDecision.nextContext.locationPreference,
       preferredBranch: routedDecision.nextContext.preferredBranch,
       controlledMedicalFallback: generatedReplyIsMedical,
+      officialEducationTreatmentKey,
     });
     if (aiReply) {
       replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical });
       aiModel = aiReply.model;
       aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
       aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
+      aiReplySourceUrl = aiReply.sourceUrl;
       usedAiReplyGenerator = true;
     }
   }
@@ -456,7 +462,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   };
   replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
   const replyMessages = usedAiReplyGenerator
-    ? formatReplyMessages(buildLimitedAiReplyMessages(replyText, AI_REPLY_FOOTER, { medical: generatedReplyIsMedical }))
+    ? formatReplyMessages(buildLimitedAiReplyMessages(replyText, AI_REPLY_FOOTER, {
+        medical: generatedReplyIsMedical,
+        sourceUrl: aiReplySourceUrl,
+      }))
     : usedAiHumanizer || !routedDecision.replyMessages
       ? undefined
     : formatReplyMessages(routedDecision.replyMessages.map((message) => {

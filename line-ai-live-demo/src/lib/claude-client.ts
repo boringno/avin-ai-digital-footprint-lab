@@ -36,6 +36,7 @@ export type ClaudeReplyContext = {
   locationPreference?: string;
   preferredBranch?: string;
   controlledMedicalFallback?: boolean;
+  officialEducationTreatmentKey?: string;
 };
 
 let claudeReplyInvocationCount = 0;

@@ -1,7 +1,7 @@
-import { clinicConfig, getClinicOfferingNames } from "@/lib/clinic-config";
+import { clinicConfig, findTreatmentByKey, getClinicOfferingNames } from "@/lib/clinic-config";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
-import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
+import { extractOpenAiResponseSourceUrls, extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 
@@ -14,6 +14,7 @@ export type OpenAiReplyContext = {
   locationPreference?: string;
   preferredBranch?: string;
   controlledMedicalFallback?: boolean;
+  officialEducationTreatmentKey?: string;
 };
 
 export type GeneratedOpenAiReply = {
@@ -21,7 +22,26 @@ export type GeneratedOpenAiReply = {
   text: string;
   tokensIn: number;
   tokensOut: number;
+  sourceUrl?: string;
 };
+
+function isAllowedOfficialSource(url: string, allowedDomains: string[]) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+function fitSourceUrlForLine(url: string) {
+  if (Array.from(url).length <= 68) return url;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
 
 export function buildSystemPrompt() {
   const activeBranchNames = clinicConfig.branches.filter((branch) => branch.isActive).map((branch) => branch.name);
@@ -86,6 +106,9 @@ export function buildOpenAiUserPrompt(message: string, context?: OpenAiReplyCont
     ...(context?.controlledMedicalFallback
       ? ["這是詞庫外的非手術微整形衛教候選；只回答一般改善方向。若客人問診所有沒有該項目，只能以核准療程清單判斷；未列出就說目前核准清單未列此項，並詢問部位或困擾，只能從清單內推薦相近方向。最後引導免費諮詢與醫師現場評估；客人願意預約時，再收集館別、姓名、電話與方便時段。"]
       : []),
+    ...(context?.officialEducationTreatmentKey
+      ? ["這題沒有診所核准 FAQ。你必須先使用官方來源搜尋工具，再依搜尋結果回答；只說一般原理、常見改善方向或一般注意事項。不得引用價格、活動、院內供應、療程規格或把效果說死；若官方來源不足，請明確說資料不足並引導免費諮詢。"]
+      : []),
     ...(contextLines.length > 0 ? ["", "對話背景：", ...contextLines] : []),
     "",
     `客人訊息：${message}`,
@@ -98,8 +121,17 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
     return null;
   }
 
+  const officialTreatment = context?.officialEducationTreatmentKey
+    ? findTreatmentByKey(context.officialEducationTreatmentKey)
+    : null;
+  const officialSourceDomains = officialTreatment?.officialSourceDomains ?? [];
+  if (context?.officialEducationTreatmentKey && officialSourceDomains.length === 0) {
+    return null;
+  }
+  const usesOfficialSearch = officialSourceDomains.length > 0;
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(new Error("OpenAI reply generation timed out")), config.aiReplyGenerationTimeoutMs);
+  const timeoutMs = usesOfficialSearch ? config.aiOfficialSearchTimeoutMs : config.aiReplyGenerationTimeoutMs;
+  const timeout = setTimeout(() => abortController.abort(new Error("OpenAI reply generation timed out")), timeoutMs);
   try {
     const response = await fetch(OPENAI_RESPONSES_API_URL, {
       method: "POST",
@@ -112,6 +144,17 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
         instructions: buildSystemPrompt(),
         max_output_tokens: config.openAiMaxTokens,
         model: config.openAiModel,
+        ...(usesOfficialSearch
+          ? {
+              include: ["web_search_call.action.sources"],
+              tool_choice: "required",
+              tools: [{
+                filters: { allowed_domains: officialSourceDomains },
+                search_context_size: "low",
+                type: "web_search",
+              }],
+            }
+          : {}),
       }),
       signal: abortController.signal,
     });
@@ -133,11 +176,20 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
       return null;
     }
 
+    const sourceUrl = extractOpenAiResponseSourceUrls(payload)
+      .filter((url) => isAllowedOfficialSource(url, officialSourceDomains))
+      .map(fitSourceUrlForLine)
+      .find((url): url is string => Boolean(url));
+    if (usesOfficialSearch && !sourceUrl) {
+      return null;
+    }
+
     return {
       model: config.openAiModel,
       text,
       tokensIn: payload.usage?.input_tokens ?? 0,
       tokensOut: payload.usage?.output_tokens ?? 0,
+      ...(sourceUrl ? { sourceUrl } : {}),
     };
   } catch (error) {
     await reportOperationalError({
