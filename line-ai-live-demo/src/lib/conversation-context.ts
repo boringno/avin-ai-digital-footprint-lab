@@ -24,7 +24,37 @@ export type BookingDraft = {
   treatment?: string;
 };
 
+export type ConversationFocusGoal =
+  | "learn_treatment"
+  | "compare_options"
+  | "ask_price"
+  | "book_consultation"
+  | "manage_booking"
+  | "ask_clinic_info"
+  | "post_procedure_help"
+  | "other";
+
+export type ConversationFocus = {
+  answeredTopics: string[];
+  areaKeys: string[];
+  awaiting?: {
+    kind: "area" | "branch" | "concern" | "priority" | "time";
+    questionSummary: string;
+  };
+  bookingExplicit: boolean;
+  concernKeys: string[];
+  goal: ConversationFocusGoal;
+  requestedInfo?: "benefits" | "comfort" | "comparison" | "mechanism" | "price";
+  treatmentKey?: string;
+};
+
+export type RecentConversationTurn = {
+  role: "assistant" | "user";
+  text: string;
+};
+
 export type ConversationContext = {
+  activeFocus?: ConversationFocus;
   bookingSession?: {
     lastActiveAt: string;
     status: "collecting" | "stale";
@@ -38,6 +68,7 @@ export type ConversationContext = {
   locationPreference?: string;
   preferredBranch?: string;
   pregnancyRiskFlag?: boolean;
+  recentTurns?: RecentConversationTurn[];
   treatmentConsultation?: {
     answeredAspectKeys?: string[];
     concernKeys: string[];
@@ -47,6 +78,88 @@ export type ConversationContext = {
   };
   userId: string;
 };
+
+const RECENT_TURN_LIMIT = 6;
+const RECENT_TURN_TEXT_LIMIT = 500;
+
+function sanitizeRecentTurnText(text: string) {
+  return text
+    .replace(/(?:\+?886[-\s]?)?0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}/gu, "[電話已提供]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[Email 已提供]")
+    .replace(/https?:\/\/\S+/giu, "[網址]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, RECENT_TURN_TEXT_LIMIT);
+}
+
+function normalizeRecentTurns(value: unknown): RecentConversationTurn[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((turn): turn is RecentConversationTurn =>
+      Boolean(
+        turn &&
+        typeof turn === "object" &&
+        ((turn as RecentConversationTurn).role === "assistant" || (turn as RecentConversationTurn).role === "user") &&
+        typeof (turn as RecentConversationTurn).text === "string",
+      ),
+    )
+    .map((turn) => ({
+      role: turn.role,
+      text: sanitizeRecentTurnText(turn.text),
+    }))
+    .filter((turn) => Boolean(turn.text))
+    .slice(-RECENT_TURN_LIMIT);
+}
+
+function normalizeConversationFocus(value: unknown): ConversationFocus | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const focus = value as Partial<ConversationFocus>;
+  const allowedGoals: ConversationFocusGoal[] = [
+    "learn_treatment",
+    "compare_options",
+    "ask_price",
+    "book_consultation",
+    "manage_booking",
+    "ask_clinic_info",
+    "post_procedure_help",
+    "other",
+  ];
+  if (!focus.goal || !allowedGoals.includes(focus.goal)) return undefined;
+
+  return {
+    answeredTopics: Array.isArray(focus.answeredTopics)
+      ? focus.answeredTopics.filter((item): item is string => typeof item === "string")
+      : [],
+    areaKeys: Array.isArray(focus.areaKeys)
+      ? focus.areaKeys.filter((item): item is string => typeof item === "string")
+      : [],
+    ...(focus.awaiting &&
+    ["area", "branch", "concern", "priority", "time"].includes(focus.awaiting.kind) &&
+    typeof focus.awaiting.questionSummary === "string"
+      ? { awaiting: focus.awaiting }
+      : {}),
+    bookingExplicit: focus.bookingExplicit === true,
+    concernKeys: Array.isArray(focus.concernKeys)
+      ? focus.concernKeys.filter((item): item is string => typeof item === "string")
+      : [],
+    goal: focus.goal,
+    ...(focus.requestedInfo && ["benefits", "comfort", "comparison", "mechanism", "price"].includes(focus.requestedInfo)
+      ? { requestedInfo: focus.requestedInfo }
+      : {}),
+    ...(typeof focus.treatmentKey === "string" && focus.treatmentKey ? { treatmentKey: focus.treatmentKey } : {}),
+  };
+}
+
+export function appendRecentConversationTurns(
+  context: ConversationContext,
+  turns: RecentConversationTurn[],
+): ConversationContext {
+  return {
+    ...context,
+    recentTurns: normalizeRecentTurns([...(context.recentTurns ?? []), ...turns]),
+  };
+}
 
 function createEmptyBookingDraft(): BookingDraft {
   return {
@@ -59,6 +172,7 @@ export function createEmptyConversationContext(userId: string): ConversationCont
   return {
     bookingDraft: createEmptyBookingDraft(),
     introSent: false,
+    recentTurns: [],
     userId,
   };
 }
@@ -147,6 +261,7 @@ export async function loadConversationContext(userId: string) {
       return applyConfirmedAppointmentAt({
         ...createEmptyConversationContext(userId),
         ...contextJson,
+        activeFocus: normalizeConversationFocus(contextJson.activeFocus),
         bookingDraft: {
           ...createEmptyBookingDraft(),
           ...(contextJson.bookingDraft ?? {}),
@@ -162,6 +277,7 @@ export async function loadConversationContext(userId: string) {
               ? contextJson.bookingDraft?.timeSlots ?? []
               : [],
         },
+        recentTurns: normalizeRecentTurns(contextJson.recentTurns),
         userId,
       });
     } catch {
@@ -178,6 +294,7 @@ export async function loadConversationContext(userId: string) {
     return applyConfirmedAppointmentAt({
       ...createEmptyConversationContext(userId),
       ...parsed,
+      activeFocus: normalizeConversationFocus(parsed.activeFocus),
       bookingDraft: {
         ...createEmptyBookingDraft(),
         ...(parsed.bookingDraft ?? {}),
@@ -186,6 +303,7 @@ export async function loadConversationContext(userId: string) {
           : [],
         timeSlots: Array.isArray(parsed.bookingDraft?.timeSlots) ? parsed.bookingDraft.timeSlots : [],
       },
+      recentTurns: normalizeRecentTurns(parsed.recentTurns),
       userId,
     });
   } catch (error) {

@@ -1,4 +1,6 @@
-import { createEmptyConversationContext, type ConversationContext } from "../src/lib/conversation-context";
+import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, type ConversationContext } from "../src/lib/conversation-context";
+import { buildCustomerServiceUserPrompt } from "../src/lib/ai-customer-policy";
+import { processWebhookRequestBody } from "../src/lib/line-webhook";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
 const NOW = new Date("2026-08-06T06:00:00.000Z");
@@ -123,6 +125,69 @@ async function validateConsultationExpiry() {
   console.log("PASS: CF6 stale consultation state is cleared before a new turn");
 }
 
+function validateRecentTurnsAndPrompt() {
+  let context = createEmptyConversationContext("conversation-flow-cf7");
+  context = appendRecentConversationTurns(context, [
+    { role: "user", text: "想了解 ONDA，我電話 0912-345-678，網址 https://example.com" },
+    { role: "assistant", text: "想改善哪個部位呢？" },
+    { role: "user", text: "雙下巴" },
+    { role: "assistant", text: "已確認雙下巴" },
+    { role: "user", text: "脂肪" },
+    { role: "assistant", text: "先從局部脂肪方向評估" },
+    { role: "user", text: "那搭配呢" },
+  ]);
+  assert(context.recentTurns?.length === 6, "CF7: recent history must stay within six turns");
+  assert(!JSON.stringify(context.recentTurns).includes("0912-345-678"), "CF7: recent history must mask phone numbers");
+  assert(!JSON.stringify(context.recentTurns).includes("https://"), "CF7: recent history must mask URLs");
+
+  const prompt = buildCustomerServiceUserPrompt("那搭配呢", {
+    focusAwaiting: "確認單做與搭配差異",
+    focusGoal: "learn_treatment",
+    recentTurns: context.recentTurns,
+    treatmentFocus: "ONDA PRO",
+  });
+  assert(prompt.includes("最近對話") && prompt.includes("客人：雙下巴"), "CF7: reply model must receive recent dialogue evidence");
+  assert(prompt.includes("禁止把同一個問題、選項或通用介紹再問一次"), "CF7: reply model must be told to advance instead of looping");
+  assert(prompt.includes("2 至 4 個有功能的 emoji"), "CF7: natural emoji guidance must live in the reply layer");
+  console.log("PASS: CF7 recent dialogue is bounded, masked, and supplied to the reply model");
+}
+
+async function validateWebhookPersistsVisibleTurn() {
+  const userId = `conversation-flow-cf8-${Date.now()}`;
+  const result = await processWebhookRequestBody(JSON.stringify({
+    events: [{
+      message: { id: "cf8-message", text: "可以刷卡嗎", type: "text" },
+      replyToken: "cf8-reply-token",
+      source: { type: "user", userId },
+      type: "message",
+      webhookEventId: "cf8-event",
+    }],
+  }), { includePending: false });
+  const context = await loadConversationContext(userId);
+  const recentTurns = context.recentTurns ?? [];
+  const lastTwoTurns = recentTurns.slice(-2);
+  const visibleReply = result.results[0]?.decision.replyText;
+
+  assert(result.results.length === 1 && lastTwoTurns.length === 2, "CF8: the webhook must retain the customer turn and final visible reply");
+  assert(lastTwoTurns[0]?.role === "user" && lastTwoTurns[0]?.text === "可以刷卡嗎", "CF8: the stored customer turn must match the inbound LINE message");
+  assert(lastTwoTurns[1]?.role === "assistant" && lastTwoTurns[1]?.text === visibleReply, "CF8: the stored assistant turn must be the formatted customer-visible reply");
+  console.log("PASS: CF8 webhook persists the final customer-visible turn for the next reply");
+}
+
+async function validateCorrectionReplacesFocus() {
+  const { context, decisions } = await runTurns(
+    ["想了解ONDA", "雙下巴", "不對，我是想改善肚子"],
+    "conversation-flow-cf9",
+  );
+  const corrected = decisions[2];
+
+  assert(corrected.replyText.includes("身體局部脂肪堆積"), "CF9: a correction must answer the newly stated body concern");
+  assert(!corrected.replyText.includes("也想改善") && !corrected.replyText.includes("先以哪個部位為主"), "CF9: a correction must not merge the rejected concern into a multi-concern menu");
+  assert(context.treatmentConsultation?.concernKeys.length === 1 && context.treatmentConsultation.concernKeys[0] === "local_contour", "CF9: corrected concern must replace the previous consultation focus");
+  assert(context.activeFocus?.concernKeys.length === 1 && context.activeFocus.concernKeys[0] === "local_contour", "CF9: canonical focus must retain only the corrected concern");
+  console.log("PASS: CF9 explicit correction replaces the old concern instead of accumulating it");
+}
+
 async function main() {
   await validateConcernAccumulation();
   await validateBookingEscape();
@@ -130,7 +195,10 @@ async function main() {
   await validateExplicitTreatmentPrice();
   await validateSafetyPrecedence();
   await validateConsultationExpiry();
-  console.log("conversation flow validation passed (6 scenarios)");
+  validateRecentTurnsAndPrompt();
+  await validateWebhookPersistsVisibleTurn();
+  await validateCorrectionReplacesFocus();
+  console.log("conversation flow validation passed (9 scenarios)");
 }
 
 main().catch((error) => {

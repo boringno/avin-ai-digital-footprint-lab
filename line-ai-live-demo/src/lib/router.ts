@@ -362,11 +362,20 @@ function stripPromotionDateWording(text: string) {
     .trim();
 }
 
-function cloneContext(context: ConversationContext | undefined) {
+function cloneContext(context: ConversationContext | undefined): ConversationContext {
   const baseContext = context ?? createEmptyConversationContext("");
   const bookingDraft = baseContext.bookingDraft ?? createEmptyConversationContext("").bookingDraft;
   return {
     ...baseContext,
+    activeFocus: baseContext.activeFocus
+      ? {
+          ...baseContext.activeFocus,
+          answeredTopics: [...baseContext.activeFocus.answeredTopics],
+          areaKeys: [...baseContext.activeFocus.areaKeys],
+          concernKeys: [...baseContext.activeFocus.concernKeys],
+          awaiting: baseContext.activeFocus.awaiting ? { ...baseContext.activeFocus.awaiting } : undefined,
+        }
+      : undefined,
     bookingDraft: {
       appointmentAt: bookingDraft.appointmentAt,
       branch: bookingDraft.branch,
@@ -379,6 +388,9 @@ function cloneContext(context: ConversationContext | undefined) {
       timeSlots: Array.isArray(bookingDraft.timeSlots) ? [...bookingDraft.timeSlots] : [],
       treatment: bookingDraft.treatment,
     },
+    recentTurns: Array.isArray(baseContext.recentTurns)
+      ? baseContext.recentTurns.map((turn) => ({ ...turn }))
+      : [],
   };
 }
 
@@ -451,6 +463,34 @@ function isHardBlockedQuestion(message: string) {
     (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) ||
     (includesAnyTerm(message, PRICE_TERMS) && includesAnyTerm(message, PRICE_COMMITMENT_TERMS))
   );
+}
+
+function isFocusCorrection(message: string) {
+  return /(?:不對|不是(?:這個|那個|指)?|改成|更正|其實是|我是想|主要改)/u.test(normalizeText(message));
+}
+
+function resetConsultationForCorrection(message: string, context: ConversationContext) {
+  const correctedConcern = findConcernByMessage(message);
+  const treatmentKey = context.treatmentConsultation?.treatmentKey ?? context.activeFocus?.treatmentKey;
+  if (!isFocusCorrection(message) || !correctedConcern || !treatmentKey) {
+    return;
+  }
+
+  context.treatmentConsultation = {
+    answeredAspectKeys: [],
+    concernKeys: [],
+    stage: "needs_discovery",
+    treatmentKey,
+  };
+  context.activeFocus = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "concern", questionSummary: "依客人更正後的困擾繼續說明" },
+    bookingExplicit: false,
+    concernKeys: [],
+    goal: "learn_treatment",
+    treatmentKey,
+  };
 }
 
 function isConsultationInquiryMessage(message: string) {
@@ -686,6 +726,9 @@ function clearStaleTreatmentConsultation(context: ConversationContext, now: Date
   }
 
   delete context.treatmentConsultation;
+  if (context.activeFocus?.goal === "learn_treatment") {
+    delete context.activeFocus;
+  }
   if (context.lastIntent?.startsWith("treatment_consult:")) {
     delete context.lastIntent;
   }
@@ -1802,9 +1845,15 @@ function buildConsultationConcernReply(
     }
 
     if (activeConsultation?.primaryConcernKey === concernKey) {
+      const progressiveReply =
+        concernKey === "jawline_looseness"
+          ? `🟢 已確認您主要在意 ${concernKeyword}。若脂肪感較明顯，${treatment.name} 會先從局部脂肪與下顎線條方向評估；若也有咀嚼肌，再比較肉毒搭配。😊 我接著可以幫您整理單做與搭配的差異。`
+          : concernKey === "local_contour"
+            ? `🟢 已確認您主要在意 ${concernKeyword}。${treatment.name} 會依脂肪厚度、範圍與緊實需求評估施作方向。😊 您可以直接告訴我更在意脂肪厚度或線條鬆弛，我再往下整理。`
+            : `🟢 已確認您主要在意 ${concernKeyword}。我會沿著這個需求繼續說明 ${treatment.name}，不需要您重選一次。😊`;
       return {
         aspectKey: "followup:primary",
-        replyText: `了解😊 已記下您主要在意 ${concernKeyword}。您想接著了解這個部位的作用方式、搭配差異，還是體驗價呢？`,
+        replyText: progressiveReply,
       };
     }
 
@@ -1903,6 +1952,15 @@ function recordTreatmentConsultationConcern(
     stage: primaryConcernKey ? "priority_selected" : activeConsultation?.stage ?? "needs_discovery",
     treatmentKey,
   };
+  context.activeFocus = {
+    answeredTopics: context.treatmentConsultation.answeredAspectKeys ?? [],
+    areaKeys: [],
+    awaiting: { kind: "priority", questionSummary: "確認最在意的改善方向" },
+    bookingExplicit: false,
+    concernKeys: nextConcernKeys,
+    goal: "learn_treatment",
+    treatmentKey,
+  };
 }
 
 function setTreatmentConsultationPrimaryConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
@@ -1912,6 +1970,15 @@ function setTreatmentConsultationPrimaryConcern(context: ConversationContext, tr
     concernKeys: Array.from(new Set([...(activeConsultation?.concernKeys ?? []), concernKey])),
     primaryConcernKey: concernKey,
     stage: "priority_selected",
+    treatmentKey,
+  };
+  context.activeFocus = {
+    answeredTopics: context.treatmentConsultation.answeredAspectKeys ?? [],
+    areaKeys: [],
+    awaiting: { kind: "priority", questionSummary: "依主要困擾整理下一步" },
+    bookingExplicit: false,
+    concernKeys: context.treatmentConsultation.concernKeys,
+    goal: "learn_treatment",
     treatmentKey,
   };
 }
@@ -2580,8 +2647,8 @@ function getPricingReply(
   }
 
   const consultationCampaign =
-    findBookingPricingCampaign(context, activeCampaigns) ??
-    findConsultationPricingCampaign(context, activeCampaigns);
+    findConsultationPricingCampaign(context, activeCampaigns) ??
+    (bookingIntentActive ? findBookingPricingCampaign(context, activeCampaigns) : null);
   if (consultationCampaign) {
     const replyText = buildPricingReply(consultationCampaign);
     return {
@@ -2805,6 +2872,7 @@ export async function routeCustomerMessage({
     pricingCampaigns: [...runtimeOverlay.pricingCampaigns, ...seedData.pricingCampaigns],
   };
   const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
+  resetConsultationForCorrection(trimmedMessage, nextContext);
 
   // Pregnancy, breastfeeding, and trying-to-conceive guidance must win over booking intake.
   const pregnancyReply = getPregnancyGuidanceReply(
@@ -2842,6 +2910,14 @@ export async function routeCustomerMessage({
             : "booking_intake";
     nextContext.lastIntent = bookingIntent;
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: true,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "manage_booking",
+      treatmentKey: nextContext.activeFocus?.treatmentKey,
+    };
 
     const replyText =
       bookingIntent === "booking_modify_request"
@@ -2864,6 +2940,13 @@ export async function routeCustomerMessage({
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: [],
+      bookingExplicit: true,
+      concernKeys: [],
+      goal: "manage_booking",
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_cancel_request",
@@ -2878,6 +2961,13 @@ export async function routeCustomerMessage({
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_modify_request";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: [],
+      bookingExplicit: true,
+      concernKeys: [],
+      goal: "manage_booking",
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_modify_request",
@@ -2894,6 +2984,14 @@ export async function routeCustomerMessage({
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_intake";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: true,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "book_consultation",
+      treatmentKey: nextContext.activeFocus?.treatmentKey,
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_intake",
@@ -3033,6 +3131,15 @@ export async function routeCustomerMessage({
   );
   if (pricingReply) {
     nextContext.lastIntent = pricingReply.matchedKey;
+    nextContext.activeFocus = {
+      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: false,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "ask_price",
+      requestedInfo: "price",
+      treatmentKey: nextContext.activeFocus?.treatmentKey ?? nextContext.treatmentConsultation?.treatmentKey,
+    };
     return {
       ...pricingReply,
       nextContext,
@@ -3073,6 +3180,15 @@ export async function routeCustomerMessage({
         answeredAspectKeys: [],
         concernKeys: [],
         stage: "needs_discovery",
+        treatmentKey: restartedTreatment.key,
+      };
+      nextContext.activeFocus = {
+        answeredTopics: [],
+        areaKeys: [],
+        awaiting: { kind: "concern", questionSummary: "確認想改善的部位或困擾" },
+        bookingExplicit: false,
+        concernKeys: [],
+        goal: "learn_treatment",
         treatmentKey: restartedTreatment.key,
       };
     }

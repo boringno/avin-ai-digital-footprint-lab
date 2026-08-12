@@ -9,7 +9,7 @@ import {
 } from "@/lib/ai-intent-classifier";
 import { getClaudeReplyInvocationCount } from "@/lib/claude-client";
 import { clinicConfig } from "@/lib/clinic-config";
-import { createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
+import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import {
   applyAutoResumeIfDue,
@@ -471,13 +471,17 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         consultationKnownNeeds: consultationConcernLabels,
         consultationPrimaryNeed:
           consultationPrimaryConcern?.keywords.slice(0, 3).join("／") ?? consultationState?.primaryConcernKey,
+        controlledMedicalFallback: generatedReplyIsMedical,
+        focusAwaiting: routedDecision.nextContext.activeFocus?.awaiting?.questionSummary,
+        focusGoal: routedDecision.nextContext.activeFocus?.goal,
         lastIntent: routedDecision.nextContext.lastIntent,
         lastReferencedBranch: routedDecision.nextContext.lastReferencedBranch,
         lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,
         locationPreference: routedDecision.nextContext.locationPreference,
-        preferredBranch: routedDecision.nextContext.preferredBranch,
-        controlledMedicalFallback: generatedReplyIsMedical,
         officialEducationTreatmentKey,
+        preferredBranch: routedDecision.nextContext.preferredBranch,
+        recentTurns: routedDecision.nextContext.recentTurns,
+        treatmentFocus: routedDecision.nextContext.activeFocus?.treatmentKey,
       });
       if (aiReply) {
         replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, {
@@ -517,10 +521,16 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     }));
 
   const introducedInReply = replyText.includes(clinicConfig.aiName);
-  const nextContext = {
-    ...routedDecision.nextContext,
-    introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
-  };
+  const nextContext = appendRecentConversationTurns(
+    {
+      ...routedDecision.nextContext,
+      introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
+    },
+    [
+      { role: "user", text: event.message.text ?? "" },
+      { role: "assistant", text: replyText },
+    ],
+  );
 
   if (sourceUserId) {
     await saveConversationContext(nextContext);
