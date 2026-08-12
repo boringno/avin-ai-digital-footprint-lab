@@ -90,6 +90,9 @@ jobs:
           npm run validate:booking-session-expiry
           npm run validate:booking-topic-switch
           npm run validate:conversation-flows
+          npm run validate:conversation-behavior
+          npm run validate:customer-journey-state
+          npm run validate:booking-lead-ownership
           npm run validate:conversation-sessions
           npm run validate:pricing-subject
           npm run validate:treatment-packs

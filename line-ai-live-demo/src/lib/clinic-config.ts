@@ -1,3 +1,5 @@
+import type { TreatmentConversationBehavior } from "@/lib/conversation-behavior";
+
 export type BranchConfig = {
   address: string;
   aliases: string[];
@@ -28,6 +30,7 @@ export type TreatmentConversationPack = {
   };
   detailReplies?: Array<{
     aspectKey: string;
+    behaviors?: TreatmentConversationBehavior[];
     concernKey: string;
     followupPrompt: string;
     pricingCampaignId?: string;
@@ -396,19 +399,9 @@ export const clinicConfig: ClinicConfig = {
           },
           {
             aspectKey: "jawline_combination_difference",
+            behaviors: ["combination_comparison", "combination_declined", "single_treatment_preference"],
             concernKey: "jawline_looseness",
-            terms: [
-              "搭配有什麼差別",
-              "搭配差別",
-              "搭配差異",
-              "單做跟搭配",
-              "單做和搭配",
-              "一起做有什麼差別",
-              "一起做有什麼不同",
-              "為什麼要搭肉毒",
-              "只做onda",
-              "只做onda pro",
-            ],
+            terms: [],
             reply:
               "🟢 ONDA Pro 主要從雙下巴的局部脂肪與緊實方向評估；肉毒小臉則著重放鬆肥厚的咀嚼肌。若同時有脂肪感與肌肉型臉寬，才會一起比較搭配方向。",
             followupPrompt: "😊 您比較在意雙下巴厚度，還是咬肌造成的臉寬呢？",

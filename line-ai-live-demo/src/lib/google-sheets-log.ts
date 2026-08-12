@@ -800,6 +800,15 @@ async function upsertBookingLeads(
     const nextBookingStatus = AUTO_BOOKING_STATUSES.has(existingBookingStatus)
       ? inferAutoBookingStatus(result, leadStage)
       : existingBookingStatus;
+    const leadFields = resolveBookingLeadSheetFields({
+      action: result.bookingTreatmentAction,
+      currentBranch: currentRow[11] || "",
+      currentTimeSlots: currentRow[12] || "",
+      currentTreatment: currentRow[10] || "",
+      nextBranch: result.bookingDraft.branch || analytics?.branchTag || "",
+      nextTimeSlots: preferredTimeSlots,
+      nextTreatment: result.bookingDraft.treatment || analytics?.treatmentTag || "",
+    });
 
     latestByConversation.set(conversationId, [
       conversationId,
@@ -812,9 +821,9 @@ async function upsertBookingLeads(
       toBooleanText(needsHandoff(result)),
       result.bookingDraft.name || currentRow[8] || "",
       result.bookingDraft.phone || currentRow[9] || "",
-      result.bookingDraft.treatment || analytics?.treatmentTag || currentRow[10] || "",
-      result.bookingDraft.branch || analytics?.branchTag || currentRow[11] || "",
-      preferredTimeSlots || currentRow[12] || "",
+      leadFields.treatment,
+      leadFields.branch,
+      leadFields.timeSlots,
       formatFirstVisit(result.bookingDraft.isFirstVisit) || currentRow[13] || "",
       normalizeCellText(result.messageText),
       normalizeCellText(result.decision.replyText),
@@ -852,6 +861,23 @@ async function upsertBookingLeads(
   }
 
   return updatedCount;
+}
+
+export function resolveBookingLeadSheetFields(input: {
+  action?: ProcessedWebhookResult["bookingTreatmentAction"];
+  currentBranch: string;
+  currentTimeSlots: string;
+  currentTreatment: string;
+  nextBranch: string;
+  nextTimeSlots: string;
+  nextTreatment: string;
+}) {
+  const replacesActiveDraft = input.action === "replace";
+  return {
+    branch: replacesActiveDraft ? input.nextBranch : input.nextBranch || input.currentBranch,
+    timeSlots: replacesActiveDraft ? input.nextTimeSlots : input.nextTimeSlots || input.currentTimeSlots,
+    treatment: replacesActiveDraft ? input.nextTreatment : input.nextTreatment || input.currentTreatment,
+  };
 }
 
 function toUniqueConversationSet(rows: string[][], predicate: (row: string[]) => boolean) {

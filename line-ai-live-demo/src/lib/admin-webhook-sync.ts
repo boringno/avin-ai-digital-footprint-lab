@@ -413,14 +413,15 @@ async function maybeUpsertBookingLead(conversationId: string, result: ProcessedW
     throw new Error(`Failed to load booking lead: ${selectError.message}`);
   }
 
+  const bookingFields = resolveBookingLeadFields(existing, result);
   const payload = {
     booking_status: existing?.booking_status ?? "new",
     conversation_id: conversationId,
     customer_name: emptyToNull(result.bookingDraft.name) ?? existing?.customer_name ?? null,
-    interested_treatments: mergeStringArrays(existing?.interested_treatments, splitTreatmentNames(result.bookingDraft.treatment)),
+    interested_treatments: bookingFields.interestedTreatments,
     phone: emptyToNull(result.bookingDraft.phone) ?? existing?.phone ?? null,
-    preferred_branch: emptyToNull(result.bookingDraft.branch) ?? existing?.preferred_branch ?? null,
-    preferred_time_slots: mergeStringArrays(existing?.preferred_time_slots, normalizeTimeSlots(result.bookingDraft)),
+    preferred_branch: bookingFields.preferredBranch,
+    preferred_time_slots: bookingFields.preferredTimeSlots,
     notes: buildBookingLeadNotes(existing?.notes, result.bookingDraft.pregnancyRiskFlag === true),
     tenant_id: TENANT_ID,
   };
@@ -432,6 +433,27 @@ async function maybeUpsertBookingLead(conversationId: string, result: ProcessedW
   if (error) {
     throw new Error(`Failed to upsert booking lead: ${error.message}`);
   }
+}
+
+export function resolveBookingLeadFields(
+  existing: Pick<BookingLeadRow, "interested_treatments" | "preferred_branch" | "preferred_time_slots"> | null,
+  result: Pick<ProcessedWebhookResult, "bookingDraft" | "bookingTreatmentAction">,
+) {
+  const nextTreatments = splitTreatmentNames(result.bookingDraft.treatment);
+  const nextTimeSlots = normalizeTimeSlots(result.bookingDraft);
+  const replacesActiveDraft = result.bookingTreatmentAction === "replace";
+
+  return {
+    interestedTreatments: replacesActiveDraft
+      ? nextTreatments
+      : mergeStringArrays(existing?.interested_treatments, nextTreatments),
+    preferredBranch: replacesActiveDraft
+      ? emptyToNull(result.bookingDraft.branch)
+      : emptyToNull(result.bookingDraft.branch) ?? existing?.preferred_branch ?? null,
+    preferredTimeSlots: replacesActiveDraft
+      ? nextTimeSlots
+      : mergeStringArrays(existing?.preferred_time_slots, nextTimeSlots),
+  };
 }
 
 function deriveLeadStage(result: ProcessedWebhookResult): LeadStage {
