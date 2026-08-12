@@ -8,12 +8,16 @@ export type AiCustomerReplyContext = {
   consultationKnownNeeds?: string[];
   consultationPrimaryNeed?: string;
   controlledMedicalFallback?: boolean;
+  focusAwaiting?: string;
+  focusGoal?: string;
   lastIntent?: string;
   lastReferencedBranch?: string;
   lastReferencedTreatment?: string;
   locationPreference?: string;
   officialEducationTreatmentKey?: string;
   preferredBranch?: string;
+  recentTurns?: Array<{ role: "assistant" | "user"; text: string }>;
+  treatmentFocus?: string;
 };
 
 export function buildCustomerServiceSystemPrompt(options: { nightMode?: boolean } = {}) {
@@ -61,6 +65,15 @@ function buildContextLines(context?: AiCustomerReplyContext) {
     lines.push(`已回答過的諮詢主題：${context.consultationAnsweredTopics.join("、")}`);
   }
   if (context.lastIntent) lines.push(`上一個意圖：${context.lastIntent}`);
+  if (context.focusGoal) lines.push(`本輪主要目標：${context.focusGoal}`);
+  if (context.treatmentFocus) lines.push(`目前唯一療程焦點：${context.treatmentFocus}`);
+  if (context.focusAwaiting) lines.push(`上一輪等待客人回答：${context.focusAwaiting}`);
+  if (context.recentTurns?.length) {
+    lines.push("最近對話（越後面越新）：");
+    for (const turn of context.recentTurns) {
+      lines.push(`${turn.role === "user" ? "客人" : "客服"}：${turn.text}`);
+    }
+  }
   return lines;
 }
 
@@ -69,6 +82,8 @@ export function buildCustomerServiceUserPrompt(message: string, context?: AiCust
 
   return [
     "請直接用繁體中文回覆客人，先回答本輪真正的問題，不要重複已講過的通用介紹，也不要使用 Markdown 標記。",
+    "自然使用 2 至 4 個有功能的 emoji 來標示重點、效果、舒適度或提問；不要每行都塞，也不要只固定用同一個笑臉。",
+    "最近對話若顯示客人已回答上一題，必須直接承接；禁止把同一個問題、選項或通用介紹再問一次。",
     ...(context?.controlledMedicalFallback
       ? [
           "這是詞庫外的非手術醫美問題。可以回答一般改善方向；若客人問院內有沒有，必須依核准療程清單判斷。未列出時，依客人的困擾推薦核准清單內的相近方向。",

@@ -102,7 +102,7 @@ const APPOINTMENT_TERMS = [
   "可約",
 ];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
-const BOOKING_MODIFY_TERMS = ["改約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
+const BOOKING_MODIFY_TERMS = ["改約", "改預約", "改我的預約", "修改預約", "更改預約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
 const BRANCH_LIST_TERMS = [
   "幾間",
   "館別",
@@ -362,11 +362,20 @@ function stripPromotionDateWording(text: string) {
     .trim();
 }
 
-function cloneContext(context: ConversationContext | undefined) {
+function cloneContext(context: ConversationContext | undefined): ConversationContext {
   const baseContext = context ?? createEmptyConversationContext("");
   const bookingDraft = baseContext.bookingDraft ?? createEmptyConversationContext("").bookingDraft;
   return {
     ...baseContext,
+    activeFocus: baseContext.activeFocus
+      ? {
+          ...baseContext.activeFocus,
+          answeredTopics: [...baseContext.activeFocus.answeredTopics],
+          areaKeys: [...baseContext.activeFocus.areaKeys],
+          concernKeys: [...baseContext.activeFocus.concernKeys],
+          awaiting: baseContext.activeFocus.awaiting ? { ...baseContext.activeFocus.awaiting } : undefined,
+        }
+      : undefined,
     bookingDraft: {
       appointmentAt: bookingDraft.appointmentAt,
       branch: bookingDraft.branch,
@@ -379,6 +388,9 @@ function cloneContext(context: ConversationContext | undefined) {
       timeSlots: Array.isArray(bookingDraft.timeSlots) ? [...bookingDraft.timeSlots] : [],
       treatment: bookingDraft.treatment,
     },
+    recentTurns: Array.isArray(baseContext.recentTurns)
+      ? baseContext.recentTurns.map((turn) => ({ ...turn }))
+      : [],
   };
 }
 
@@ -451,6 +463,51 @@ function isHardBlockedQuestion(message: string) {
     (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) ||
     (includesAnyTerm(message, PRICE_TERMS) && includesAnyTerm(message, PRICE_COMMITMENT_TERMS))
   );
+}
+
+function isActiveConsultationComparisonQuestion(message: string, context: ConversationContext) {
+  return Boolean(
+    context.treatmentConsultation &&
+    /(?:單做|只做|一起做|搭配|為什麼要搭).{0,10}(?:差|不同|區別|可以|肉毒)|(?:差在哪|有什麼不同).{0,10}(?:單做|一起做|搭配)/u.test(
+      normalizeText(message),
+    ),
+  );
+}
+
+function isFocusCorrection(message: string) {
+  const normalizedMessage = normalizeText(message);
+  if (/(?:嗎|呢)\s*[?？]?\s*$|[?？]\s*$/u.test(message)) {
+    return false;
+  }
+
+  return (
+    /(?:不對|改成|更正|其實(?:主要)?是|我是想|主要改)/u.test(normalizedMessage) ||
+    /(?:我)?不是(?!不|很).{0,12}(?:是|要|想)/u.test(normalizedMessage)
+  );
+}
+
+function resetConsultationForCorrection(message: string, context: ConversationContext) {
+  const correctedConcern = findConcernByMessage(message);
+  const treatmentKey = context.treatmentConsultation?.treatmentKey ?? context.activeFocus?.treatmentKey;
+  if (!isFocusCorrection(message) || !correctedConcern || !treatmentKey) {
+    return;
+  }
+
+  context.treatmentConsultation = {
+    answeredAspectKeys: [],
+    concernKeys: [],
+    stage: "needs_discovery",
+    treatmentKey,
+  };
+  context.activeFocus = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "concern", questionSummary: "依客人更正後的困擾繼續說明" },
+    bookingExplicit: false,
+    concernKeys: [],
+    goal: "learn_treatment",
+    treatmentKey,
+  };
 }
 
 function isConsultationInquiryMessage(message: string) {
@@ -672,7 +729,25 @@ function findExplicitPricingCampaign(message: string, activeCampaigns: PricingCa
 
 function findBookingPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
   const campaignId = context.bookingDraft.campaignId;
-  return campaignId ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null : null;
+  const campaignById = campaignId
+    ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null
+    : null;
+  if (campaignById) {
+    return campaignById;
+  }
+
+  const bookingTreatments = context.bookingDraft.treatment
+    ?.split(/[、,，]/u)
+    .map((item) => item.trim())
+    .filter(Boolean) ?? [];
+  for (const bookingTreatment of bookingTreatments) {
+    const treatment = findTreatmentByMessage(bookingTreatment);
+    if (!treatment) continue;
+    const campaign = findPricingCampaignForTreatmentKey(treatment.key, activeCampaigns);
+    if (campaign) return campaign;
+  }
+
+  return null;
 }
 
 function clearStaleTreatmentConsultation(context: ConversationContext, now: Date) {
@@ -686,6 +761,9 @@ function clearStaleTreatmentConsultation(context: ConversationContext, now: Date
   }
 
   delete context.treatmentConsultation;
+  if (context.activeFocus?.goal === "learn_treatment") {
+    delete context.activeFocus;
+  }
   if (context.lastIntent?.startsWith("treatment_consult:")) {
     delete context.lastIntent;
   }
@@ -1802,9 +1880,15 @@ function buildConsultationConcernReply(
     }
 
     if (activeConsultation?.primaryConcernKey === concernKey) {
+      const progressiveReply =
+        concernKey === "jawline_looseness"
+          ? `🟢 已確認您主要在意 ${concernKeyword}。若脂肪感較明顯，${treatment.name} 會先從局部脂肪與下顎線條方向評估；若也有咀嚼肌，再比較肉毒搭配。😊 我接著可以幫您整理單做與搭配的差異。`
+          : concernKey === "local_contour"
+            ? `🟢 已確認您主要在意 ${concernKeyword}。${treatment.name} 會依脂肪厚度、範圍與緊實需求評估施作方向。😊 您可以直接告訴我更在意脂肪厚度或線條鬆弛，我再往下整理。`
+            : `🟢 已確認您主要在意 ${concernKeyword}。我會沿著這個需求繼續說明 ${treatment.name}，不需要您重選一次。😊`;
       return {
         aspectKey: "followup:primary",
-        replyText: `了解😊 已記下您主要在意 ${concernKeyword}。您想接著了解這個部位的作用方式、搭配差異，還是體驗價呢？`,
+        replyText: progressiveReply,
       };
     }
 
@@ -1903,6 +1987,15 @@ function recordTreatmentConsultationConcern(
     stage: primaryConcernKey ? "priority_selected" : activeConsultation?.stage ?? "needs_discovery",
     treatmentKey,
   };
+  context.activeFocus = {
+    answeredTopics: context.treatmentConsultation.answeredAspectKeys ?? [],
+    areaKeys: [],
+    awaiting: { kind: "priority", questionSummary: "確認最在意的改善方向" },
+    bookingExplicit: false,
+    concernKeys: nextConcernKeys,
+    goal: "learn_treatment",
+    treatmentKey,
+  };
 }
 
 function setTreatmentConsultationPrimaryConcern(context: ConversationContext, treatmentKey: string, concernKey: string) {
@@ -1912,6 +2005,15 @@ function setTreatmentConsultationPrimaryConcern(context: ConversationContext, tr
     concernKeys: Array.from(new Set([...(activeConsultation?.concernKeys ?? []), concernKey])),
     primaryConcernKey: concernKey,
     stage: "priority_selected",
+    treatmentKey,
+  };
+  context.activeFocus = {
+    answeredTopics: context.treatmentConsultation.answeredAspectKeys ?? [],
+    areaKeys: [],
+    awaiting: { kind: "priority", questionSummary: "依主要困擾整理下一步" },
+    bookingExplicit: false,
+    concernKeys: context.treatmentConsultation.concernKeys,
+    goal: "learn_treatment",
     treatmentKey,
   };
 }
@@ -2095,6 +2197,10 @@ function getRelatedTreatmentConsultationReply(
   message: string,
   context: ConversationContext,
 ): ConsultationConcernDecision | null {
+  if (isActiveConsultationComparisonQuestion(message, context)) {
+    return null;
+  }
+
   const treatmentKey = context.treatmentConsultation?.treatmentKey;
   const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
   const relatedReply = treatment?.consultationGuide?.relatedReplies?.find((item) =>
@@ -2199,7 +2305,11 @@ function extractUnknownBranchLikeTerm(message: string) {
 }
 
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
-  if (hasStructuredBookingForm(message) || isTreatmentComparisonQuestion(message)) {
+  if (
+    hasStructuredBookingForm(message) ||
+    isTreatmentComparisonQuestion(message) ||
+    isActiveConsultationComparisonQuestion(message, context)
+  ) {
     return null;
   }
 
@@ -2579,9 +2689,13 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  const consultationCampaign =
-    findBookingPricingCampaign(context, activeCampaigns) ??
-    findConsultationPricingCampaign(context, activeCampaigns);
+  const bookingOwnsCurrentFocus =
+    context.activeFocus?.goal === "manage_booking" ||
+    (bookingIntentActive && context.activeFocus?.goal !== "learn_treatment");
+  const consultationCampaign = bookingOwnsCurrentFocus
+    ? findBookingPricingCampaign(context, activeCampaigns) ??
+      findConsultationPricingCampaign(context, activeCampaigns)
+    : findConsultationPricingCampaign(context, activeCampaigns);
   if (consultationCampaign) {
     const replyText = buildPricingReply(consultationCampaign);
     return {
@@ -2804,7 +2918,19 @@ export async function routeCustomerMessage({
     faqEntries: [...runtimeOverlay.faqEntries, ...seedData.faqEntries],
     pricingCampaigns: [...runtimeOverlay.pricingCampaigns, ...seedData.pricingCampaigns],
   };
-  const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
+  const matchedEntities = updateContextEntities(trimmedMessage, nextContext);
+  const matchedBranch = matchedEntities.matchedBranch;
+  let matchedTreatment: ReturnType<typeof findTreatmentByMessage> | null = matchedEntities.matchedTreatment;
+  if (isActiveConsultationComparisonQuestion(trimmedMessage, nextContext)) {
+    const consultationTreatment = nextContext.treatmentConsultation?.treatmentKey
+      ? findTreatmentByKey(nextContext.treatmentConsultation.treatmentKey)
+      : null;
+    if (consultationTreatment) {
+      nextContext.lastReferencedTreatment = consultationTreatment.name;
+      matchedTreatment = null;
+    }
+  }
+  resetConsultationForCorrection(trimmedMessage, nextContext);
 
   // Pregnancy, breastfeeding, and trying-to-conceive guidance must win over booking intake.
   const pregnancyReply = getPregnancyGuidanceReply(
@@ -2830,8 +2956,6 @@ export async function routeCustomerMessage({
   }
 
   if (hasBookingFollowup || hasStructuredBookingMessage) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
-    updateBookingDraft(trimmedMessage, nextContext);
     const bookingIntent: "booking_intake" | "booking_modify_request" | "booking_cancel_request" =
       isBookingCancelRequest(trimmedMessage)
         ? "booking_cancel_request"
@@ -2840,8 +2964,20 @@ export async function routeCustomerMessage({
           : isActiveBookingConversation(previousContext, currentTime)
             ? (previousContext.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
             : "booking_intake";
+    if (bookingIntent === "booking_intake") {
+      preferActiveTreatmentConsultationForBooking(nextContext);
+    }
+    updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = bookingIntent;
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: true,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: bookingIntent === "booking_intake" ? "book_consultation" : "manage_booking",
+      treatmentKey: nextContext.activeFocus?.treatmentKey,
+    };
 
     const replyText =
       bookingIntent === "booking_modify_request"
@@ -2860,10 +2996,16 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingCancelRequest(trimmedMessage)) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: [],
+      bookingExplicit: true,
+      concernKeys: [],
+      goal: "manage_booking",
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_cancel_request",
@@ -2874,10 +3016,16 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingModifyRequest(trimmedMessage)) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_modify_request";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: [],
+      bookingExplicit: true,
+      concernKeys: [],
+      goal: "manage_booking",
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_modify_request",
@@ -2894,6 +3042,14 @@ export async function routeCustomerMessage({
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_intake";
     markBookingSessionActive(nextContext, currentTime);
+    nextContext.activeFocus = {
+      answeredTopics: [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: true,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "book_consultation",
+      treatmentKey: nextContext.activeFocus?.treatmentKey,
+    };
     return {
       decisionType: "booking_intake_reply",
       matchedKey: "booking_intake",
@@ -3033,6 +3189,15 @@ export async function routeCustomerMessage({
   );
   if (pricingReply) {
     nextContext.lastIntent = pricingReply.matchedKey;
+    nextContext.activeFocus = {
+      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: false,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "ask_price",
+      requestedInfo: "price",
+      treatmentKey: nextContext.activeFocus?.treatmentKey ?? nextContext.treatmentConsultation?.treatmentKey,
+    };
     return {
       ...pricingReply,
       nextContext,
@@ -3073,6 +3238,15 @@ export async function routeCustomerMessage({
         answeredAspectKeys: [],
         concernKeys: [],
         stage: "needs_discovery",
+        treatmentKey: restartedTreatment.key,
+      };
+      nextContext.activeFocus = {
+        answeredTopics: [],
+        areaKeys: [],
+        awaiting: { kind: "concern", questionSummary: "確認想改善的部位或困擾" },
+        bookingExplicit: false,
+        concernKeys: [],
+        goal: "learn_treatment",
         treatmentKey: restartedTreatment.key,
       };
     }

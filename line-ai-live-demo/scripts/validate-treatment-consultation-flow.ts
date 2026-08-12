@@ -101,8 +101,9 @@ async function main() {
   assert(!shortFatAnswer.replyText.includes("手臂、腹部、腰側") && !shortFatAnswer.replyText.includes("您在意的是哪個部位"), "T9: a known double-chin answer must not ask for the body area again");
 
   const repeatedKnownConcern = await route("雙下巴", shortFatAnswer.nextContext);
-  assert(/已記下您主要在意\s*雙下巴/u.test(repeatedKnownConcern.replyText), "T9: repeating the confirmed need must acknowledge it instead of restarting discovery");
-  assert(!repeatedKnownConcern.replyText.includes("脂肪厚度，還是下顎線"), "T9: repeating a confirmed need must not repeat the previous fork");
+  assert(repeatedKnownConcern.replyText.includes("已確認您主要在意 雙下巴"), "T9: repeating the confirmed need must acknowledge the active focus");
+  assert(repeatedKnownConcern.replyText.includes("局部脂肪與下顎線條"), "T9: repeating the confirmed need must add useful next-step information");
+  assert(!repeatedKnownConcern.replyText.includes("作用方式、搭配差異，還是體驗價"), "T9: repeating a confirmed need must not show another generic menu");
 
   const repeatedFatAnswer = await route("脂肪堆積", repeatedKnownConcern.nextContext);
   assert(repeatedFatAnswer.matchedKey === "treatment_consult:onda_pro", "T9: a repeated fat answer must remain in the active consultation");
@@ -120,7 +121,7 @@ async function main() {
   const repairedLegacyState = await route("脂肪", legacyContext);
   assert(repairedLegacyState.nextContext.treatmentConsultation?.primaryConcernKey === "jawline_looseness", "T9: an existing single-concern session must repair its missing primary need in place");
   const continuedLegacyState = await route("雙下巴", repairedLegacyState.nextContext);
-  assert(/已記下您主要在意\s*雙下巴/u.test(continuedLegacyState.replyText), "T9: a repaired existing session must continue without asking the customer to restart");
+  assert(continuedLegacyState.replyText.includes("已確認您主要在意 雙下巴"), "T9: a repaired existing session must continue without asking the customer to restart");
 
   const naturalLanguageConcern = await route("我有肉肉的雙下巴");
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");
@@ -147,7 +148,7 @@ async function main() {
   const firstJawlineConcern = await route("我想改善嘴邊肉");
   const repeatedJawlineConcern = await route("還有肉肉的雙下巴", firstJawlineConcern.nextContext);
   assert(repeatedJawlineConcern.matchedKey === "treatment_consult:onda_pro", "T10a: a repeated ONDA concern must stay on the guided consultation path");
-  assert(repeatedJawlineConcern.replyText.includes("已記下") && repeatedJawlineConcern.replyText.includes("雙下巴"), "T10a: a repeated ONDA concern must acknowledge the added detail");
+  assert(repeatedJawlineConcern.replyText.includes("已確認") && repeatedJawlineConcern.replyText.includes("雙下巴"), "T10a: a repeated ONDA concern must acknowledge the added detail");
   assert(!repeatedJawlineConcern.replyText.includes("可再依臉型"), "T10a: a repeated ONDA concern must not repeat the first-turn introduction");
 
   const combinedConcern = await route("也想改善手臂脂肪", repeatedJawlineConcern.nextContext);
@@ -157,7 +158,7 @@ async function main() {
 
   const typoConcern = await route("也想改善雙下八", combinedConcern.nextContext);
   assert(typoConcern.matchedKey === "treatment_consult:onda_pro", "T10c: a common double-chin typo must remain in the ONDA consultation path");
-  assert(typoConcern.replyText.includes("雙下八") && typoConcern.replyText.includes("已記下"), "T10c: a common double-chin typo must be acknowledged without restarting the introduction");
+  assert(typoConcern.replyText.includes("雙下八") && typoConcern.replyText.includes("已確認"), "T10c: a common double-chin typo must be acknowledged without restarting the introduction");
 
   const primaryConcern = await route("主要是雙下巴", typoConcern.nextContext);
   assert(primaryConcern.matchedKey === "treatment_consult:onda_pro:primary:jawline_looseness", "T10d: an explicit primary concern must advance the ONDA consultation stage");
@@ -188,6 +189,31 @@ async function main() {
   assert(price.matchedKey === "ONDA PRO", "T11: ONDA experience price must use the approved ONDA campaign");
   assert(price.replyText.includes("體驗價 16,888"), "T11: ONDA experience price must use the approved amount");
   assert(price.replyText.includes("全館適用"), "T11: ONDA experience price must state the approved branch scope");
+
+  const oldBookingWithNewConsultation = createEmptyConversationContext("onda-current-focus-price-test");
+  oldBookingWithNewConsultation.bookingDraft.campaignId = "promo-2026-07-09-botox-wrinkle";
+  oldBookingWithNewConsultation.bookingDraft.treatment = "肉毒";
+  oldBookingWithNewConsultation.lastIntent = "booking_intake";
+  oldBookingWithNewConsultation.lastSeenAt = NOW.toISOString();
+  oldBookingWithNewConsultation.treatmentConsultation = {
+    answeredAspectKeys: ["concern:jawline_looseness:overview"],
+    concernKeys: ["jawline_looseness"],
+    primaryConcernKey: "jawline_looseness",
+    stage: "priority_selected",
+    treatmentKey: "onda_pro",
+  };
+  oldBookingWithNewConsultation.activeFocus = {
+    answeredTopics: ["concern:jawline_looseness:overview"],
+    areaKeys: [],
+    bookingExplicit: false,
+    concernKeys: ["jawline_looseness"],
+    goal: "learn_treatment",
+    treatmentKey: "onda_pro",
+  };
+  const currentFocusPrice = await route("體驗價呢", oldBookingWithNewConsultation);
+  assert(currentFocusPrice.matchedKey === "臉部輪廓組合", "T11a: a current ONDA concern must outrank an older Botox booking campaign");
+  assert(currentFocusPrice.replyText.includes("12,999元"), "T11a: current ONDA face focus must receive its approved combo price");
+  assert(!currentFocusPrice.replyText.includes("肉毒除皺 目前可參考：999"), "T11a: stale booking campaign must not leak into the current treatment price");
 
   const pregnancy = await route("我懷孕可以做 ONDA 嗎", intro.nextContext);
   assert(pregnancy.matchedKey === "pregnancy_caution", "T12: pregnancy guidance must still override ONDA consultation");

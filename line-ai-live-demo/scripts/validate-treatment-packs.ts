@@ -68,8 +68,10 @@ async function validatePrimaryConcernDoesNotLoop() {
   const { decisions } = await runTurns(["我想改善雙下巴", "主要是雙下巴", "雙下巴"]);
 
   assert(
-    /已記下您主要在意\s*雙下巴/u.test(decisions[2].replyText) &&
-      !decisions[2].replyText.includes("您想先以哪個部位為主"),
+    decisions[2].replyText.includes("已確認您主要在意 雙下巴") &&
+      decisions[2].replyText.includes("局部脂肪與下顎線條") &&
+      !decisions[2].replyText.includes("您想先以哪個部位為主") &&
+      !decisions[2].replyText.includes("作用方式、搭配差異，還是體驗價"),
     "TP3: repeating a selected primary concern must advance to the next action instead of asking the same priority question",
   );
   console.log("PASS: TP3 selected primary concern does not loop back to discovery");
@@ -167,6 +169,27 @@ async function validateBotoxWrinkleProgression() {
   console.log("PASS: TP7 Botox wrinkle detail advances without repetition and only quotes on request");
 }
 
+async function validateCombinationDifferenceAnswersDirectly() {
+  const variants = [
+    "搭配有什麼差別",
+    "單做跟搭配差在哪",
+    "一起做有什麼不同",
+    "為什麼要搭肉毒",
+    "我只做 ONDA 可以嗎",
+  ];
+  for (const [index, variant] of variants.entries()) {
+    const { context, decisions } = await runTurns(["想了解 ONDA", "雙下巴", variant]);
+    const answer = decisions[2];
+
+    assert(answer.replyText.includes("局部脂肪與緊實"), `TP3a-${index + 1}: combination question must explain the ONDA role`);
+    assert(answer.replyText.includes("咀嚼肌"), `TP3a-${index + 1}: combination question must explain the Botox role`);
+    assert(!answer.replyText.includes("想進一步了解 ONDA PRO"), `TP3a-${index + 1}: combination question must not fall back to generic consultation copy`);
+    assert(!answer.matchedKey.includes("branch"), `TP3a-${index + 1}: comparison wording must not be mistaken for a branch query`);
+    assert(context.treatmentConsultation?.answeredAspectKeys?.includes("detail:jawline_combination_difference"), `TP3a-${index + 1}: answered combination difference must be recorded as a stable aspect`);
+  }
+  console.log("PASS: TP3a combination difference is answered before the next question");
+}
+
 async function validateCrossCategoryPackReuse() {
   const expectedPackKeys = ["onda_pro", "botox", "pico"];
   const configuredPacks = clinicConfig.treatmentList.filter((treatment) => treatment.consultationGuide);
@@ -224,6 +247,7 @@ async function main() {
   await validateAspectProgression();
   await validateDirectDetailQuestion();
   await validatePrimaryConcernDoesNotLoop();
+  await validateCombinationDifferenceAnswersDirectly();
   validatePackSchema();
   await validateCrossCategoryPackReuse();
   await validateGeneratedDiscoveryOptions();
