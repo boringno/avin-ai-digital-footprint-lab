@@ -465,6 +465,15 @@ function isHardBlockedQuestion(message: string) {
   );
 }
 
+function isActiveConsultationComparisonQuestion(message: string, context: ConversationContext) {
+  return Boolean(
+    context.treatmentConsultation &&
+    /(?:單做|只做|一起做|搭配|為什麼要搭).{0,10}(?:差|不同|區別|可以|肉毒)|(?:差在哪|有什麼不同).{0,10}(?:單做|一起做|搭配)/u.test(
+      normalizeText(message),
+    ),
+  );
+}
+
 function isFocusCorrection(message: string) {
   const normalizedMessage = normalizeText(message);
   if (/(?:嗎|呢)\s*[?？]?\s*$|[?？]\s*$/u.test(message)) {
@@ -2188,6 +2197,10 @@ function getRelatedTreatmentConsultationReply(
   message: string,
   context: ConversationContext,
 ): ConsultationConcernDecision | null {
+  if (isActiveConsultationComparisonQuestion(message, context)) {
+    return null;
+  }
+
   const treatmentKey = context.treatmentConsultation?.treatmentKey;
   const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
   const relatedReply = treatment?.consultationGuide?.relatedReplies?.find((item) =>
@@ -2292,7 +2305,11 @@ function extractUnknownBranchLikeTerm(message: string) {
 }
 
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
-  if (hasStructuredBookingForm(message) || isTreatmentComparisonQuestion(message)) {
+  if (
+    hasStructuredBookingForm(message) ||
+    isTreatmentComparisonQuestion(message) ||
+    isActiveConsultationComparisonQuestion(message, context)
+  ) {
     return null;
   }
 
@@ -2901,7 +2918,18 @@ export async function routeCustomerMessage({
     faqEntries: [...runtimeOverlay.faqEntries, ...seedData.faqEntries],
     pricingCampaigns: [...runtimeOverlay.pricingCampaigns, ...seedData.pricingCampaigns],
   };
-  const { matchedBranch, matchedTreatment } = updateContextEntities(trimmedMessage, nextContext);
+  const matchedEntities = updateContextEntities(trimmedMessage, nextContext);
+  const matchedBranch = matchedEntities.matchedBranch;
+  let matchedTreatment: ReturnType<typeof findTreatmentByMessage> | null = matchedEntities.matchedTreatment;
+  if (isActiveConsultationComparisonQuestion(trimmedMessage, nextContext)) {
+    const consultationTreatment = nextContext.treatmentConsultation?.treatmentKey
+      ? findTreatmentByKey(nextContext.treatmentConsultation.treatmentKey)
+      : null;
+    if (consultationTreatment) {
+      nextContext.lastReferencedTreatment = consultationTreatment.name;
+      matchedTreatment = null;
+    }
+  }
   resetConsultationForCorrection(trimmedMessage, nextContext);
 
   // Pregnancy, breastfeeding, and trying-to-conceive guidance must win over booking intake.
@@ -2947,7 +2975,7 @@ export async function routeCustomerMessage({
       areaKeys: nextContext.activeFocus?.areaKeys ?? [],
       bookingExplicit: true,
       concernKeys: nextContext.activeFocus?.concernKeys ?? [],
-      goal: "manage_booking",
+      goal: bookingIntent === "booking_intake" ? "book_consultation" : "manage_booking",
       treatmentKey: nextContext.activeFocus?.treatmentKey,
     };
 

@@ -170,19 +170,23 @@ async function validateBotoxWrinkleProgression() {
 }
 
 async function validateCombinationDifferenceAnswersDirectly() {
-  const { context, decisions } = await runTurns([
-    "想了解 ONDA",
-    "雙下巴",
-    "脂肪",
-    "雙下巴",
+  const variants = [
     "搭配有什麼差別",
-  ]);
-  const answer = decisions[4];
+    "單做跟搭配差在哪",
+    "一起做有什麼不同",
+    "為什麼要搭肉毒",
+    "我只做 ONDA 可以嗎",
+  ];
+  for (const [index, variant] of variants.entries()) {
+    const { context, decisions } = await runTurns(["想了解 ONDA", "雙下巴", variant]);
+    const answer = decisions[2];
 
-  assert(answer.replyText.includes("局部脂肪與緊實"), "TP3a: combination question must explain the ONDA role");
-  assert(answer.replyText.includes("咀嚼肌"), "TP3a: combination question must explain the Botox role");
-  assert(!answer.replyText.includes("想進一步了解 ONDA PRO"), "TP3a: combination question must not fall back to generic consultation copy");
-  assert(context.treatmentConsultation?.answeredAspectKeys?.includes("detail:jawline_combination_difference"), "TP3a: answered combination difference must be recorded as a stable aspect");
+    assert(answer.replyText.includes("局部脂肪與緊實"), `TP3a-${index + 1}: combination question must explain the ONDA role`);
+    assert(answer.replyText.includes("咀嚼肌"), `TP3a-${index + 1}: combination question must explain the Botox role`);
+    assert(!answer.replyText.includes("想進一步了解 ONDA PRO"), `TP3a-${index + 1}: combination question must not fall back to generic consultation copy`);
+    assert(!answer.matchedKey.includes("branch"), `TP3a-${index + 1}: comparison wording must not be mistaken for a branch query`);
+    assert(context.treatmentConsultation?.answeredAspectKeys?.includes("detail:jawline_combination_difference"), `TP3a-${index + 1}: answered combination difference must be recorded as a stable aspect`);
+  }
   console.log("PASS: TP3a combination difference is answered before the next question");
 }
 

@@ -200,6 +200,13 @@ async function validateQuestionsDoNotReplaceFocus() {
   assert(context.treatmentConsultation?.concernKeys.includes("jawline_looseness"), "CF10: an interrogative negation must preserve the confirmed double-chin concern");
   assert(context.treatmentConsultation?.concernKeys.includes("local_contour"), "CF10: an interrogative negation may add the newly asked body concern");
 
+  const explicitQuestion = await runTurns(
+    ["想了解ONDA", "雙下巴", "我不是想改善肚子嗎？"],
+    "conversation-flow-cf10-explicit-question",
+  );
+  assert(explicitQuestion.context.treatmentConsultation?.concernKeys.includes("jawline_looseness"), "CF10: question suffix must prevent a correction-shaped question from deleting the active concern");
+  assert(explicitQuestion.context.treatmentConsultation?.concernKeys.includes("local_contour"), "CF10: correction-shaped question may still add the newly asked concern");
+
   const doubleNegation = await runTurns(
     ["想了解ONDA", "雙下巴", "我不是不想改善肚子"],
     "conversation-flow-cf10-double-negation",
@@ -229,7 +236,39 @@ async function validateBookingOwnsAmbiguousPrice() {
   assert(price.matchedKey === "肉毒除皺", "CF11: an ambiguous price question in manage-booking mode must use the booked treatment");
   assert(price.replyText.includes("999") && !price.replyText.includes("12,999"), "CF11: booking-owned price must not leak the parallel ONDA combo");
   assert(context.bookingDraft.treatment === "肉毒", "CF11: the original booking treatment must remain stable after pricing");
+
+  const bookingAfterInfo = createEmptyConversationContext("conversation-flow-cf11-active-focus");
+  bookingAfterInfo.bookingDraft.campaignId = "promo-2026-07-09-botox-wrinkle";
+  bookingAfterInfo.bookingDraft.treatment = "肉毒";
+  bookingAfterInfo.lastIntent = "branch_hours:高雄館";
+  bookingAfterInfo.lastSeenAt = NOW.toISOString();
+  bookingAfterInfo.treatmentConsultation = {
+    concernKeys: ["jawline_looseness"],
+    primaryConcernKey: "jawline_looseness",
+    stage: "priority_selected",
+    treatmentKey: "onda_pro",
+  };
+  bookingAfterInfo.activeFocus = {
+    answeredTopics: [],
+    areaKeys: [],
+    bookingExplicit: true,
+    concernKeys: [],
+    goal: "manage_booking",
+  };
+  const focusOwnedPrice = await route("這個多少錢", bookingAfterInfo);
+  assert(focusOwnedPrice.matchedKey === "肉毒除皺", "CF11: canonical manage-booking focus must own price even after lastIntent changes");
+  assert(!focusOwnedPrice.replyText.includes("12,999"), "CF11: stale consultation must not override canonical manage-booking focus");
   console.log("PASS: CF11 active booking management owns ambiguous price and stays isolated from consultation");
+}
+
+async function validateInitialBookingGoal() {
+  const { decisions } = await runTurns(
+    ["我想預約肉毒", "高雄館"],
+    "conversation-flow-cf12",
+  );
+  assert(decisions[0].nextContext.activeFocus?.goal === "book_consultation", "CF12: a new booking must begin as book_consultation");
+  assert(decisions[1].nextContext.activeFocus?.goal === "book_consultation", "CF12: collecting fields for a new booking must not be mislabeled manage_booking");
+  console.log("PASS: CF12 initial booking collection preserves book-consultation goal");
 }
 
 async function main() {
@@ -244,7 +283,8 @@ async function main() {
   await validateCorrectionReplacesFocus();
   await validateQuestionsDoNotReplaceFocus();
   await validateBookingOwnsAmbiguousPrice();
-  console.log("conversation flow validation passed (11 scenarios)");
+  await validateInitialBookingGoal();
+  console.log("conversation flow validation passed (12 scenarios)");
 }
 
 main().catch((error) => {
