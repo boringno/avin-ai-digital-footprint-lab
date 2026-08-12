@@ -9,6 +9,7 @@ import {
 } from "@/lib/conversation-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import type { PersistedDialogueStateV1 } from "@/lib/dialogue-state";
 
 export type BookingDraft = {
   appointmentAt?: string;
@@ -68,6 +69,8 @@ export type ConversationContext = {
     name?: string;
     phone?: string;
   };
+  /** Versioned canonical dialogue state. Legacy fields remain during migration. */
+  dialogueState?: PersistedDialogueStateV1;
   introSent: boolean;
   lastIntent?: string;
   lastReferencedBranch?: string;

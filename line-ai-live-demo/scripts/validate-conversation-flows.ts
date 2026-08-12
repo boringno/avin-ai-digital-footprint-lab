@@ -71,6 +71,7 @@ async function validatePromotionBrowsing() {
   const { decisions } = await runTurns(["想了解肉毒", "現在活動有哪些"], "conversation-flow-cf3");
 
   assert(decisions[1].matchedKey === "promotion_overview", "CF3: an explicit promotion browse request must show the overview");
+  assert(decisions[1].suppressAiFooter === true, "CF3: rich promotion overview must own its footer policy");
   console.log("PASS: CF3 explicit promotion browsing is not trapped by treatment context");
 }
 

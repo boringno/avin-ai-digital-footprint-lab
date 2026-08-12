@@ -4,14 +4,15 @@ import type { NluShadowObservation } from "@/lib/nlu-shadow-store";
 import { storeNluShadowObservation } from "@/lib/nlu-shadow-store";
 import { reportOperationalError } from "@/lib/monitoring";
 import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/openai-responses";
+import { evaluateNluDecisionGate } from "@/lib/nlu-decision-adapter";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 export const NLU_PROMPT_VERSION = "nlu-v2";
 type DecisionSnapshot = NluShadowObservation["deterministicDecision"];
 
-export async function runNluShadow(message: string, decision: DecisionSnapshot) {
+export async function requestNluFrame(message: string) {
   const config = getRuntimeConfig();
-  if (config.openAiNluMode !== "shadow" || !config.openAiApiKey || Math.random() >= config.openAiNluSampleRate) return null;
+  if (!config.openAiApiKey) return null;
 
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -34,16 +35,38 @@ export async function runNluShadow(message: string, decision: DecisionSnapshot) 
     const payload = await response.json() as OpenAiResponsesPayload;
     const outputText = extractOpenAiResponseText(payload);
     const frame = outputText ? parseNluFrame(JSON.parse(outputText)) : null;
-    const divergenceCategories: string[] = [];
-    if (!frame) divergenceCategories.push("invalid_frame");
-    if (frame && Object.values(frame.safety).some(Boolean) && !["handoff_pending", "medical_guidance_reply"].includes(decision.decisionType)) divergenceCategories.push("safety_disagreement");
-
-    return { confidence: frame?.confidence ?? null, deterministicDecision: decision, divergenceCategories, errorCode: frame ? null : "invalid_frame", frame, latencyMs: Date.now() - startedAt, model: config.openAiModel, promptVersion: NLU_PROMPT_VERSION, tokensIn: payload.usage?.input_tokens ?? 0, tokensOut: payload.usage?.output_tokens ?? 0 } satisfies Omit<NluShadowObservation, "messageId">;
+    return {
+      errorCode: frame ? null : "invalid_frame",
+      frame,
+      latencyMs: Date.now() - startedAt,
+      model: config.openAiModel,
+      promptVersion: NLU_PROMPT_VERSION,
+      tokensIn: payload.usage?.input_tokens ?? 0,
+      tokensOut: payload.usage?.output_tokens ?? 0,
+    };
   } catch (error) {
-    return { confidence: null, deterministicDecision: decision, divergenceCategories: [], errorCode: controller.signal.aborted ? "timeout" : error instanceof SyntaxError ? "invalid_json" : "request_error", frame: null, latencyMs: Date.now() - startedAt, model: config.openAiModel, promptVersion: NLU_PROMPT_VERSION, tokensIn: 0, tokensOut: 0 } satisfies Omit<NluShadowObservation, "messageId">;
+    return { errorCode: controller.signal.aborted ? "timeout" : error instanceof SyntaxError ? "invalid_json" : "request_error", frame: null, latencyMs: Date.now() - startedAt, model: config.openAiModel, promptVersion: NLU_PROMPT_VERSION, tokensIn: 0, tokensOut: 0 };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function runNluShadow(message: string, decision: DecisionSnapshot) {
+  const config = getRuntimeConfig();
+  if (config.openAiNluMode !== "shadow") return null;
+  const gate = evaluateNluDecisionGate(`shadow:${message}`, { mode: "shadow", sampleRate: config.openAiNluSampleRate });
+  if (!gate.eligible) return null;
+  const result = await requestNluFrame(message);
+  if (!result) return null;
+  const divergenceCategories: string[] = [];
+  if (!result.frame) divergenceCategories.push("invalid_frame");
+  if (result.frame && Object.values(result.frame.safety).some(Boolean) && !["handoff_pending", "medical_guidance_reply"].includes(decision.decisionType)) divergenceCategories.push("safety_disagreement");
+  return {
+    confidence: result.frame?.confidence ?? null,
+    deterministicDecision: decision,
+    divergenceCategories,
+    ...result,
+  } satisfies Omit<NluShadowObservation, "messageId">;
 }
 
 export async function captureNluShadowObservation(
