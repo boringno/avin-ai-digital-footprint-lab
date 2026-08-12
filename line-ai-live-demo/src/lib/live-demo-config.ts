@@ -38,6 +38,7 @@ export type RuntimeConfig = {
   openAiIntentClassifierTimeoutMs: number;
   openAiMaxTokens: number;
   openAiModel: string;
+  openAiNluDecisionMode: "canary" | "off";
   openAiNluMode: "off" | "shadow";
   openAiNluSampleRate: number;
   openAiNluTimeoutMs: number;
@@ -66,6 +67,12 @@ function parseNluMode(value: string | undefined): "off" | "shadow" {
   const normalized = (value ?? "off").trim().toLowerCase();
   if (normalized === "off" || normalized === "shadow") return normalized;
   throw new Error(`Unsupported OPENAI_NLU_MODE: ${normalized}`);
+}
+
+function parseNluDecisionMode(value: string | undefined): "canary" | "off" {
+  const normalized = (value ?? "off").trim().toLowerCase();
+  if (normalized === "off" || normalized === "canary") return normalized;
+  throw new Error(`Unsupported OPENAI_NLU_DECISION_MODE: ${normalized}`);
 }
 
 function parseInteger(value: string | undefined, fallback: number) {
@@ -116,6 +123,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
 
   const openAiNluMode = parseNluMode(process.env.OPENAI_NLU_MODE);
+  const openAiNluDecisionMode = parseNluDecisionMode(process.env.OPENAI_NLU_DECISION_MODE);
 
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
@@ -156,6 +164,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     openAiIntentClassifierTimeoutMs: parseInteger(process.env.OPENAI_INTENT_CLASSIFIER_TIMEOUT_MS, 800),
     openAiMaxTokens: parseInteger(process.env.OPENAI_MAX_TOKENS, 300),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
+    openAiNluDecisionMode,
     openAiNluMode,
     openAiNluSampleRate: parseConfidence(process.env.OPENAI_NLU_SAMPLE_RATE, 0),
     openAiNluTimeoutMs: parseInteger(process.env.OPENAI_NLU_TIMEOUT_MS, 700),
