@@ -40,6 +40,19 @@ function stripApprovedTreatmentNames(text: string) {
   );
 }
 
+function stripApprovedClinicOfferingClaims(text: string) {
+  return getClinicOfferingTerms().reduce((remaining, name) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return remaining.replace(
+      new RegExp(
+        `(?:(?:本院|敝院|本診所|我們診所|院內|我們|[\\p{Script=Han}]{1,8}館).{0,8}(?:有提供|提供|有做|引進|使用|採用|配備)?\\s*${escapedName})`,
+        "giu",
+      ),
+      "",
+    );
+  }, text);
+}
+
 type AiReplyConstraintOptions = {
   groundedByApprovedKnowledge?: boolean;
   medical?: boolean;
@@ -52,17 +65,20 @@ export function constrainMedicalAiReply(text: string, _footer: string, options: 
   const contentWithoutApprovedTreatmentNames = stripApprovedTreatmentNames(normalized);
   const hasUnqualifiedSafetyClaim =
     SAFETY_TOPIC_PATTERN.test(normalized) && !SAFETY_QUALIFIER_PATTERN.test(normalized);
+  const hasUnapprovedClinicFact = CLINIC_FACT_CLAIM_PATTERN.test(
+    stripApprovedClinicOfferingClaims(normalized),
+  );
   if (
     !normalized ||
     (medical &&
       (PRICE_OR_CAMPAIGN_PATTERN.test(contentWithoutApprovedTreatmentNames) ||
         SURGERY_CLAIM_PATTERN.test(normalized) ||
         INTERNAL_INFORMATION_PATTERN.test(normalized) ||
+        hasUnapprovedClinicFact ||
         (!groundedByApprovedKnowledge &&
           (OVERCLAIM_PATTERN.test(normalized) ||
             ABSOLUTE_SAFETY_PATTERN.test(normalized) ||
-            hasUnqualifiedSafetyClaim ||
-            CLINIC_FACT_CLAIM_PATTERN.test(normalized)))))
+            hasUnqualifiedSafetyClaim))))
   ) {
     return medical ? SAFE_MEDICAL_FALLBACK : SAFE_GENERAL_FALLBACK;
   }

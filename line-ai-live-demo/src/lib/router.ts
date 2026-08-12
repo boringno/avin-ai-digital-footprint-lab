@@ -24,7 +24,7 @@ import {
   setBookingTreatment,
 } from "@/lib/booking-state";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
-import { getHumanSupportStatus } from "@/lib/human-support";
+import { buildHumanHandoffReply, isGeneralMedicalOutOfScope, isPlasticSurgeryRequest, isPolicyOverrideAttempt, isPostProcedureEmergency, isPostProcedureIssue, isPriceCommitmentRequest, runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
 import { loadRuntimeContentOverlay, type RuntimeContentOverlay } from "@/lib/runtime-content-release";
@@ -37,7 +37,10 @@ import {
   type LineReplyMessage,
   type LineTextMessage,
 } from "@/lib/treatment-carousel";
-import type { ControlledTreatmentConcern, ControlledTreatmentKey } from "@/lib/ai-intent-classifier";
+import { createEmptyConversationState } from "@/lib/conversation-state";
+import { commitDialogueRouteSelection, synchronizeDialogueStateFromLegacy } from "@/lib/dialogue-state";
+import { buildContextualReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
+import { buildTreatmentApprovedFacts, resolveTreatmentKnowledgeByKey } from "@/lib/treatment-knowledge";
 
 type DecisionType =
   | "clinic_info_reply"
@@ -69,8 +72,8 @@ type RouteCustomerMessageInput = {
   runtimeAudienceKey?: string;
   runtimeContentOverlay?: RuntimeContentOverlay;
   semanticTreatmentConsultation?: {
-    concern: ControlledTreatmentConcern;
-    treatmentKey: ControlledTreatmentKey;
+    concern: string;
+    treatmentKey: string;
   };
   tenantId?: string;
 };
@@ -84,6 +87,7 @@ export type RouterDecision = {
   nextContext: ConversationContext;
   replyMessages?: LineReplyMessage[];
   replyText: string;
+  replyPlan?: ReplyPlan;
   suppressAiFooter?: boolean;
 };
 
@@ -112,6 +116,7 @@ const APPOINTMENT_TERMS = [
   "想約諮詢",
   "可約",
 ];
+const BOOKING_DECLINE_TERMS = ["先不預約", "暫時不預約", "目前不預約", "還不預約", "不急著預約", "先了解就好"];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
 const BOOKING_MODIFY_TERMS = ["改約", "改預約", "改我的預約", "修改預約", "更改預約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
 const BRANCH_LIST_TERMS = [
@@ -139,7 +144,6 @@ const PRICE_TERMS = PRICE_ASK_TERMS;
 const PRICE_OR_PROMOTION_TERMS = PRICE_ASK_TERMS;
 const SUPPORT_HOURS_TERMS = ["真人客服", "客服時間", "客服幾點", "有人嗎"];
 const TRANSPORT_TERMS = ["交通", "怎麼去", "停車", "捷運"];
-const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
 const TREATMENT_CONSULTATION_SESSION_MS = 20 * 60 * 1000;
 const BOOKING_SESSION_MS = 24 * 60 * 60 * 1000;
 const TREATMENT_DISCOVERY_TERMS = [
@@ -218,36 +222,6 @@ const UNAVAILABLE_TREATMENT_ALTERNATIVES = [
     terms: ["海菲秀"],
   },
 ] as const;
-const GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS = [
-  "糖尿病",
-  "高血壓",
-  "低血壓",
-  "心臟病",
-  "心血管",
-  "癌",
-  "腫瘤",
-  "惡性",
-  "感染",
-  "肺炎",
-  "中風",
-  "癲癇",
-  "甲狀腺",
-  "腎臟",
-  "肝臟",
-  "自體免疫",
-  "免疫疾病",
-  "精神科",
-  "憂鬱症",
-  "焦慮症",
-  "抗凝血",
-  "藥物交互作用",
-  "青春痘需要看醫生",
-  "需要看醫生",
-  "要看哪科",
-  "醫療診斷",
-];
-
-const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
 const DOCTOR_SCHEDULE_TERMS = ["醫師", "門診", "看診", "班表", "診次", "診表"];
 const BRANCH_QUERY_HINT_TERMS = ["館", "分館", "分店", "據點", "門市", "地址", "在哪", "哪裡", "最近", "有嗎", "有沒有"];
 const STRUCTURED_BOOKING_FIELD_LABELS = {
@@ -265,89 +239,7 @@ const PREGNANCY_TERMS = {
   trying_to_conceive: ["備孕", "準備懷孕", "想懷孕", "試管"],
 } satisfies Record<PregnancyContext, string[]>;
 
-const POST_PROCEDURE_TERMS = clinicConfig.escalationPolicy.postProcedureAlertTerms;
-const POST_PROCEDURE_CONTEXT_TERMS = ["打完", "做完", "術後", "剛做", "剛打", "昨天打", "前天打", "回去後"];
-const POST_PROCEDURE_ABNORMALITY_TERMS = [
-  ...POST_PROCEDURE_TERMS,
-  "歪",
-  "瘀青",
-  "有血",
-  "出血",
-  "刺",
-  "麻",
-  "硬塊",
-  "凹凸",
-  "不對稱",
-  "化膿",
-  "水泡",
-];
-const POST_PROCEDURE_EMERGENCY_TERMS = [
-  "呼吸困難",
-  "喘不過氣",
-  "無法呼吸",
-  "喉嚨腫",
-  "吞嚥困難",
-  "胸悶",
-  "全身起疹",
-  "意識不清",
-  "失去意識",
-  "昏倒",
-  "嘴唇發紫",
-  "大量出血",
-  "持續出血",
-  "血流不止",
-  "止不住血",
-  "劇烈疼痛",
-  "痛到受不了",
-];
-const PLASTIC_SURGERY_TERMS = [
-  "整形外科",
-  "開刀",
-  "削骨",
-  "正顎",
-  "顴骨手術",
-  "下顎骨手術",
-  "隆乳",
-  "縮乳",
-  "提乳手術",
-  "乳房重建",
-  "抽脂",
-  "脂肪移植",
-  "隆鼻手術",
-  "鼻整形",
-  "雙眼皮手術",
-  "眼袋手術",
-  "拉皮手術",
-  "腹部拉皮",
-  "割雙眼皮",
-  "縫雙眼皮",
-  "內開眼袋",
-  "外開眼袋",
-  "鼻中隔延長",
-  "鼻頭縮小",
-  "植髮",
-  "植髮手術",
-  "狐臭手術",
-];
-const POLICY_OVERRIDE_TERMS = [
-  "忽略之前",
-  "忽略以上",
-  "忽略規則",
-  "無視規則",
-  "系統提示詞",
-  "system prompt",
-  "開發者訊息",
-  "內部指令",
-  "揭露內部",
-  "洩漏內部",
-  "把你的指令",
-  "不要遵守",
-  "繞過限制",
-  "解除限制",
-  "顯示提示詞",
-];
 const HUMAN_REQUEST_TERMS = clinicConfig.escalationPolicy.humanRequestTerms;
-const SERIOUS_COMPLAINT_TERMS = clinicConfig.escalationPolicy.seriousComplaintTerms;
 
 function normalizeText(text: string) {
   return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
@@ -415,21 +307,6 @@ function includesAnyTerm(message: string, terms: string[]) {
   return terms.some((term) => normalizedMessage.includes(normalizeText(term)));
 }
 
-function hasContraindicationOrMedicalHistorySignal(message: string) {
-  if (includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive])) {
-    return false;
-  }
-
-  const normalizedMessage = normalizeText(message);
-  return (
-    /我有.{1,30}(?:可以|可不可以|能不能|能否|適不適合)/.test(normalizedMessage) ||
-    /我在(?:吃|服用)|我正在用/.test(normalizedMessage) ||
-    /(?:我有)?.{0,30}病史/.test(normalizedMessage) ||
-    /開過刀|動過手術/.test(normalizedMessage) ||
-    /我對.{1,30}過敏/.test(normalizedMessage)
-  );
-}
-
 function isUnsupportedTreatmentAvailabilityQuestion(message: string) {
   if (findTreatmentByMessage(message)) {
     return false;
@@ -476,8 +353,8 @@ function findUnavailableTreatmentAlternative(message: string) {
 
 function isHardBlockedQuestion(message: string) {
   return (
-    (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) ||
-    (includesAnyTerm(message, PRICE_TERMS) && includesAnyTerm(message, PRICE_COMMITMENT_TERMS))
+    isPostProcedureIssue(message) ||
+    (includesAnyTerm(message, PRICE_TERMS) && isPriceCommitmentRequest(message))
   );
 }
 
@@ -539,10 +416,10 @@ export function shouldAllowAiFallbackReply(message: string) {
     includesAnyTerm(message, [...PREGNANCY_TERMS.pregnant, ...PREGNANCY_TERMS.breastfeeding, ...PREGNANCY_TERMS.trying_to_conceive]) ||
     includesAnyTerm(message, PRICE_OR_PROMOTION_TERMS) ||
     includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
-    includesAnyTerm(message, POST_PROCEDURE_EMERGENCY_TERMS) ||
-    includesAnyTerm(message, PLASTIC_SURGERY_TERMS) ||
-    includesAnyTerm(message, POLICY_OVERRIDE_TERMS) ||
-    includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS) ||
+    isPostProcedureEmergency(message) ||
+    isPlasticSurgeryRequest(message) ||
+    isPolicyOverrideAttempt(message) ||
+    isGeneralMedicalOutOfScope(message) ||
     isHardBlockedQuestion(message)
   );
 }
@@ -564,8 +441,8 @@ export function isMedicalAestheticFallbackCandidate(message: string) {
       hasUnknownMicroEducationShape(message) ||
       isUnsupportedTreatmentAvailabilityQuestion(message)) &&
     !findTreatmentByMessage(message) &&
-    !includesAnyTerm(message, PLASTIC_SURGERY_TERMS) &&
-    !includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS)
+    !isPlasticSurgeryRequest(message) &&
+    !isGeneralMedicalOutOfScope(message)
   );
 }
 
@@ -2806,113 +2683,6 @@ function getPricingReply(
   } satisfies RouterDecision;
 }
 
-function buildHandoffPendingReply(extraGuidance: string | null, now: Date) {
-  const supportStatus = getHumanSupportStatus(now);
-  const baseReply = supportStatus.inServiceHours
-    ? "這個問題需要由真人客服進一步確認。我先幫您整理需求，稍後客服會接續協助。"
-    : "這個問題需要由真人客服進一步確認。目前真人客服服務時間為週一至週五 09:00-18:00。我會先幫您整理需求，客服上班後再接續協助。";
-
-  return extraGuidance ? `${extraGuidance} ${baseReply}` : baseReply;
-}
-
-function getHandoffPendingReply(message: string, now: Date, skipCustomerAccountLookup = false) {
-  if (includesAnyTerm(message, POST_PROCEDURE_EMERGENCY_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "post_procedure_emergency",
-      matchedType: "handoff_rule",
-      replyText:
-        "若有呼吸困難、意識異常、大量或持續出血等緊急症狀，請立即撥打 119 或前往急診，不要等待線上回覆；安全後再聯絡診所。",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, POLICY_OVERRIDE_TERMS)) {
-    return {
-      decisionType: "clinic_info_reply",
-      matchedKey: "policy_override_attempt",
-      matchedType: "guided_reply",
-      replyText: "我無法變更或揭露內部規則，只能協助診所療程與預約相關問題。請問想了解哪項微整療程？",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, PLASTIC_SURGERY_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "plastic_surgery_scope",
-      matchedType: "handoff_rule",
-      replyText:
-        "整形外科涉及手術評估，AI 暫不提供自由解說。我先幫您轉由真人客服協助，也可預約現場由醫師評估。",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  // A procedure word alone (for example, asking when Botox takes effect) is not
-  // a safety signal. Escalate only when it is paired with an abnormal symptom.
-  if (includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "post_procedure_issue",
-      matchedType: "handoff_rule",
-      replyText: "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, SERIOUS_COMPLAINT_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "serious_complaint",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("我先幫您記錄這次狀況與訴求。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, PRICE_COMMITMENT_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "price_commitment_request",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("價格承諾這類問題需要由真人客服進一步確認，我先幫您整理想了解的療程與館別。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, HUMAN_REQUEST_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "human_request",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("沒問題，我先幫您整理目前需求。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (hasContraindicationOrMedicalHistorySignal(message)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "contraindication_or_medical_history",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("這類涉及既往病史、用藥或過敏狀況，需要由真人客服與醫師進一步確認。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (includesAnyTerm(message, GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS)) {
-    return {
-      decisionType: "medical_guidance_reply",
-      matchedKey: "general_medical_out_of_scope",
-      matchedType: "guided_reply",
-      replyText: "這屬於一般醫療問題，不在微整衛教範圍內；請直接諮詢合適科別的醫師，AI 不會自行判斷。",
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  if (!skipCustomerAccountLookup && includesAnyTerm(message, CUSTOMER_ACCOUNT_TERMS)) {
-    return {
-      decisionType: "handoff_pending",
-      matchedKey: "customer_account_lookup",
-      matchedType: "handoff_rule",
-      replyText: buildHandoffPendingReply("這類涉及個人資料或既有紀錄查詢，我先幫您記下需求。", now),
-    } satisfies Omit<RouterDecision, "nextContext">;
-  }
-
-  return null;
-}
-
 function getGenericFallback() {
   return {
     decisionType: "fallback_reply",
@@ -2923,7 +2693,7 @@ function getGenericFallback() {
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
-export async function routeCustomerMessage({
+async function routeCustomerMessageLegacy({
   conversationContext,
   includePending,
   message,
@@ -2955,11 +2725,11 @@ export async function routeCustomerMessage({
   // Safety and human handoff rules always take precedence over booking follow-up.
   const hasStructuredBookingMessage = hasStructuredBookingForm(trimmedMessage);
   const hasBookingFollowup = isBookingFollowupMessage(trimmedMessage, previousContext, currentTime);
-  const priorityHandoffReply = getHandoffPendingReply(
-    trimmedMessage,
-    currentTime,
-    hasStructuredBookingMessage || hasBookingFollowup,
-  );
+  const priorityHandoffReply = runImmediateSafetyPreflight({
+    message: trimmedMessage,
+    now: currentTime,
+    skipCustomerAccountLookup: hasStructuredBookingMessage || hasBookingFollowup,
+  });
   if (priorityHandoffReply) {
     nextContext.lastIntent = priorityHandoffReply.matchedKey;
     return {
@@ -3010,6 +2780,24 @@ export async function routeCustomerMessage({
     };
   }
 
+  if (includesAnyTerm(trimmedMessage, BOOKING_DECLINE_TERMS)) {
+    nextContext.lastIntent = "consultation_continue_without_booking";
+    if (nextContext.activeFocus) {
+      nextContext.activeFocus = {
+        ...nextContext.activeFocus,
+        bookingExplicit: false,
+        goal: "learn_treatment",
+      };
+    }
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: "consultation_continue_without_booking",
+      matchedType: "guided_reply",
+      nextContext,
+      replyText: "沒問題，可以先把療程與自己的需求了解清楚，不需要現在決定預約。您接下來比較想了解作用方式、搭配差異，還是療程體驗呢？",
+    };
+  }
+
   if (isCapabilityQuestion(trimmedMessage)) {
     nextContext.lastIntent = "capability_intro";
     return {
@@ -3044,8 +2832,15 @@ export async function routeCustomerMessage({
         : (updateBookingDraft(trimmedMessage, nextContext), nextContext.bookingSession?.action ?? "use_current");
       markBookingSession(nextContext, currentTime, "collecting", bookingAction);
     } else {
-      updateBookingDraft(trimmedMessage, nextContext);
-      markBookingSession(nextContext, currentTime, "collecting");
+      const explicitTreatment = findTreatmentByMessage(trimmedMessage);
+      const bookingAction = explicitTreatment
+        ? applyBookingRequestToDraft(
+            trimmedMessage,
+            nextContext,
+            isBookingTreatmentAddition(trimmedMessage) ? "add" : "replace",
+          )
+        : (updateBookingDraft(trimmedMessage, nextContext), nextContext.bookingSession?.action ?? "use_current");
+      markBookingSession(nextContext, currentTime, "collecting", bookingAction);
     }
     nextContext.lastIntent = bookingIntent;
     nextContext.activeFocus = {
@@ -3096,9 +2891,16 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingModifyRequest(trimmedMessage)) {
-    updateBookingDraft(trimmedMessage, nextContext);
+    const explicitTreatment = findTreatmentByMessage(trimmedMessage);
+    const bookingAction = explicitTreatment
+      ? applyBookingRequestToDraft(
+          trimmedMessage,
+          nextContext,
+          isBookingTreatmentAddition(trimmedMessage) ? "add" : "replace",
+        )
+      : (updateBookingDraft(trimmedMessage, nextContext), nextContext.bookingSession?.action ?? "use_current");
     nextContext.lastIntent = "booking_modify_request";
-    markBookingSession(nextContext, currentTime, "collecting");
+    markBookingSession(nextContext, currentTime, "collecting", bookingAction);
     nextContext.activeFocus = {
       answeredTopics: [],
       areaKeys: [],
@@ -3140,7 +2942,7 @@ export async function routeCustomerMessage({
 
   if (includesAnyTerm(trimmedMessage, DOCTOR_SCHEDULE_TERMS)) {
     const doctorScheduleDecision = await resolveDoctorScheduleDecision({
-      fallbackReply: buildHandoffPendingReply("醫師門診與班表仍需依現場安排確認。", currentTime),
+      fallbackReply: buildHumanHandoffReply("醫師門診與班表仍需依現場安排確認。", currentTime),
       message: trimmedMessage,
       today: currentTime,
     });
@@ -3415,5 +3217,84 @@ export async function routeCustomerMessage({
   return {
     ...getGenericFallback(),
     nextContext,
+  };
+}
+
+function findNextQuestion(replyText: string) {
+  return replyText
+    .split(/(?<=[。！？?])\s*/u)
+    .map((part) => part.trim())
+    .filter((part) => /[？?]$/u.test(part))
+    .at(-1);
+}
+
+function buildReplyPlan(
+  decision: Omit<RouterDecision, "replyPlan">,
+  message: string,
+): ReplyPlan {
+  const dialogue = decision.nextContext.dialogueState;
+  const treatmentKeys = dialogue?.treatmentKeys ?? [
+    decision.nextContext.treatmentConsultation?.treatmentKey,
+    decision.nextContext.activeFocus?.treatmentKey,
+  ].filter((key): key is string => Boolean(key));
+  const knowledge = treatmentKeys
+    .map((key) => resolveTreatmentKnowledgeByKey(key))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const knowledgeFacts = knowledge.flatMap(buildTreatmentApprovedFacts);
+  const generatedFallback =
+    decision.decisionType === "fallback_reply" &&
+    (shouldAllowAiFallbackReply(message) || isOfficialTreatmentEducationRoute(decision.matchedKey));
+  const renderMode =
+    decision.decisionType === "treatment_intro_reply" ||
+    decision.decisionType === "faq_auto_reply" ||
+    generatedFallback
+      ? "generated"
+      : "deterministic";
+
+  return buildContextualReplyPlan(
+    {
+      decisionType: decision.decisionType,
+      matchedKey: decision.matchedKey,
+      matchedType: decision.matchedType,
+      replyMessages: decision.replyMessages,
+      replyText: decision.replyText,
+      suppressAiFooter: decision.suppressAiFooter,
+    },
+    {
+      bookingAction: dialogue?.bookingAction,
+      bookingIntent: dialogue?.bookingIntent,
+      concernKeys: dialogue?.concernKeys,
+      knownNeeds: dialogue?.knownNeeds.map((need) => `${need.kind}:${need.key}`),
+      treatmentKeys,
+    },
+    {
+      answerFacts: [decision.replyText],
+      approvedFacts: [decision.replyText, ...knowledgeFacts],
+      approvedKnowledge: knowledgeFacts,
+      exactPriceFacts: decision.decisionType === "pricing_auto_reply" ? [decision.replyText] : [],
+      nextQuestion: findNextQuestion(decision.replyText),
+      recommendationReasons: knowledge.flatMap((item) => Object.values(item.combinationReasons)),
+      renderMode,
+    },
+  );
+}
+
+export async function routeCustomerMessage(input: RouteCustomerMessageInput): Promise<RouterDecision> {
+  const decision = await routeCustomerMessageLegacy(input);
+  const lifecycle = createEmptyConversationState(decision.nextContext.userId);
+  const synchronizedContext = synchronizeDialogueStateFromLegacy(decision.nextContext, lifecycle, {
+    now: input.now,
+  });
+  let routed = { ...decision, nextContext: synchronizedContext };
+  const replyPlan = buildReplyPlan(routed, input.message);
+  const nextContext = commitDialogueRouteSelection(synchronizedContext, lifecycle, {
+    dialogueAct: replyPlan.dialogueAct,
+    matchedKey: replyPlan.matchedKey,
+    now: input.now,
+  });
+  routed = { ...routed, nextContext };
+  return {
+    ...routed,
+    replyPlan,
   };
 }

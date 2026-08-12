@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 
-import { buildAiReplyMessages, buildTextReplyMessages, constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
-import { generateAiReply } from "@/lib/ai-reply-client";
+import { buildTextReplyMessages } from "@/lib/ai-fallback-guard";
 import {
   classifyControlledIntent,
   isHighConfidenceControlledIntent,
@@ -10,7 +9,10 @@ import {
 import { getClaudeReplyInvocationCount } from "@/lib/claude-client";
 import { clinicConfig } from "@/lib/clinic-config";
 import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
+import { commitDialogueRouteSelection, hydrateDialogueState } from "@/lib/dialogue-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { resolveNluCanaryDecision } from "@/lib/nlu-decision-adapter";
+import { requestNluFrame } from "@/lib/nlu-shadow";
 import {
   applyAutoResumeIfDue,
   createEmptyConversationState,
@@ -22,11 +24,11 @@ import {
   shouldSuppressRepeatedHandoff,
   type ConversationState,
 } from "@/lib/conversation-state";
-import { maybeHumanizeReply } from "@/lib/reply-humanizer";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
-import { addCustomerReplyTone } from "@/lib/reply-tone";
+import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
+import { renderReplyPlan } from "@/lib/reply-renderer";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
-import { isMedicalAestheticFallbackCandidate, isOfficialTreatmentEducationRoute, routeCustomerMessage, shouldAllowAiFallbackReply } from "@/lib/router";
+import { routeCustomerMessage, shouldAllowAiFallbackReply, type RouterDecision } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
@@ -77,6 +79,31 @@ export function getRepeatedHandoffAcknowledgement() {
 
 export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
   return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
+}
+
+type ControlledScheduleDecision = Pick<
+  RouterDecision,
+  "decisionType" | "matchedKey" | "matchedType" | "replyMessages" | "replyText" | "suppressAiFooter"
+>;
+
+/** A classifier override invalidates every plan built for the superseded fallback. */
+export function applyControlledScheduleDecision(
+  routedDecision: RouterDecision,
+  scheduleDecision: ControlledScheduleDecision,
+): RouterDecision {
+  return {
+    ...routedDecision,
+    ...scheduleDecision,
+    nextContext: {
+      ...routedDecision.nextContext,
+      lastIntent: scheduleDecision.matchedKey,
+    },
+    replyPlan: undefined,
+  };
+}
+
+export function shouldSuppressOuterAiFooter(generated: boolean, plan: Pick<ReplyPlan, "suppressAiFooter">) {
+  return generated || plan.suppressAiFooter;
 }
 
 export class InvalidWebhookPayloadError extends Error {
@@ -332,9 +359,36 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let aiReplySourceUrl: string | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
-  let controlledClassifierResolved = false;
-  let generatedReplyIsMedical = false;
-  let generatedReplyUsedGroundedKnowledge = false;
+
+  // Canary is deliberately narrow: deterministic safety/booking/price/clinic
+  // routes run first, and only an otherwise-unresolved fallback may be replaced.
+  // With the default off + sampleRate 0 this makes no customer-visible change.
+  if (routedDecision.decisionType === "fallback_reply") {
+    const config = getRuntimeConfig();
+    const sampleKey = `${sourceUserId}:${event.message.id ?? event.webhookEventId ?? event.message.text ?? ""}`;
+    const gatePreview = resolveNluCanaryDecision(null, sampleKey, {
+      mode: config.openAiNluDecisionMode,
+      sampleRate: config.openAiNluSampleRate,
+    });
+    if (gatePreview.gate.allowDecision) {
+      const nluResult = await requestNluFrame(event.message.text ?? "");
+      const canary = resolveNluCanaryDecision(nluResult?.frame, sampleKey, {
+        mode: config.openAiNluDecisionMode,
+        sampleRate: config.openAiNluSampleRate,
+      });
+      if (canary.decision.kind === "semantic_consultation") {
+        routedDecision = await routeCustomerMessage({
+          conversationContext: existingContext,
+          includePending,
+          message: event.message.text ?? "",
+          now: currentTime,
+          runtimeAudienceKey: sourceUserId,
+          semanticTreatmentConsultation: canary.decision.semanticTreatmentConsultation,
+        });
+        replyText = routedDecision.replyText;
+      }
+    }
+  }
 
   if (routedDecision.decisionType === "handoff_pending") {
     const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
@@ -362,11 +416,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     conversationState = nextState;
   }
 
-  // Keep structured and factual replies deterministic. These flows often contain
-  // exact branch names, booking fields, or approved clinic copy that should not
-  // be rephrased by the LLM.
-  const canHumanizeReply = false;
-
   if (
     routedDecision.decisionType === "fallback_reply" &&
     shouldAllowAiFallbackReply(event.message.text ?? "") &&
@@ -389,16 +438,8 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         message: event.message.text ?? "",
         today: currentTime,
       });
-      routedDecision = {
-        ...routedDecision,
-        ...scheduleDecision,
-        nextContext: {
-          ...routedDecision.nextContext,
-          lastIntent: scheduleDecision.matchedKey,
-        },
-      };
+      routedDecision = applyControlledScheduleDecision(routedDecision, scheduleDecision);
       replyText = scheduleDecision.replyText;
-      controlledClassifierResolved = true;
     } else if (
       controlledIntent &&
       isHighConfidenceControlledIntent(controlledIntent, config.openAiIntentClassifierMinConfidence) &&
@@ -418,113 +459,49 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         },
       });
       replyText = routedDecision.replyText;
-      controlledClassifierResolved = true;
     }
   }
 
-  if (canHumanizeReply) {
-    const humanizedReply = await maybeHumanizeReply({
-      baseReplyText: routedDecision.replyText,
-      decisionType: routedDecision.decisionType,
-      matchedKey: routedDecision.matchedKey,
-      matchedType: routedDecision.matchedType,
-      messageText: event.message.text ?? "",
-    });
-
-    if (humanizedReply) {
-      replyText = humanizedReply;
-      usedAiHumanizer = true;
-    }
-  } else if (!controlledClassifierResolved) {
-    const canUseApprovedKnowledge =
-      !routedDecision.replyMessages?.length &&
-      (routedDecision.decisionType === "faq_auto_reply" ||
-        (routedDecision.decisionType === "treatment_intro_reply" &&
-          (/^treatment_(?:intro|brand|consult):/u.test(routedDecision.matchedKey) ||
-            ["unsupported_energy_device_alternatives"].includes(routedDecision.matchedKey) ||
-            routedDecision.matchedKey.startsWith("unavailable_treatment_alternative:"))));
-    const canUseFallbackGenerator =
-      routedDecision.decisionType === "fallback_reply" &&
-      (shouldAllowAiFallbackReply(event.message.text ?? "") || isOfficialTreatmentEducationRoute(routedDecision.matchedKey));
-
-    if (canUseApprovedKnowledge || canUseFallbackGenerator) {
-      const officialEducationTreatmentKey = isOfficialTreatmentEducationRoute(routedDecision.matchedKey)
-        ? routedDecision.matchedKey.split(":", 2)[1]
-        : undefined;
-      generatedReplyIsMedical =
-        routedDecision.decisionType === "treatment_intro_reply" ||
-        Boolean(officialEducationTreatmentKey) ||
-        isMedicalAestheticFallbackCandidate(event.message.text ?? "");
-      generatedReplyUsedGroundedKnowledge = canUseApprovedKnowledge || Boolean(officialEducationTreatmentKey);
-      const consultationState = routedDecision.nextContext.treatmentConsultation;
-      const consultationConcernLabels = (consultationState?.concernKeys ?? []).map((concernKey) => {
-        const concern = clinicConfig.concernList.find((item) => item.key === concernKey);
-        return concern?.keywords.slice(0, 3).join("／") ?? concernKey;
-      });
-      const consultationPrimaryConcern = consultationState?.primaryConcernKey
-        ? clinicConfig.concernList.find((item) => item.key === consultationState.primaryConcernKey)
-        : undefined;
-      const aiReply = await generateAiReply(event.message.text ?? "", {
-        approvedKnowledge: canUseApprovedKnowledge ? routedDecision.replyText : undefined,
-        bookingBranch: routedDecision.nextContext.bookingDraft.branch,
-        bookingTreatment: routedDecision.nextContext.bookingDraft.treatment,
-        consultationAnsweredTopics: consultationState?.answeredAspectKeys,
-        consultationKnownNeeds: consultationConcernLabels,
-        consultationPrimaryNeed:
-          consultationPrimaryConcern?.keywords.slice(0, 3).join("／") ?? consultationState?.primaryConcernKey,
-        controlledMedicalFallback: generatedReplyIsMedical,
-        focusAwaiting: routedDecision.nextContext.activeFocus?.awaiting?.questionSummary,
-        focusGoal: routedDecision.nextContext.activeFocus?.goal,
-        lastIntent: routedDecision.nextContext.lastIntent,
-        lastReferencedBranch: routedDecision.nextContext.lastReferencedBranch,
-        lastReferencedTreatment: routedDecision.nextContext.lastReferencedTreatment,
-        locationPreference: routedDecision.nextContext.locationPreference,
-        officialEducationTreatmentKey,
-        preferredBranch: routedDecision.nextContext.preferredBranch,
-        recentTurns: routedDecision.nextContext.recentTurns,
-        treatmentFocus: routedDecision.nextContext.activeFocus?.treatmentKey,
-      });
-      if (aiReply) {
-        replyText = constrainMedicalAiReply(aiReply.text, AI_REPLY_FOOTER, {
-          groundedByApprovedKnowledge: generatedReplyUsedGroundedKnowledge,
-          medical: generatedReplyIsMedical,
-        });
-        aiModel = aiReply.model;
-        aiTokensIn = (aiTokensIn ?? 0) + aiReply.tokensIn;
-        aiTokensOut = (aiTokensOut ?? 0) + aiReply.tokensOut;
-        aiReplySourceUrl = aiReply.sourceUrl;
-        usedAiReplyGenerator = true;
-      }
-    }
-  }
-
-  const replyTone = {
-    decisionType: usedAiReplyGenerator ? "fallback_reply" : routedDecision.decisionType,
-    matchedKey: usedAiReplyGenerator ? "ai_general_answer" : routedDecision.matchedKey,
-  };
-  replyText = formatReplyText(addCustomerReplyTone(replyText, replyTone));
-  const replyMessages = usedAiReplyGenerator
-    ? formatReplyMessages(buildAiReplyMessages(replyText, AI_REPLY_FOOTER, {
-        groundedByApprovedKnowledge: generatedReplyUsedGroundedKnowledge,
-        medical: generatedReplyIsMedical,
-      }))
-    : usedAiHumanizer || !routedDecision.replyMessages
-      ? undefined
-    : formatReplyMessages(routedDecision.replyMessages.map((message) => {
-      if (message.type !== "text") {
-        return message;
-      }
-
-      return {
-        ...message,
-        text: addCustomerReplyTone(message.text, replyTone),
-      } satisfies LineTextMessage;
-    }));
+  const replyPlan = routedDecision.replyPlan ?? legacyDecisionToReplyPlan({
+    decisionType: routedDecision.decisionType,
+    matchedKey: routedDecision.matchedKey,
+    matchedType: routedDecision.matchedType,
+    replyMessages: routedDecision.replyMessages,
+    replyText: routedDecision.replyText,
+    suppressAiFooter: routedDecision.suppressAiFooter,
+  });
+  const synchronizedContext = commitDialogueRouteSelection(routedDecision.nextContext, conversationState, {
+    dialogueAct: replyPlan.dialogueAct,
+    matchedKey: replyPlan.matchedKey,
+    now: currentTime,
+  });
+  const dialogueState = hydrateDialogueState(synchronizedContext, conversationState, { now: currentTime });
+  const rendered = await renderReplyPlan({
+    customerMessage: event.message.text ?? "",
+    dialogueState,
+    footer: AI_REPLY_FOOTER,
+    // Generated messages own their disclosure because the outer payload builder
+    // suppresses its footer to avoid duplication.
+    includeFooter: true,
+    plan: replyPlan,
+    recentTurns: synchronizedContext.recentTurns ?? [],
+  });
+  replyText = rendered.replyText;
+  usedAiReplyGenerator = rendered.generated;
+  aiModel = rendered.model ?? aiModel;
+  aiTokensIn = (aiTokensIn ?? 0) + (rendered.tokensIn ?? 0) || undefined;
+  aiTokensOut = (aiTokensOut ?? 0) + (rendered.tokensOut ?? 0) || undefined;
+  aiReplySourceUrl = rendered.sourceUrl;
+  const replyMessages = rendered.generated
+    ? formatReplyMessages(rendered.messages)
+    : routedDecision.replyMessages
+      ? formatReplyMessages(routedDecision.replyMessages)
+      : undefined;
 
   const introducedInReply = replyText.includes(clinicConfig.aiName);
   const nextContext = appendRecentConversationTurns(
     {
-      ...routedDecision.nextContext,
+      ...synchronizedContext,
       introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
     },
     [
@@ -558,7 +535,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     replyText,
     // Generated fallback messages already include the disclosure, so do not
     // append a duplicate footer message.
-    suppressAiFooter: usedAiReplyGenerator,
+    suppressAiFooter: shouldSuppressOuterAiFooter(usedAiReplyGenerator, replyPlan),
     shouldIntroduce: usedAiReplyGenerator ? false : !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
