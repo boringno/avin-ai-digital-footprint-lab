@@ -128,16 +128,17 @@ async function validateConsultationExpiry() {
 function validateRecentTurnsAndPrompt() {
   let context = createEmptyConversationContext("conversation-flow-cf7");
   context = appendRecentConversationTurns(context, [
-    { role: "user", text: "想了解 ONDA，我電話 0912-345-678，網址 https://example.com" },
+    { role: "user", text: "想了解 ONDA" },
     { role: "assistant", text: "想改善哪個部位呢？" },
     { role: "user", text: "雙下巴" },
     { role: "assistant", text: "已確認雙下巴" },
     { role: "user", text: "脂肪" },
     { role: "assistant", text: "先從局部脂肪方向評估" },
-    { role: "user", text: "那搭配呢" },
+    { role: "user", text: "那搭配呢，我電話 0912-345-678，網址 https://example.com" },
   ]);
   assert(context.recentTurns?.length === 6, "CF7: recent history must stay within six turns");
   assert(!JSON.stringify(context.recentTurns).includes("0912-345-678"), "CF7: recent history must mask phone numbers");
+  assert(JSON.stringify(context.recentTurns).includes("[電話已提供]"), "CF7: phone masking must replace the number with an explicit safe marker");
   assert(!JSON.stringify(context.recentTurns).includes("https://"), "CF7: recent history must mask URLs");
 
   const prompt = buildCustomerServiceUserPrompt("那搭配呢", {
@@ -188,6 +189,49 @@ async function validateCorrectionReplacesFocus() {
   console.log("PASS: CF9 explicit correction replaces the old concern instead of accumulating it");
 }
 
+async function validateQuestionsDoNotReplaceFocus() {
+  const { context, decisions } = await runTurns(
+    ["想了解ONDA", "雙下巴", "ONDA 不是可以改善肚子嗎？"],
+    "conversation-flow-cf10-question",
+  );
+  const question = decisions[2];
+
+  assert(question.replyText.includes("也想改善"), "CF10: a question about another area must be treated as an additional need, not a correction");
+  assert(context.treatmentConsultation?.concernKeys.includes("jawline_looseness"), "CF10: an interrogative negation must preserve the confirmed double-chin concern");
+  assert(context.treatmentConsultation?.concernKeys.includes("local_contour"), "CF10: an interrogative negation may add the newly asked body concern");
+
+  const doubleNegation = await runTurns(
+    ["想了解ONDA", "雙下巴", "我不是不想改善肚子"],
+    "conversation-flow-cf10-double-negation",
+  );
+  assert(doubleNegation.context.treatmentConsultation?.concernKeys.includes("jawline_looseness"), "CF10: double negation must not silently discard the active concern");
+
+  const corrected = await runTurns(
+    ["想了解ONDA", "雙下巴", "其實主要是腹部"],
+    "conversation-flow-cf10-correction",
+  );
+  assert(corrected.context.treatmentConsultation?.concernKeys.length === 1, "CF10: '其實主要是' must replace instead of accumulate");
+  assert(corrected.context.treatmentConsultation?.concernKeys[0] === "local_contour", "CF10: '其實主要是腹部' must select the body concern");
+  console.log("PASS: CF10 questions preserve focus while explicit corrections replace it");
+}
+
+async function validateBookingOwnsAmbiguousPrice() {
+  const { context, decisions } = await runTurns(
+    ["我想預約肉毒", "高雄館", "想了解 ONDA", "雙下巴", "我要改我的預約", "這個多少錢"],
+    "conversation-flow-cf11",
+  );
+  const manageBooking = decisions[4];
+  const price = decisions[5];
+
+  assert(manageBooking.matchedKey === "booking_modify_request", "CF11: an explicit booking change must enter manage-booking mode");
+  assert(manageBooking.nextContext.activeFocus?.goal === "manage_booking", "CF11: booking modification must own the active focus");
+  assert(manageBooking.nextContext.bookingDraft.treatment === "肉毒", "CF11: managing an existing booking must not merge the parallel ONDA consultation into the draft");
+  assert(price.matchedKey === "肉毒除皺", "CF11: an ambiguous price question in manage-booking mode must use the booked treatment");
+  assert(price.replyText.includes("999") && !price.replyText.includes("12,999"), "CF11: booking-owned price must not leak the parallel ONDA combo");
+  assert(context.bookingDraft.treatment === "肉毒", "CF11: the original booking treatment must remain stable after pricing");
+  console.log("PASS: CF11 active booking management owns ambiguous price and stays isolated from consultation");
+}
+
 async function main() {
   await validateConcernAccumulation();
   await validateBookingEscape();
@@ -198,7 +242,9 @@ async function main() {
   validateRecentTurnsAndPrompt();
   await validateWebhookPersistsVisibleTurn();
   await validateCorrectionReplacesFocus();
-  console.log("conversation flow validation passed (9 scenarios)");
+  await validateQuestionsDoNotReplaceFocus();
+  await validateBookingOwnsAmbiguousPrice();
+  console.log("conversation flow validation passed (11 scenarios)");
 }
 
 main().catch((error) => {

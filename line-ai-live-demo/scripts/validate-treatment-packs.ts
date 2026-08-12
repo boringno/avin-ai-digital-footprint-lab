@@ -169,6 +169,23 @@ async function validateBotoxWrinkleProgression() {
   console.log("PASS: TP7 Botox wrinkle detail advances without repetition and only quotes on request");
 }
 
+async function validateCombinationDifferenceAnswersDirectly() {
+  const { context, decisions } = await runTurns([
+    "想了解 ONDA",
+    "雙下巴",
+    "脂肪",
+    "雙下巴",
+    "搭配有什麼差別",
+  ]);
+  const answer = decisions[4];
+
+  assert(answer.replyText.includes("局部脂肪與緊實"), "TP3a: combination question must explain the ONDA role");
+  assert(answer.replyText.includes("咀嚼肌"), "TP3a: combination question must explain the Botox role");
+  assert(!answer.replyText.includes("想進一步了解 ONDA PRO"), "TP3a: combination question must not fall back to generic consultation copy");
+  assert(context.treatmentConsultation?.answeredAspectKeys?.includes("detail:jawline_combination_difference"), "TP3a: answered combination difference must be recorded as a stable aspect");
+  console.log("PASS: TP3a combination difference is answered before the next question");
+}
+
 async function validateCrossCategoryPackReuse() {
   const expectedPackKeys = ["onda_pro", "botox", "pico"];
   const configuredPacks = clinicConfig.treatmentList.filter((treatment) => treatment.consultationGuide);
@@ -226,6 +243,7 @@ async function main() {
   await validateAspectProgression();
   await validateDirectDetailQuestion();
   await validatePrimaryConcernDoesNotLoop();
+  await validateCombinationDifferenceAnswersDirectly();
   validatePackSchema();
   await validateCrossCategoryPackReuse();
   await validateGeneratedDiscoveryOptions();

@@ -102,7 +102,7 @@ const APPOINTMENT_TERMS = [
   "可約",
 ];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
-const BOOKING_MODIFY_TERMS = ["改約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
+const BOOKING_MODIFY_TERMS = ["改約", "改預約", "改我的預約", "修改預約", "更改預約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
 const BRANCH_LIST_TERMS = [
   "幾間",
   "館別",
@@ -466,7 +466,15 @@ function isHardBlockedQuestion(message: string) {
 }
 
 function isFocusCorrection(message: string) {
-  return /(?:不對|不是(?:這個|那個|指)?|改成|更正|其實是|我是想|主要改)/u.test(normalizeText(message));
+  const normalizedMessage = normalizeText(message);
+  if (/(?:嗎|呢)\s*[?？]?\s*$|[?？]\s*$/u.test(message)) {
+    return false;
+  }
+
+  return (
+    /(?:不對|改成|更正|其實(?:主要)?是|我是想|主要改)/u.test(normalizedMessage) ||
+    /(?:我)?不是(?!不|很).{0,12}(?:是|要|想)/u.test(normalizedMessage)
+  );
 }
 
 function resetConsultationForCorrection(message: string, context: ConversationContext) {
@@ -712,7 +720,25 @@ function findExplicitPricingCampaign(message: string, activeCampaigns: PricingCa
 
 function findBookingPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
   const campaignId = context.bookingDraft.campaignId;
-  return campaignId ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null : null;
+  const campaignById = campaignId
+    ? activeCampaigns.find((campaign) => campaign.id === campaignId) ?? null
+    : null;
+  if (campaignById) {
+    return campaignById;
+  }
+
+  const bookingTreatments = context.bookingDraft.treatment
+    ?.split(/[、,，]/u)
+    .map((item) => item.trim())
+    .filter(Boolean) ?? [];
+  for (const bookingTreatment of bookingTreatments) {
+    const treatment = findTreatmentByMessage(bookingTreatment);
+    if (!treatment) continue;
+    const campaign = findPricingCampaignForTreatmentKey(treatment.key, activeCampaigns);
+    if (campaign) return campaign;
+  }
+
+  return null;
 }
 
 function clearStaleTreatmentConsultation(context: ConversationContext, now: Date) {
@@ -2646,9 +2672,13 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  const consultationCampaign =
-    findConsultationPricingCampaign(context, activeCampaigns) ??
-    (bookingIntentActive ? findBookingPricingCampaign(context, activeCampaigns) : null);
+  const bookingOwnsCurrentFocus =
+    context.activeFocus?.goal === "manage_booking" ||
+    (bookingIntentActive && context.activeFocus?.goal !== "learn_treatment");
+  const consultationCampaign = bookingOwnsCurrentFocus
+    ? findBookingPricingCampaign(context, activeCampaigns) ??
+      findConsultationPricingCampaign(context, activeCampaigns)
+    : findConsultationPricingCampaign(context, activeCampaigns);
   if (consultationCampaign) {
     const replyText = buildPricingReply(consultationCampaign);
     return {
@@ -2898,8 +2928,6 @@ export async function routeCustomerMessage({
   }
 
   if (hasBookingFollowup || hasStructuredBookingMessage) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
-    updateBookingDraft(trimmedMessage, nextContext);
     const bookingIntent: "booking_intake" | "booking_modify_request" | "booking_cancel_request" =
       isBookingCancelRequest(trimmedMessage)
         ? "booking_cancel_request"
@@ -2908,6 +2936,10 @@ export async function routeCustomerMessage({
           : isActiveBookingConversation(previousContext, currentTime)
             ? (previousContext.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
             : "booking_intake";
+    if (bookingIntent === "booking_intake") {
+      preferActiveTreatmentConsultationForBooking(nextContext);
+    }
+    updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = bookingIntent;
     markBookingSessionActive(nextContext, currentTime);
     nextContext.activeFocus = {
@@ -2936,7 +2968,6 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingCancelRequest(trimmedMessage)) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
     markBookingSessionActive(nextContext, currentTime);
@@ -2957,7 +2988,6 @@ export async function routeCustomerMessage({
   }
 
   if (isBookingModifyRequest(trimmedMessage)) {
-    preferActiveTreatmentConsultationForBooking(nextContext);
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_modify_request";
     markBookingSessionActive(nextContext, currentTime);

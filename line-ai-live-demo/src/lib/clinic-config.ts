@@ -394,6 +394,14 @@ export const clinicConfig: ClinicConfig = {
             followupPrompt:
               "😊 您想先了解體驗價，還是直接安排免費諮詢讓醫師評估呢？",
           },
+          {
+            aspectKey: "jawline_combination_difference",
+            concernKey: "jawline_looseness",
+            terms: ["搭配有什麼差別", "搭配差別", "搭配差異", "單做跟搭配", "一起做有什麼差別"],
+            reply:
+              "🟢 ONDA Pro 主要從雙下巴的局部脂肪與緊實方向評估；肉毒小臉則著重放鬆肥厚的咀嚼肌。若同時有脂肪感與肌肉型臉寬，才會一起比較搭配方向。",
+            followupPrompt: "😊 您比較在意雙下巴厚度，還是咬肌造成的臉寬呢？",
+          },
         ],
         discoveryQuestion: "😊 請問您最想改善哪個部位呢",
         featureSummary:
