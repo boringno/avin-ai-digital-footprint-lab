@@ -1,13 +1,20 @@
 import { resetClaudeReplyInvocationCount } from "../src/lib/claude-client";
 import {
+  closeConversation,
   createEmptyConversationState,
   loadConversationState,
   markHumanTakeover,
+  pauseConversationAi,
   recordHandoffPending,
   resumeConversationAi,
   saveConversationState,
+  type ConversationStatus,
 } from "../src/lib/conversation-state";
 import { processWebhookRequestBody } from "../src/lib/line-webhook";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
 
 async function sendUserMessage(userId: string, text: string, webhookEventId: string) {
   const rawBody = JSON.stringify({
@@ -40,17 +47,41 @@ async function main() {
   const case1UserId = "guard-case-1";
   await saveConversationState(createEmptyConversationState(case1UserId));
   const case1 = await sendUserMessage(case1UserId, "Onda 是什麼", "guard-case-1-evt");
+  assert(Boolean(case1.results[0]?.replyPayload), "G1: ai_active conversation must still reply");
 
-  const case2UserId = "guard-case-2";
-  await saveConversationState(buildHumanActiveState(case2UserId));
-  resetClaudeReplyInvocationCount();
-  const case2 = await sendUserMessage(case2UserId, "那我明天可以嗎", "guard-case-2-evt");
+  const blockedStatuses: ConversationStatus[] = ["human_active", "ai_paused", "closed"];
+  const blockedResults: Array<{ hasNewCustomerMessage: boolean; status: ConversationStatus }> = [];
+  for (const status of blockedStatuses) {
+    const userId = `guard-blocked-${status}`;
+    const initialState = status === "human_active"
+      ? buildHumanActiveState(userId)
+      : status === "ai_paused"
+        ? pauseConversationAi(createEmptyConversationState(userId))
+        : closeConversation(createEmptyConversationState(userId));
+    await saveConversationState(initialState);
+    resetClaudeReplyInvocationCount();
+    const result = await sendUserMessage(userId, "那我明天可以嗎", `guard-blocked-${status}-evt`);
+    const eventResult = result.results[0];
+    const finalState = await loadConversationState(userId);
+
+    assert(result.results.length === 1, `G2-${status}: blocked message must still be recorded as one event`);
+    assert(eventResult?.conversationStatus === status, `G2-${status}: blocked status must remain ${status}`);
+    assert(eventResult?.decision.decisionType === "conversation_state_blocked", `G2-${status}: routing must stop at the conversation guard`);
+    assert(eventResult?.decision.matchedKey === `guard:${status}`, `G2-${status}: matched key must identify the blocking status`);
+    assert(eventResult?.replyPayload === null, `G2-${status}: blocked conversation must not create a LINE reply`);
+    assert(eventResult?.usedAiHumanizer === false, `G2-${status}: blocked conversation must not call the humanizer`);
+    assert(eventResult?.usedAiReplyGenerator === false, `G2-${status}: blocked conversation must not call the reply generator`);
+    assert(result.claudeReplyInvocationCount === 0, `G2-${status}: blocked conversation must not invoke Claude`);
+    assert(finalState.hasNewCustomerMessage, `G2-${status}: staff must still see the new customer message`);
+    blockedResults.push({ hasNewCustomerMessage: finalState.hasNewCustomerMessage, status });
+  }
 
   const case3UserId = "guard-case-3";
   const case3State = markHumanTakeover(createEmptyConversationState(case3UserId), {
     assignedTo: "Amy",
   });
   await saveConversationState(case3State);
+  assert(case3State.status === "human_active", "G3: staff takeover must set human_active");
 
   const case4UserId = "guard-case-4";
   const case4InitialState = recordHandoffPending(
@@ -59,6 +90,8 @@ async function main() {
   );
   await saveConversationState(case4InitialState);
   const case4Second = await sendUserMessage(case4UserId, "我想約高雄館", "guard-case-4-evt-2");
+  assert(case4Second.results[0]?.conversationStatus === "handoff_pending", "G4: pending handoff must remain pending while recording a follow-up");
+  assert(Boolean(case4Second.results[0]?.replyPayload), "G4: handoff_pending alone must not silence the configured acknowledgement");
 
   const case5UserId = "guard-case-5";
   await saveConversationState(buildHumanActiveState(case5UserId));
@@ -66,14 +99,8 @@ async function main() {
   const case5ControlState = resumeConversationAi(case5BeforeResume);
   await saveConversationState(case5ControlState);
   const case5 = await sendUserMessage(case5UserId, "Onda 是什麼", "guard-case-5-evt");
-
-  const case6UserId = "guard-case-6";
-  await saveConversationState(buildHumanActiveState(case6UserId));
-  resetClaudeReplyInvocationCount();
-  const case6 = await sendUserMessage(case6UserId, "請幫我寫一段測試訊息", "guard-case-6-evt");
-
-  const finalCase2State = await loadConversationState(case2UserId);
-  const finalCase6State = await loadConversationState(case6UserId);
+  assert(case5ControlState.status === "ai_active", "G5: resume control must restore ai_active");
+  assert(Boolean(case5.results[0]?.replyPayload), "G5: resumed conversation must reply again");
 
   console.log(
     JSON.stringify(
@@ -82,11 +109,7 @@ async function main() {
           decisionType: case1.results[0]?.decision.decisionType,
           ok: Boolean(case1.results[0]?.replyPayload),
         },
-        case2: {
-          conversationStatus: case2.results[0]?.conversationStatus,
-          hasNewCustomerMessage: finalCase2State.hasNewCustomerMessage,
-          ok: case2.results[0]?.replyPayload === null,
-        },
+        blockedStatuses: blockedResults,
         case3: {
           ok: case3State.status === "human_active",
           status: case3State.status,
@@ -101,17 +124,12 @@ async function main() {
           controlStatus: case5ControlState.status,
           replyAfterResume: Boolean(case5.results[0]?.replyPayload),
         },
-        case6: {
-          claudeReplyInvocationCount: case6.claudeReplyInvocationCount,
-          conversationStatus: case6.results[0]?.conversationStatus,
-          hasNewCustomerMessage: finalCase6State.hasNewCustomerMessage,
-          replyPayload: case6.results[0]?.replyPayload,
-        },
       },
       null,
       2,
     ),
   );
+  console.log("conversation guard validation passed (human_active, ai_paused, closed, pending, and resume)");
 }
 
 main().catch((error) => {

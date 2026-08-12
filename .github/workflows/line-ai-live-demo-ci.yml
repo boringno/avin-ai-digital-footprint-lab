@@ -96,3 +96,10 @@ jobs:
           npm run validate:conversation-sessions
           npm run validate:pricing-subject
           npm run validate:treatment-packs
+          npm run validate:dialogue-state
+          npm run validate:reply-plan
+          npm run validate:reply-renderer
+          npm run validate:treatment-knowledge
+          npm run validate:nlu-decision-adapter
+          npm run validate:dialogue-policy-journeys
+          npm run validate:safety-preflight

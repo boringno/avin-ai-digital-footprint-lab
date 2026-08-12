@@ -65,7 +65,14 @@
     "validate:booking-lead-ownership": "tsx scripts/validate-booking-lead-ownership.ts",
     "validate:conversation-sessions": "tsx scripts/validate-conversation-sessions.ts",
     "validate:pricing-subject": "tsx scripts/validate-pricing-subject.ts",
-    "validate:treatment-packs": "tsx scripts/validate-treatment-packs.ts"
+    "validate:treatment-packs": "tsx scripts/validate-treatment-packs.ts",
+    "validate:dialogue-state": "tsx scripts/validate-dialogue-state.ts",
+    "validate:reply-plan": "tsx scripts/validate-reply-plan.ts",
+    "validate:reply-renderer": "tsx scripts/validate-reply-renderer.ts",
+    "validate:treatment-knowledge": "tsx scripts/validate-treatment-knowledge.ts",
+    "validate:nlu-decision-adapter": "tsx scripts/validate-nlu-decision-adapter.ts",
+    "validate:dialogue-policy-journeys": "tsx scripts/validate-dialogue-policy-journeys.ts",
+    "validate:safety-preflight": "tsx scripts/validate-safety-preflight.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.63.0",

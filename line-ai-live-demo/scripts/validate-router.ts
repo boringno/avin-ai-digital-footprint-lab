@@ -908,6 +908,17 @@ async function main() {
     passed: schedulePhraseResult.decisionType === "doctor_schedule_auto_reply" && schedulePhraseResult.matchedType === "doctor_schedule",
     result: schedulePhraseResult,
   });
+  results.push({
+    expectedDecisionType: schedulePhraseResult.decisionType,
+    expectedMatchedKey: schedulePhraseResult.matchedKey,
+    message: "schedule ReplyPlan freshness",
+    passed:
+      schedulePhraseResult.replyPlan?.decisionType === schedulePhraseResult.decisionType &&
+      schedulePhraseResult.replyPlan?.matchedKey === schedulePhraseResult.matchedKey &&
+      schedulePhraseResult.replyPlan?.renderMode === "deterministic" &&
+      schedulePhraseResult.nextContext.dialogueState?.dialogueAct === schedulePhraseResult.replyPlan?.dialogueAct,
+    result: schedulePhraseResult,
+  });
 
   const bookingScheduleQuestionResult = await routeCustomerMessage({
     conversationContext: {

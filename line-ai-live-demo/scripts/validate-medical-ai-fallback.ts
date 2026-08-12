@@ -462,12 +462,18 @@ async function main() {
   const numericEducation = constrainMedicalAiReply("療程反應可能持續 2 至 4 週，實際仍需由醫師現場評估。", FOOTER);
   assert(numericEducation.includes("2 至 4 週"), "M9: non-price medical numbers must remain answerable");
   const groundedClinicCopy = constrainMedicalAiReply(
-    "本院有提供 ONDA PRO，搭配原廠設備，療程全程無痛。",
+    "本院有提供 ONDA PRO，療程全程無痛。",
     FOOTER,
     { groundedByApprovedKnowledge: true, medical: true },
   );
-  assert(groundedClinicCopy.includes("本院有提供 ONDA PRO"), "M9: approved clinic facts must not be replaced by a generic fallback");
+  assert(groundedClinicCopy.includes("本院有提供 ONDA PRO"), "M9: approved treatment availability must not be replaced by a generic fallback");
   assert(groundedClinicCopy.includes("全程無痛"), "M9: explicitly approved clinic copy must remain usable as the clinic requested");
+  const groundedUnapprovedDevice = constrainMedicalAiReply(
+    "本院有提供 ONDA PRO，也使用德國原廠海芙儀器。",
+    FOOTER,
+    { groundedByApprovedKnowledge: true, medical: true },
+  );
+  assert(!groundedUnapprovedDevice.includes("海芙儀器"), "M9: grounding must never authorize an unapproved clinic device claim");
   const groundedPrice = constrainMedicalAiReply("診所核准價格為 16888 元。", FOOTER, { groundedByApprovedKnowledge: true, medical: true });
   assert(!groundedPrice.includes("16888"), "M9: prices must stay on the deterministic pricing route even when knowledge is grounded");
 
