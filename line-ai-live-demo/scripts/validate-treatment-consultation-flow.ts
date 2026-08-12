@@ -75,8 +75,8 @@ async function main() {
   };
   const bookingForOnda = await route("我想安排預約", bookingAfterOlderTreatment);
   assert(bookingForOnda.matchedKey === "booking_intake", "T6a: an ONDA booking request must stay in booking intake");
-  assert(bookingForOnda.nextContext.bookingDraft.treatment === "肉毒、ONDA PRO", "T6a: active ONDA consultation must be added to an earlier Botox booking draft");
-  assert(bookingForOnda.replyText.includes("肉毒＋ONDA PRO"), "T6a: booking summary must clearly show every treatment the customer wants to discuss");
+  assert(bookingForOnda.nextContext.bookingDraft.treatment === "ONDA PRO", "T6a: a new ONDA booking must replace an unrelated earlier draft");
+  assert(!bookingForOnda.replyText.includes("肉毒＋ONDA PRO"), "T6a: booking summary must not silently combine unrelated treatments");
 
   const bodyConcern = await route("我想改善腹部脂肪");
   assert(bodyConcern.matchedKey === "treatment_consult:onda_pro", "T7: local body-fat concern must proactively recommend ONDA");

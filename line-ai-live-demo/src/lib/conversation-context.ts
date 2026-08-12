@@ -56,10 +56,18 @@ export type RecentConversationTurn = {
 export type ConversationContext = {
   activeFocus?: ConversationFocus;
   bookingSession?: {
+    action?: "add" | "replace" | "use_current";
     lastActiveAt: string;
     status: "collecting" | "stale";
   };
   bookingDraft: BookingDraft;
+  confirmedAppointment?: {
+    appointmentAt: string;
+  };
+  customerProfile?: {
+    name?: string;
+    phone?: string;
+  };
   introSent: boolean;
   lastIntent?: string;
   lastReferencedBranch?: string;
@@ -151,6 +159,40 @@ function normalizeConversationFocus(value: unknown): ConversationFocus | undefin
   };
 }
 
+function normalizeCustomerProfile(value: unknown): ConversationContext["customerProfile"] {
+  if (!value || typeof value !== "object") return undefined;
+  const profile = value as { name?: unknown; phone?: unknown };
+  const name = typeof profile.name === "string" && profile.name.trim() ? profile.name.trim() : undefined;
+  const phone = typeof profile.phone === "string" && profile.phone.trim() ? profile.phone.trim() : undefined;
+  return name || phone ? { name, phone } : undefined;
+}
+
+function normalizeConfirmedAppointment(
+  value: unknown,
+  legacyAppointmentAt?: string,
+): ConversationContext["confirmedAppointment"] {
+  const appointmentAt =
+    value && typeof value === "object" && typeof (value as { appointmentAt?: unknown }).appointmentAt === "string"
+      ? (value as { appointmentAt: string }).appointmentAt
+      : legacyAppointmentAt;
+  return appointmentAt && Number.isFinite(new Date(appointmentAt).getTime()) ? { appointmentAt } : undefined;
+}
+
+function normalizeBookingSession(value: unknown): ConversationContext["bookingSession"] {
+  if (!value || typeof value !== "object") return undefined;
+  const session = value as { action?: unknown; lastActiveAt?: unknown; status?: unknown };
+  if (typeof session.lastActiveAt !== "string" || !["collecting", "stale"].includes(String(session.status))) {
+    return undefined;
+  }
+  return {
+    ...(["add", "replace", "use_current"].includes(String(session.action))
+      ? { action: session.action as "add" | "replace" | "use_current" }
+      : {}),
+    lastActiveAt: session.lastActiveAt,
+    status: session.status as "collecting" | "stale",
+  };
+}
+
 export function appendRecentConversationTurns(
   context: ConversationContext,
   turns: RecentConversationTurn[],
@@ -234,15 +276,12 @@ async function applyConfirmedAppointmentAt(context: ConversationContext) {
   }
 
   const bookingDraft = { ...context.bookingDraft };
-  if (appointmentAt) {
-    bookingDraft.appointmentAt = appointmentAt;
-  } else {
-    delete bookingDraft.appointmentAt;
-  }
+  delete bookingDraft.appointmentAt;
 
   return {
     ...context,
     bookingDraft,
+    confirmedAppointment: appointmentAt ? { appointmentAt } : undefined,
   };
 }
 
@@ -262,6 +301,12 @@ export async function loadConversationContext(userId: string) {
         ...createEmptyConversationContext(userId),
         ...contextJson,
         activeFocus: normalizeConversationFocus(contextJson.activeFocus),
+        bookingSession: normalizeBookingSession(contextJson.bookingSession),
+        confirmedAppointment: normalizeConfirmedAppointment(
+          contextJson.confirmedAppointment,
+          bookingDraftJson.appointmentAt ?? contextJson.bookingDraft?.appointmentAt,
+        ),
+        customerProfile: normalizeCustomerProfile(contextJson.customerProfile),
         bookingDraft: {
           ...createEmptyBookingDraft(),
           ...(contextJson.bookingDraft ?? {}),
@@ -295,6 +340,12 @@ export async function loadConversationContext(userId: string) {
       ...createEmptyConversationContext(userId),
       ...parsed,
       activeFocus: normalizeConversationFocus(parsed.activeFocus),
+      bookingSession: normalizeBookingSession(parsed.bookingSession),
+      confirmedAppointment: normalizeConfirmedAppointment(
+        parsed.confirmedAppointment,
+        parsed.bookingDraft?.appointmentAt,
+      ),
+      customerProfile: normalizeCustomerProfile(parsed.customerProfile),
       bookingDraft: {
         ...createEmptyBookingDraft(),
         ...(parsed.bookingDraft ?? {}),

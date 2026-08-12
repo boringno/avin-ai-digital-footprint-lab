@@ -101,6 +101,7 @@ export type ProcessedWebhookResult = {
     timeSlots: string[];
     treatment?: string;
   };
+  bookingTreatmentAction?: "add" | "replace" | "use_current";
   conversationStatus: string;
   decision: {
     decisionType: string;
@@ -590,6 +591,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
         timeSlots: [...decision.nextContext.bookingDraft.timeSlots],
         treatment: decision.nextContext.bookingDraft.treatment,
       },
+      bookingTreatmentAction: decision.nextContext.bookingSession?.action,
       conversationStatus: decision.conversationState.status,
       decision: {
         decisionType: decision.decisionType,
