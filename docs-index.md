@@ -188,6 +188,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Client Demo Readiness Checklist](line-ai-live-demo/docs/client-demo-readiness-checklist.md)
 - [Client Demo Test Script](line-ai-live-demo/docs/client-demo-test-script.md)
 - [順風醫美 LINE AI 客服後台操作說明](line-ai-live-demo/docs/clinic-staff-operating-guide.md)
+- [對話架構瘦身待辦](line-ai-live-demo/docs/conversation-architecture-backlog.md)
 - [活動價格資料規格](line-ai-live-demo/docs/pricing-campaigns-spec.md)
 - [R1 Reporting Notes](line-ai-live-demo/docs/r1-reporting-implementation-notes.md)
 - [Runtime 回覆發布與回退](line-ai-live-demo/docs/runtime-release-operations.md)
