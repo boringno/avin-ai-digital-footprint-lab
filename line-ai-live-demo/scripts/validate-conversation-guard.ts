@@ -1,4 +1,5 @@
 import { resetClaudeReplyInvocationCount } from "../src/lib/claude-client";
+import { shouldCreateHandoffTask } from "../src/lib/admin-webhook-sync";
 import {
   closeConversation,
   createEmptyConversationState,
@@ -10,7 +11,14 @@ import {
   saveConversationState,
   type ConversationStatus,
 } from "../src/lib/conversation-state";
-import { processWebhookRequestBody } from "../src/lib/line-webhook";
+import {
+  RENDERER_FALLBACK_EXHAUSTED_REASON,
+  applyRendererFallbackHandoff,
+  buildReplyPayload,
+  getRepeatedHandoffAcknowledgement,
+  processWebhookRequestBody,
+} from "../src/lib/line-webhook";
+import { RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT } from "../src/lib/reply-renderer";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -86,12 +94,16 @@ async function main() {
   const case4UserId = "guard-case-4";
   const case4InitialState = recordHandoffPending(
     createEmptyConversationState(case4UserId),
-    "post_treatment_abnormal",
+    RENDERER_FALLBACK_EXHAUSTED_REASON,
   );
   await saveConversationState(case4InitialState);
+  resetClaudeReplyInvocationCount();
   const case4Second = await sendUserMessage(case4UserId, "我想約高雄館", "guard-case-4-evt-2");
   assert(case4Second.results[0]?.conversationStatus === "handoff_pending", "G4: pending handoff must remain pending while recording a follow-up");
   assert(Boolean(case4Second.results[0]?.replyPayload), "G4: handoff_pending alone must not silence the configured acknowledgement");
+  assert(case4Second.results[0]?.usedAiReplyGenerator === false, "G4: pending handoff follow-up must not invoke the reply renderer model");
+  assert(case4Second.claudeReplyInvocationCount === 0, "G4: pending handoff follow-up must not invoke Claude");
+  assert(case4Second.results[0]?.decision.replyText === getRepeatedHandoffAcknowledgement(), "G4: pending handoff follow-up must use the repeated-handoff acknowledgement");
 
   const case5UserId = "guard-case-5";
   await saveConversationState(buildHumanActiveState(case5UserId));
@@ -101,6 +113,49 @@ async function main() {
   const case5 = await sendUserMessage(case5UserId, "Onda 是什麼", "guard-case-5-evt");
   assert(case5ControlState.status === "ai_active", "G5: resume control must restore ai_active");
   assert(Boolean(case5.results[0]?.replyPayload), "G5: resumed conversation must reply again");
+
+  const case6 = applyRendererFallbackHandoff(
+    createEmptyConversationState("guard-case-6"),
+    {
+      handoffRequired: true,
+      replyText: RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT,
+    },
+    "2026-08-13T12:00:00.000Z",
+  );
+  assert(case6?.conversationState.status === "handoff_pending", "G6: renderer fallback exhaustion must enter handoff_pending");
+  assert(case6.conversationState.handoffReason === RENDERER_FALLBACK_EXHAUSTED_REASON, "G6: renderer fallback exhaustion must persist its stable handoff reason");
+  assert(case6.decisionType === "handoff_pending" && case6.matchedType === "handoff_rule", "G6: renderer fallback exhaustion must use the existing admin handoff decision contract");
+  const case6Payload = buildReplyPayload(
+    "guard-case-6-reply",
+    RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT,
+    false,
+  );
+  assert(case6Payload.messages.length > 0, "G6: the first renderer-exhaustion handoff must have a LINE reply payload");
+  assert(
+    JSON.stringify(case6Payload).includes(RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT),
+    "G6: the first renderer-exhaustion payload must contain the one-time acknowledgement",
+  );
+  assert(
+    RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT !== getRepeatedHandoffAcknowledgement(),
+    "G6: later pending messages must not replay the initial terminal acknowledgement",
+  );
+  assert(
+    shouldCreateHandoffTask({ decision: { decisionType: case6.decisionType } }),
+    "G6: renderer fallback exhaustion must use the existing admin task creation path",
+  );
+
+  const case7UserId = "guard-case-7";
+  await saveConversationState(recordHandoffPending(
+    createEmptyConversationState(case7UserId),
+    RENDERER_FALLBACK_EXHAUSTED_REASON,
+  ));
+  resetClaudeReplyInvocationCount();
+  const case7 = await sendUserMessage(case7UserId, "我做完後呼吸困難", "guard-case-7-evt");
+  assert(case7.results[0]?.conversationStatus === "handoff_pending", "G7: emergency during pending handoff must stay pending");
+  assert(case7.results[0]?.decision.matchedKey === "post_procedure_emergency", "G7: deterministic emergency routing must take priority over repeated-handoff acknowledgement");
+  assert(case7.results[0]?.decision.replyText !== getRepeatedHandoffAcknowledgement(), "G7: emergency reply must not be replaced by the ordinary pending acknowledgement");
+  assert(Boolean(case7.results[0]?.replyPayload), "G7: emergency during pending handoff must remain customer-visible");
+  assert(case7.results[0]?.usedAiReplyGenerator === false && case7.claudeReplyInvocationCount === 0, "G7: emergency during pending handoff must remain deterministic");
 
   console.log(
     JSON.stringify(

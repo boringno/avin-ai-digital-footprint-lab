@@ -23,7 +23,8 @@ async function routeSemanticConcern(concern: "jawline_looseness" | "local_contou
 async function main() {
   const jawline = await routeSemanticConcern("jawline_looseness");
   assert(jawline.matchedKey === "treatment_consult:onda_pro:semantic:jawline_looseness", "S1: must use the approved ONDA jawline scenario");
-  assert(jawline.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "S1: must use approved Xiaoying ONDA copy, not LLM-generated text");
+  assert(jawline.replyText.includes("ONDA Pro 超微波6分鐘"), "S1: must use approved ONDA face copy, not LLM-generated text");
+  assert(!jawline.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "S1: a double-chin concern alone must not hard-sell Botox");
   assert(!jawline.replyText.includes("12,999元"), "S1: semantic concern routing must not quote before a price question");
   assert(jawline.nextContext.lastIntent !== "booking_intake", "S1: semantic concern routing must remain consultation");
 

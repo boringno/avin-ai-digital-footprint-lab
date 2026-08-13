@@ -39,7 +39,7 @@ export type ConversationFocus = {
   answeredTopics: string[];
   areaKeys: string[];
   awaiting?: {
-    kind: "area" | "branch" | "concern" | "priority" | "time";
+    kind: "area" | "branch" | "combination" | "concern" | "priority" | "time";
     questionSummary: string;
   };
   bookingExplicit: boolean;
@@ -146,7 +146,7 @@ function normalizeConversationFocus(value: unknown): ConversationFocus | undefin
       ? focus.areaKeys.filter((item): item is string => typeof item === "string")
       : [],
     ...(focus.awaiting &&
-    ["area", "branch", "concern", "priority", "time"].includes(focus.awaiting.kind) &&
+    ["area", "branch", "combination", "concern", "priority", "time"].includes(focus.awaiting.kind) &&
     typeof focus.awaiting.questionSummary === "string"
       ? { awaiting: focus.awaiting }
       : {}),

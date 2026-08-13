@@ -58,7 +58,7 @@ async function validateSingleTreatmentPreferenceFamily() {
     const { decisions } = await runTurns(["想了解 ONDA", "雙下巴", variant]);
     const reply = decisions[2];
     assert(reply.matchedKey.includes(":behavior:"), `CJ1-${index + 1}: preference must use behavior routing`);
-    assert(reply.replyText.includes("局部脂肪") && reply.replyText.includes("咀嚼肌"), `CJ1-${index + 1}: reply must explain both treatment roles`);
+    assert(reply.replyText.includes("ONDA PRO") && !/(?:肉毒|咀嚼肌)/u.test(reply.replyText), `CJ1-${index + 1}: reply must honor the ONDA-only preference without re-pushing Botox`);
     assert(!reply.replyText.includes("目前醫美界非常熱門"), `CJ1-${index + 1}: reply must not replay the ONDA intro`);
   }
 }

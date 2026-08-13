@@ -100,7 +100,10 @@ export async function generateOpenAiReply(message: string, context?: OpenAiReply
           type: "web_search",
         }],
       });
-      approvedKnowledge = extractOpenAiResponseText(searchPayload) ?? undefined;
+      const officialKnowledge = extractOpenAiResponseText(searchPayload) ?? undefined;
+      approvedKnowledge = [approvedKnowledge, officialKnowledge]
+        .filter((value): value is string => Boolean(value?.trim()))
+        .join("\n\n") || undefined;
       sourceUrl = extractOpenAiResponseSourceUrls(searchPayload)
         .find((url) => isAllowedOfficialSource(url, officialSourceDomains));
       tokensIn += searchPayload.usage?.input_tokens ?? 0;

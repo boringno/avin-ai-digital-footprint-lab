@@ -34,7 +34,7 @@ export type DialogueAct = "none" | ReplyDialogueAct;
 export type BookingIntent = "none" | "create" | "modify" | "cancel";
 
 export type DialogueAwaiting = {
-  kind: "area" | "branch" | "concern" | "priority" | "time" | "name" | "phone" | "first_visit";
+  kind: "area" | "branch" | "combination" | "concern" | "priority" | "time" | "name" | "phone" | "first_visit";
   questionSummary: string;
 };
 
@@ -75,6 +75,7 @@ export type DialogueRuntime = {
 };
 
 type DialogueHydrationOptions = {
+  forceNewEpisode?: boolean;
   episodeIdFactory?: (userId: string, at: string) => string;
   now?: Date;
 };
@@ -95,6 +96,7 @@ export type DialogueAction =
   | {
       areaKeys?: string[];
       concernKeys?: string[];
+      replaceTreatments?: boolean;
       source?: KnownNeed["source"];
       treatmentKeys?: string[];
       type: "entities_observed";
@@ -150,6 +152,7 @@ const BOOKING_ACTIONS: BookingTreatmentAction[] = ["add", "replace", "use_curren
 const AWAITING_KINDS: DialogueAwaiting["kind"][] = [
   "area",
   "branch",
+  "combination",
   "concern",
   "priority",
   "time",
@@ -442,15 +445,23 @@ export function synchronizeDialogueStateFromLegacy(
     lifecycle,
     options,
   );
-  const sameEpisode = Boolean(
+  const sameTreatmentEpisode = Boolean(
+    !options.forceNewEpisode &&
     previous &&
       previous.topic === derived.topic &&
       previous.bookingIntent === derived.bookingIntent &&
-      previous.treatmentKeys.join("|") === derived.treatmentKeys.join("|"),
+      previous.treatmentKeys[0] === derived.treatmentKeys[0],
   );
   const dialogue = {
     ...derived,
-    episodeId: sameEpisode && previous ? previous.episodeId : derived.episodeId,
+    episodeId: options.forceNewEpisode
+      ? `${derived.episodeId}:restart`
+      : sameTreatmentEpisode && previous
+        ? previous.episodeId
+        : derived.episodeId,
+    treatmentKeys: sameTreatmentEpisode && previous
+      ? uniqueStrings([...previous.treatmentKeys, ...derived.treatmentKeys])
+      : derived.treatmentKeys,
   };
   return {
     ...context,
@@ -558,7 +569,9 @@ export function reduceDialogueState(state: DialogueState, action: DialogueAction
           action.concernKeys ?? [],
           source,
         ),
-        treatmentKeys: uniqueStrings([...next.treatmentKeys, ...(action.treatmentKeys ?? [])]),
+        treatmentKeys: action.replaceTreatments
+          ? uniqueStrings(action.treatmentKeys ?? [])
+          : uniqueStrings([...next.treatmentKeys, ...(action.treatmentKeys ?? [])]),
       };
     }
     case "route_selected":
@@ -833,19 +846,73 @@ function topicForDialogueAct(dialogueAct: DialogueAct, currentTopic: DialogueTop
   return currentTopic;
 }
 
+function awaitingFromReplyPlan(
+  dialogueAct: DialogueAct,
+  nextQuestion: string | undefined,
+  current: DialogueAwaiting | undefined,
+): DialogueAwaiting | undefined {
+  if (!nextQuestion?.trim()) return current ? { ...current } : undefined;
+
+  const questionSummary = nextQuestion.trim();
+  const normalized = questionSummary.normalize("NFKC").replace(/\s+/gu, "");
+  if (/(?:搭配|組合|單做).{0,12}(?:差|不同|比較)|(?:差異|差別).{0,12}(?:搭配|組合|單做)/u.test(normalized)) {
+    return { kind: "combination", questionSummary };
+  }
+  if (/(?:館別|哪一館|哪個館|分館)/u.test(normalized)) {
+    return { kind: "branch", questionSummary };
+  }
+  if (/(?:日期|時段|平日|假日|白天|晚上)/u.test(normalized)) {
+    return { kind: "time", questionSummary };
+  }
+  if (/(?:姓名|名字)/u.test(normalized)) {
+    return { kind: "name", questionSummary };
+  }
+  if (/(?:電話|手機|聯絡方式)/u.test(normalized)) {
+    return { kind: "phone", questionSummary };
+  }
+  if (/(?:初診|第一次來)/u.test(normalized)) {
+    return { kind: "first_visit", questionSummary };
+  }
+  if (/(?:部位|困擾|想改善哪|哪一種)/u.test(normalized)) {
+    return { kind: "concern", questionSummary };
+  }
+  if (["answer_followup", "compare_options", "explain_combination", "handle_objection", "recommend_direction"].includes(dialogueAct)) {
+    return { kind: "priority", questionSummary };
+  }
+  return current ? { ...current } : undefined;
+}
+
 /** Commit the policy's single winning act through the canonical reducer. */
 export function commitDialogueRouteSelection(
   context: ConversationContextWithDialogueState,
   lifecycle: ConversationState,
-  input: { dialogueAct: DialogueAct; matchedKey: string; now?: Date },
+  input: {
+    dialogueAct: DialogueAct;
+    matchedKey: string;
+    nextQuestion?: string;
+    now?: Date;
+    replaceTreatmentContext?: boolean;
+    treatmentKeys?: string[];
+  },
 ) {
   const at = (input.now ?? new Date()).toISOString();
   const current = hydrateDialogueState(context, lifecycle, { now: input.now });
-  const dialogue = reduceDialogueState(current, {
+  const shouldObserveTreatments = input.treatmentKeys !== undefined && (
+    input.treatmentKeys.length > 0 || input.replaceTreatmentContext === true
+  );
+  const withTreatments = shouldObserveTreatments
+    ? reduceDialogueState(current, {
+        replaceTreatments: input.replaceTreatmentContext,
+        treatmentKeys: input.treatmentKeys,
+        type: "entities_observed",
+      })
+    : current;
+  const dialogue = reduceDialogueState(withTreatments, {
     at,
+    awaiting: awaitingFromReplyPlan(input.dialogueAct, input.nextQuestion, withTreatments.awaiting),
     dialogueAct: input.dialogueAct,
     matchedKey: input.matchedKey,
-    topic: topicForDialogueAct(input.dialogueAct, current.topic),
+    topic: topicForDialogueAct(input.dialogueAct, withTreatments.topic),
     type: "route_selected",
   });
   return {

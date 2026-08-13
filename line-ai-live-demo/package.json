@@ -72,6 +72,11 @@
     "validate:treatment-knowledge": "tsx scripts/validate-treatment-knowledge.ts",
     "validate:nlu-decision-adapter": "tsx scripts/validate-nlu-decision-adapter.ts",
     "validate:dialogue-policy-journeys": "tsx scripts/validate-dialogue-policy-journeys.ts",
+    "validate:dialogue-root-fix": "tsx scripts/validate-dialogue-root-fix.ts",
+    "validate:booking-speech-act": "tsx scripts/validate-booking-speech-act.ts",
+    "validate:treatment-followup-intent": "tsx scripts/validate-treatment-followup-intent.ts",
+    "validate:client-screenshot-regressions": "tsx scripts/validate-client-screenshot-regressions.ts",
+    "validate:treatment-selection": "tsx scripts/validate-treatment-selection.ts",
     "validate:safety-preflight": "tsx scripts/validate-safety-preflight.ts"
   },
   "dependencies": {

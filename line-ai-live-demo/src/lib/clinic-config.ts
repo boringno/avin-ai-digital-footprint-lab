@@ -15,6 +15,7 @@ export type BranchConfig = {
 };
 
 export type TreatmentConversationPack = {
+  approvedCombinationTreatmentKeys?: string[];
   concernReplies?: Array<{
     concernKey: string;
     discoveryLabel: string;
@@ -52,6 +53,7 @@ export type TreatmentConversationPack = {
     pricingCampaignId?: string;
     reply: string;
     terms: string[];
+    treatmentKey?: string;
   }>;
 };
 
@@ -360,12 +362,13 @@ export const clinicConfig: ClinicConfig = {
       aliases: ["onda", "onda pro", "超微波"],
       category: "energy",
       consultationGuide: {
+        approvedCombinationTreatmentKeys: ["botox"],
         concernReplies: [
           {
             concernKey: "jawline_looseness",
             discoveryLabel: "雙下巴／嘴邊肉（輪廓線提升）",
-            reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟥 目前很推薦 ONDA Pro 搭配肉毒小臉，很多在意下顎線的客人都會選擇這個組合\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落",
-            followupPrompt: "您比較想先了解作用方式、適合情況，還是 ONDA Pro 與肉毒搭配的差異呢？😊",
+            reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落\n\n若同時在意咀嚼肌造成的臉寬，再一起比較肉毒小臉的搭配方向。",
+            followupPrompt: "😊 您比較在意雙下巴的脂肪厚度、下顎線鬆弛，還是咀嚼肌造成的臉寬呢？",
             selectionTerms: ["①", "選1", "第一個", "臉部", "臉部輪廓"],
             pricingCampaignId: "promo-2026-08-face-contour-combo",
           },
@@ -430,6 +433,12 @@ export const clinicConfig: ClinicConfig = {
             reply: "❄️ ONDA Pro 搭配冷卻控溫設計；施作感受與術後照護仍會依部位及個人狀況不同，現場會先由醫師評估並說明。",
             followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢😊",
           },
+          {
+            key: "cooling_control",
+            terms: ["冷卻", "控溫", "冷卻系統", "為什麼需要冷卻", "為什麼要冷卻"],
+            reply: "❄️ ONDA Pro 的內建冷卻控溫設計，是在能量作用時協助保護肌膚表面並提升施作舒適度；實際能量與感受仍會依部位及個人狀況調整。",
+            followupPrompt: "您想了解施作感受，還是術後照護呢？😊",
+          },
         ],
         relatedReplies: [
           {
@@ -438,6 +447,7 @@ export const clinicConfig: ClinicConfig = {
             pricingCampaignId: "promo-2026-08-face-contour-combo",
             reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與脂肪分布評估是否適合此療程，再提供最適合的建議",
             terms: ["肉毒功效", "肉毒效果", "肉毒小臉", "咀嚼肌", "國字臉"],
+            treatmentKey: "botox",
           },
         ],
       },
@@ -967,7 +977,7 @@ export const clinicConfig: ClinicConfig = {
 };
 
 export function normalizeClinicText(text: string) {
-  return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLowerCase();
+  return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLocaleLowerCase("en-US");
 }
 
 function matchBranchByMessage(message: string, includeInactive: boolean) {
@@ -988,24 +998,53 @@ export function findAnyBranchByMessage(message: string) {
   return matchBranchByMessage(message, true);
 }
 
-export function findTreatmentByMessage(message: string) {
+export function findAllTreatmentsByMessage(message: string) {
   const normalizedMessage = normalizeClinicText(message);
   const candidates = clinicConfig.treatmentList.flatMap((treatment) =>
     [treatment.name, ...treatment.aliases, ...(treatment.availableBrands ?? [])].map((alias) => ({
       alias,
       aliasLength: normalizeClinicText(alias).length,
+      messageIndex: normalizedMessage.indexOf(normalizeClinicText(alias)),
       treatment,
     })),
   );
 
-  return candidates
-    .filter(({ alias }) => normalizedMessage.includes(normalizeClinicText(alias)))
+  const matches = candidates
+    .filter(({ messageIndex }) => messageIndex >= 0)
     .sort((left, right) => {
+      if (left.messageIndex !== right.messageIndex) {
+        return left.messageIndex - right.messageIndex;
+      }
       if (right.aliasLength !== left.aliasLength) {
         return right.aliasLength - left.aliasLength;
       }
       return right.treatment.name.length - left.treatment.name.length;
-    })[0]?.treatment;
+    });
+
+  const seen = new Set<string>();
+  const uniqueMatches = matches
+    .filter(({ treatment }) => {
+      if (seen.has(treatment.key)) return false;
+      seen.add(treatment.key);
+      return true;
+    });
+
+  // A shared/nested alias such as "蜂巢皮秒" describes one configured
+  // treatment phrase, not two independently requested treatments. Only retain
+  // the longest alias at a given message position; distinct phrases elsewhere
+  // in the message (for example ONDA + 肉毒) remain separate matches.
+  return uniqueMatches
+    .filter((match, index, all) => !all.some((other, otherIndex) =>
+      otherIndex !== index &&
+      other.messageIndex === match.messageIndex &&
+      (other.aliasLength > match.aliasLength ||
+        (other.aliasLength === match.aliasLength && otherIndex < index)),
+    ))
+    .map(({ treatment }) => treatment);
+}
+
+export function findTreatmentByMessage(message: string) {
+  return findAllTreatmentsByMessage(message)[0];
 }
 
 export function getClinicOfferingNames() {

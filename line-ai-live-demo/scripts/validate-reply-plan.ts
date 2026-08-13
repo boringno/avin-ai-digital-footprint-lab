@@ -8,6 +8,7 @@ import {
 } from "../src/lib/reply-plan";
 import { applyControlledScheduleDecision, shouldSuppressOuterAiFooter } from "../src/lib/line-webhook";
 import { createEmptyConversationContext } from "../src/lib/conversation-context";
+import { clinicConfig } from "../src/lib/clinic-config";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -57,8 +58,28 @@ function validateGeneratedTreatmentPlan() {
   assert(plan.approvedFacts.length === 2, "RP2: approved facts must be normalized and de-duplicated");
   assert(plan.concernKeys.length === 1, "RP2: concern keys must be de-duplicated");
   assert(plan.nextQuestion === "比較在意脂肪感還是咀嚼肌呢？", "RP2: next question must be normalized");
-  assert(!buildApprovedKnowledge(plan).includes("咀嚼肌"), "RP2: answer facts alone must not be mislabeled as approved knowledge");
+  const approvedKnowledge = buildApprovedKnowledge(plan);
+  assert(!approvedKnowledge.includes("肉毒小臉著重咀嚼肌"), "RP2: approvedFacts alone must not be mislabeled as approved knowledge");
+  assert(approvedKnowledge.includes("ONDA PRO可評估方向"), "RP2: comparison plans must receive structured treatment directions");
+  assert(approvedKnowledge.includes("搭配評估理由"), "RP2: an approved combination plan must receive clinic-approved combination reasons");
+
+  const ordinaryComparison = {
+    ...plan,
+    dialogueAct: "compare_options" as const,
+    recommendationReasons: [],
+  };
+  const comparisonKnowledge = buildApprovedKnowledge(ordinaryComparison);
+  assert(comparisonKnowledge.includes("ONDA PRO可評估方向"), "RP2: ordinary comparisons must retain structured treatment directions");
+  assert(!comparisonKnowledge.includes("搭配評估理由"), "RP2: ordinary comparisons must not inherit combination-only reasons");
   assert(getReplyPlanFallback(plan) === "ONDA Pro 與肉毒的核准比較底稿。", "RP2: legacy text must remain the fallback");
+}
+
+function validateCoolingControlKnowledge() {
+  const onda = clinicConfig.treatmentList.find((treatment) => treatment.key === "onda_pro");
+  const cooling = onda?.consultationGuide?.quickReplies?.find((reply) => reply.key === "cooling_control");
+  assert(cooling, "RP2b: ONDA must define an approved cooling-control answer");
+  assert(cooling.terms.includes("冷卻") && cooling.terms.includes("控溫"), "RP2b: cooling-control terms must cover natural follow-up wording");
+  assert(cooling.reply.includes("保護肌膚表面") && cooling.reply.includes("舒適度"), "RP2b: the cooling answer must explain its purpose in customer language");
 }
 
 function validateRichMessagePolicy() {
@@ -104,6 +125,7 @@ function validateDialogueActInference() {
     ["booking_intake_reply", "booking_intake", "guided_reply", "collect_booking"],
     ["pricing_auto_reply", "ONDA PRO", "pricing_campaign", "quote_approved_price"],
     ["treatment_intro_reply", "concern:local_contour", "guided_reply", "recommend_direction"],
+    ["treatment_intro_reply", "treatment_compare:onda_pro:pico", "guided_reply", "compare_options"],
     ["fallback_reply", "guided_clarify", "guided_reply", "clarify"],
   ] as const;
 
@@ -146,6 +168,7 @@ function validatePostRouterOverrideFreshness() {
 function main() {
   validateHardDeterministicPolicies();
   validateGeneratedTreatmentPlan();
+  validateCoolingControlKnowledge();
   validateRichMessagePolicy();
   validateHumanAndPriceBoundaries();
   validateDialogueActInference();
