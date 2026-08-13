@@ -262,6 +262,77 @@ export function buildTreatmentApprovedFacts(knowledge: TreatmentKnowledge) {
   ]);
 }
 
+export type TreatmentKnowledgeFactMode =
+  | "introduction"
+  | "followup"
+  | "comparison"
+  | "approved_combination";
+
+/**
+ * Return only the knowledge needed for the current conversational job.  In
+ * particular, a full approved introduction must not be sent back to the model
+ * during a follow-up or comparison, because that makes replaying the opening
+ * script the easiest valid completion.
+ */
+export function buildTreatmentApprovedFactsForMode(
+  knowledge: TreatmentKnowledge,
+  mode: TreatmentKnowledgeFactMode,
+) {
+  const conciseMechanism = knowledge.approvedIntroReplies.includes(knowledge.mechanismInPlainLanguage)
+    ? ""
+    : knowledge.mechanismInPlainLanguage;
+  const labelledDirections = knowledge.expectedDirections.map(
+    (direction) => `${knowledge.name}可評估方向：${direction}`,
+  );
+  const labelledCombinationReasons = Object.values(knowledge.combinationReasons).map(
+    (reason) => `${knowledge.name}搭配評估理由：${reason}`,
+  );
+
+  if (mode === "introduction") {
+    return normalizeStrings([
+      `療程名稱：${knowledge.name}`,
+      ...knowledge.approvedIntroReplies,
+      conciseMechanism,
+      ...labelledDirections,
+      knowledge.comfort ?? "",
+      knowledge.downtime ?? "",
+      knowledge.evaluationNote,
+    ]);
+  }
+
+  if (mode === "comparison") {
+    return normalizeStrings([
+      `療程名稱：${knowledge.name}`,
+      ...(knowledge.availableBrands.length > 0
+        ? [`院內可評估品牌：${knowledge.availableBrands.join("、")}`]
+        : []),
+      ...knowledge.brandReplies,
+      conciseMechanism,
+      ...labelledDirections,
+      knowledge.evaluationNote,
+    ]);
+  }
+
+  if (mode === "approved_combination") {
+    return normalizeStrings([
+      `療程名稱：${knowledge.name}`,
+      conciseMechanism,
+      ...labelledDirections,
+      ...labelledCombinationReasons,
+      knowledge.evaluationNote,
+    ]);
+  }
+
+  return normalizeStrings([
+    `療程名稱：${knowledge.name}`,
+    conciseMechanism,
+    ...labelledDirections,
+    knowledge.comfort ?? "",
+    knowledge.downtime ?? "",
+    knowledge.evaluationNote,
+  ]);
+}
+
 export const treatmentKnowledgeResolver = createTreatmentKnowledgeResolver();
 
 export function resolveTreatmentKnowledgeByKey(key: string) {

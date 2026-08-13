@@ -102,4 +102,9 @@ jobs:
           npm run validate:treatment-knowledge
           npm run validate:nlu-decision-adapter
           npm run validate:dialogue-policy-journeys
+          npm run validate:dialogue-root-fix
+          npm run validate:booking-speech-act
+          npm run validate:treatment-followup-intent
+          npm run validate:client-screenshot-regressions
+          npm run validate:treatment-selection
           npm run validate:safety-preflight

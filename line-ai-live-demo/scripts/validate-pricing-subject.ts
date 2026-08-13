@@ -1,4 +1,5 @@
 import { createEmptyConversationContext, type ConversationContext } from "../src/lib/conversation-context";
+import { parsePricingQuestionKind, type PricingQuestionKind } from "../src/lib/pricing-subject";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
 const NOW = new Date("2026-08-06T06:00:00.000Z");
@@ -31,10 +32,11 @@ async function runTurns(messages: string[], userId: string) {
   return { context, decisions };
 }
 
-function assertOndaFaceComboPrice(decision: RouterDecision, scenario: string) {
+function assertStandaloneOndaPrice(decision: RouterDecision, scenario: string) {
   assert(decision.decisionType === "pricing_auto_reply", `${scenario}: price questions must use the controlled pricing route`);
-  assert(decision.matchedKey === "臉部輪廓組合", `${scenario}: the selected ONDA face combo must remain the pricing subject`);
-  assert(decision.replyText.includes("12,999元"), `${scenario}: the selected face combo must return its approved amount`);
+  assert(decision.matchedKey === "ONDA PRO", `${scenario}: a double-chin concern alone must keep ONDA as the pricing subject`);
+  assert(decision.replyText.includes("16,888"), `${scenario}: standalone ONDA must return its approved amount`);
+  assert(!decision.replyText.includes("12,999"), `${scenario}: standalone ONDA must not silently select the combo campaign`);
   const replyPayload = JSON.stringify(decision.replyMessages ?? []);
   assert(!/VIO|皮秒|除毛/.test(replyPayload), `${scenario}: ONDA price must not attach unrelated treatment cards`);
   assertNoCustomerVisibleCampaignDate(decision, scenario);
@@ -68,15 +70,70 @@ async function getActiveOndaConsultation(userId: string) {
 }
 
 async function main() {
+  const pricingQuestionFamilies: Record<PricingQuestionKind, string[]> = {
+    regular: [
+      "原價是多少",
+      "正常價格呢",
+      "一般價格多少",
+      "不是活動價的話呢",
+      "非活動價怎麼算",
+      "那平常怎麼算",
+      "平常的價位呢",
+      "非活動期間是多少",
+    ],
+    post_campaign: [
+      "那之後正常價格的話呢",
+      "活動結束後多少錢",
+      "優惠結束之後會恢復多少",
+      "這個方案過期後價格呢",
+      "優惠沒了呢",
+    ],
+    alternate: [
+      "還有其他價格嗎",
+      "有沒有別的方案",
+      "還有別的優惠嗎",
+      "另一個價位呢",
+    ],
+    current_offer: [
+      "多少錢",
+      "體驗價呢",
+      "目前價格",
+      "這個優惠價多少",
+      "現在有活動嗎",
+    ],
+    browse: [
+      "目前活動有哪些",
+      "有什麼優惠",
+      "最近有什麼活動",
+    ],
+  };
+
+  for (const [expectedKind, messages] of Object.entries(pricingQuestionFamilies) as Array<[
+    PricingQuestionKind,
+    string[],
+  ]>) {
+    for (const message of messages) {
+      assert(
+        parsePricingQuestionKind(message) === expectedKind,
+        `PK-${expectedKind}: ${message} must classify as ${expectedKind}`,
+      );
+    }
+  }
+
+  for (const message of ["效果差在哪", "要先預約嗎", "活動後可以運動嗎", "這個方案適合我嗎"]) {
+    assert(parsePricingQuestionKind(message) === null, `PK-none: ${message} must not be treated as a price question`);
+  }
+  console.log("PASS: pricing question semantic families distinguish regular/post-campaign/alternate/current/browse intents");
+
   const ondaExperience = await getActiveOndaConsultation("pricing-subject-ps1");
   const ps1 = await route("體驗價", ondaExperience.context);
-  assertOndaFaceComboPrice(ps1, "PS1");
-  console.log("PASS: PS1 active ONDA face consultation resolves 體驗價 to its combo only");
+  assertStandaloneOndaPrice(ps1, "PS1");
+  console.log("PASS: PS1 active ONDA face consultation resolves 體驗價 to standalone ONDA");
 
   const ondaHowMuch = await getActiveOndaConsultation("pricing-subject-ps2");
   const ps2 = await route("多少錢", ondaHowMuch.context);
-  assertOndaFaceComboPrice(ps2, "PS2");
-  console.log("PASS: PS2 active ONDA face consultation resolves 多少錢 to its combo only");
+  assertStandaloneOndaPrice(ps2, "PS2");
+  console.log("PASS: PS2 active ONDA face consultation resolves 多少錢 to standalone ONDA");
 
   const ps3 = await route("現在活動有哪些", createEmptyConversationContext("pricing-subject-ps3"));
   assert(ps3.matchedKey === "promotion_overview", "PS3: an explicit browse request must retain the promotion overview");
@@ -109,7 +166,7 @@ async function main() {
   const ps9Hours = await route("高雄館營業時間", ondaThenHours.context);
   assert(ps9Hours.matchedKey.startsWith("branch_hours:"), "PS9: an intervening clinic-info question must replace the latest intent");
   const ps9 = await route("多少錢", ps9Hours.nextContext);
-  assertOndaFaceComboPrice(ps9, "PS9");
+  assertStandaloneOndaPrice(ps9, "PS9");
   assertNoCustomerVisibleCampaignDate(ps9, "PS9");
   console.log("PASS: PS9 active consultation survives an intervening clinic-info question for pricing");
 

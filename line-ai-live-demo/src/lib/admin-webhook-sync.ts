@@ -1,4 +1,5 @@
 import { isGroupSourceResult, type ProcessedWebhookResult, type ReplySendResult } from "@/lib/line-webhook";
+import { toReplyRendererPayloadJson } from "@/lib/reply-renderer";
 import { notifyAdminHandoffCreated } from "@/lib/admin-handoff-notifications";
 import { PREGNANCY_RISK_NOTE, PREGNANCY_RISK_REASON_SUFFIX } from "@/lib/admin-risk-flags";
 import { storeRuleIntentLabel } from "@/lib/intent-label-store";
@@ -294,6 +295,7 @@ async function insertAiMessage(conversationId: string, result: ProcessedWebhookR
       line_message_id: null,
       message_type: getReplyMessageType(result),
       payload_json: {
+        ...toReplyRendererPayloadJson(result.rendererTelemetry),
         decision_type: result.decision.decisionType,
         matched_key: result.decision.matchedKey,
         matched_type: result.decision.matchedType,

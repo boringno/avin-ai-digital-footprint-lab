@@ -27,17 +27,18 @@ async function main() {
   assert(proactiveRecommendation.decisionType === "treatment_intro_reply", "T1: an ONDA concern must receive a guided treatment reply");
   assert(proactiveRecommendation.matchedKey === "treatment_consult:onda_pro", "T1: double-chin concern must proactively recommend ONDA");
   assert(proactiveRecommendation.replyText.includes("ONDA Pro"), "T1: proactive recommendation must name ONDA Pro");
-  assert(proactiveRecommendation.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "T1: double-chin concern must use its approved scenario reply");
+  assert(proactiveRecommendation.replyText.includes("ONDA Pro 超微波6分鐘"), "T1: double-chin concern must use its approved ONDA scenario reply");
+  assert(!proactiveRecommendation.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "T1: double-chin concern alone must not hard-sell Botox");
   assert(!proactiveRecommendation.replyText.includes("12,999元") && proactiveRecommendation.replyText.includes("😊"), "T1: ONDA face reply must keep Xiaoying tone without unsolicited pricing");
   assert(proactiveRecommendation.nextContext.lastIntent !== "booking_intake", "T1: stating a concern must not start booking");
   assert(proactiveRecommendation.nextContext.lastReferencedTreatment === "ONDA PRO", "T1: proactive recommendation must preserve ONDA context");
 
   const contextualPrice = await route("多少錢", proactiveRecommendation.nextContext);
   assert(contextualPrice.decisionType === "pricing_auto_reply", "T2: a short price follow-up must use the pricing route");
-  assert(contextualPrice.matchedKey === "臉部輪廓組合", "T2: a short price follow-up must retain the selected face combo");
-  assert(contextualPrice.replyText.includes("12,999元"), "T2: a short price follow-up must return the combo amount");
+  assert(contextualPrice.matchedKey === "ONDA PRO", "T2: a short price follow-up must retain the selected standalone ONDA treatment");
+  assert(contextualPrice.replyText.includes("16,888"), "T2: a short price follow-up must return the standalone ONDA amount");
   assert(!contextualPrice.replyText.includes("2026") && !contextualPrice.replyText.includes("12/31"), "T2: internal campaign dates must not be shown proactively");
-  assert(contextualPrice.replyText.includes("肉毒小臉"), "T2: the selected combo must keep its Botox component");
+  assert(!contextualPrice.replyText.includes("肉毒小臉"), "T2: a double-chin concern alone must not add a Botox component");
 
   const staleBookingDraft = createEmptyConversationContext("onda-pricing-after-botox-test");
   staleBookingDraft.bookingDraft.treatment = "肉毒";
@@ -125,7 +126,7 @@ async function main() {
 
   const naturalLanguageConcern = await route("我有肉肉的雙下巴");
   assert(naturalLanguageConcern.matchedKey === "treatment_consult:onda_pro", "T9a: natural double-chin wording must use the ONDA scenario reply");
-  assert(naturalLanguageConcern.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "T9a: natural double-chin wording must receive the Xiaoying face reply");
+  assert(naturalLanguageConcern.replyText.includes("ONDA Pro 超微波6分鐘"), "T9a: natural double-chin wording must receive the approved face reply");
 
   const doubleChinDetail = await route("我在意厚度，這個能消除雙下巴嗎？", concern.nextContext);
   assert(doubleChinDetail.matchedKey === "treatment_consult:onda_pro", "T9aa: a detail question must stay in the ONDA consultation path");
@@ -170,7 +171,7 @@ async function main() {
     lastSeenAt: new Date(NOW.getTime() - 21 * 60 * 1000).toISOString(),
   };
   const freshStartAfterIdle = await route("我想改善嘴邊肉", staleConsultationContext, NOW);
-  assert(freshStartAfterIdle.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "T10e: an expired ONDA consultation must restart with the first-turn face reply");
+  assert(freshStartAfterIdle.replyText.includes("ONDA Pro 超微波6分鐘"), "T10e: an expired ONDA consultation must restart with the first-turn face reply");
   assert(!freshStartAfterIdle.replyText.includes("已記下"), "T10e: an expired ONDA consultation must not inherit stale needs");
 
   const partialConsultationContext = {
@@ -211,8 +212,8 @@ async function main() {
     treatmentKey: "onda_pro",
   };
   const currentFocusPrice = await route("體驗價呢", oldBookingWithNewConsultation);
-  assert(currentFocusPrice.matchedKey === "臉部輪廓組合", "T11a: a current ONDA concern must outrank an older Botox booking campaign");
-  assert(currentFocusPrice.replyText.includes("12,999元"), "T11a: current ONDA face focus must receive its approved combo price");
+  assert(currentFocusPrice.matchedKey === "ONDA PRO", "T11a: a current ONDA concern must outrank an older Botox booking campaign");
+  assert(currentFocusPrice.replyText.includes("16,888"), "T11a: current standalone ONDA focus must receive its approved price");
   assert(!currentFocusPrice.replyText.includes("肉毒除皺 目前可參考：999"), "T11a: stale booking campaign must not leak into the current treatment price");
 
   const pregnancy = await route("我懷孕可以做 ONDA 嗎", intro.nextContext);
@@ -222,7 +223,7 @@ async function main() {
   assert(payment.matchedKey === "payment_methods", "T13: unrelated clinic FAQ must not get trapped in ONDA consultation");
 
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
-  assert(guarantee.matchedKey === "treatment_intro:onda_pro", "T14: an outcome question must stay in treatment guidance for natural qualification");
+  assert(guarantee.matchedKey === "treatment_consult:onda_pro:continue", "T14: an outcome question must continue the active treatment guidance without restarting its intro");
 
   console.log("treatment consultation flow validation passed (34 checks)");
 }

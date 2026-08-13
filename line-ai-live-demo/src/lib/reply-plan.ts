@@ -1,4 +1,10 @@
 import type { LineReplyMessage } from "@/lib/treatment-carousel";
+import {
+  buildTreatmentApprovedFacts,
+  buildTreatmentApprovedFactsForMode,
+  resolveTreatmentKnowledgeByKey,
+  type TreatmentKnowledgeFactMode,
+} from "@/lib/treatment-knowledge";
 
 export const DIALOGUE_ACTS = [
   "introduce_treatment",
@@ -48,6 +54,7 @@ export type ReplyPlan = {
   renderMode: ReplyRenderMode;
   requiresHuman: boolean;
   richMessages: LineReplyMessage[];
+  secondaryFallbackText?: string;
   suppressAiFooter: boolean;
   treatmentKeys: string[];
 };
@@ -77,6 +84,7 @@ export type LegacyReplyPlanOptions = {
   recommendationReasons?: readonly string[];
   renderMode?: ReplyRenderMode;
   requiresHuman?: boolean;
+  secondaryFallbackText?: string;
   treatmentKeys?: readonly string[];
 };
 
@@ -159,6 +167,12 @@ export function inferDialogueActFromLegacy(input: LegacyReplyMetadataInput): Dia
     return "answer_followup";
   }
   if (input.decisionType === "treatment_intro_reply") {
+    if (input.matchedKey.startsWith("treatment_brand_comparison:") || input.matchedKey.startsWith("treatment_brand:")) {
+      return "compare_options";
+    }
+    if (input.matchedKey.startsWith("treatment_compare:")) {
+      return "compare_options";
+    }
     if (input.matchedKey.includes(":behavior:combination_comparison")) {
       return "explain_combination";
     }
@@ -228,6 +242,7 @@ export function legacyDecisionToReplyPlan(
     renderMode: hardDeterministic ? "deterministic" : options.renderMode ?? "generated",
     requiresHuman,
     richMessages,
+    secondaryFallbackText: options.secondaryFallbackText?.trim() || undefined,
     suppressAiFooter: input.suppressAiFooter === true,
     treatmentKeys: normalizeStrings(options.treatmentKeys),
   };
@@ -265,22 +280,77 @@ export function shouldUseDeterministicReply(plan: ReplyPlan) {
 }
 
 export function buildApprovedKnowledge(plan: ReplyPlan) {
+  const treatmentKnowledge = plan.treatmentKeys
+    .map((key) => resolveTreatmentKnowledgeByKey(key))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const knownTreatmentFacts = new Set(
+    treatmentKnowledge.flatMap((knowledge) => buildTreatmentApprovedFacts(knowledge)),
+  );
+  const factMode: TreatmentKnowledgeFactMode = plan.dialogueAct === "introduce_treatment"
+    ? "introduction"
+    : plan.dialogueAct === "explain_combination"
+      ? "approved_combination"
+      : ["compare_options", "handle_objection"].includes(plan.dialogueAct)
+      ? "comparison"
+      : "followup";
+  const actSpecificTreatmentFacts = treatmentKnowledge.flatMap((knowledge) =>
+    buildTreatmentApprovedFactsForMode(knowledge, factMode));
+  const nonTreatmentKnowledge = plan.approvedKnowledge.filter(
+    (fact) => !knownTreatmentFacts.has(fact),
+  );
+  const includeRecommendationReasons = [
+    "compare_options",
+    "explain_combination",
+    "handle_objection",
+    "recommend_direction",
+  ].includes(plan.dialogueAct);
+
   return normalizeStrings([
-    ...plan.approvedKnowledge,
-    ...plan.recommendationReasons,
+    // FAQ copy is itself clinic-approved source material. Other legacy reply
+    // copy must remain fallback-only and is intentionally excluded here.
+    ...(plan.decisionType === "faq_auto_reply" ? plan.approvedFacts : []),
+    ...nonTreatmentKnowledge,
+    ...actSpecificTreatmentFacts,
+    ...(includeRecommendationReasons ? plan.recommendationReasons : []),
     ...plan.exactPriceFacts,
   ]).join("\n").trim();
 }
 
-/** Planning facts guide the answer, but do not by themselves prove clinic approval. */
-export function buildReplyPlanContext(plan: ReplyPlan) {
+const DIALOGUE_ACT_OBJECTIVES: Record<DialogueAct, string> = {
+  introduce_treatment: "用核准知識介紹目前療程，接著詢問一個與困擾或部位有關的問題",
+  discover_need: "承接目前療程，釐清客人最在意的部位、困擾或改善目標",
+  answer_followup: "直接回答客人這一輪的追問，不重播療程首輪介紹",
+  compare_options: "比較客人正在詢問的選項，說清楚差異與各自適合的需求",
+  explain_combination: "解釋單做與搭配的差異及搭配理由，不重新介紹整個療程",
+  handle_objection: "先回答客人的疑慮或偏好，再提供一個低壓力的下一步",
+  recommend_direction: "依已知困擾整理可評估方向與原因，不自行診斷",
+  quote_approved_price: "只回答診所已核准的正確價格主詞與金額",
+  invite_consultation: "降低諮詢門檻並推進一個明確的下一步",
+  collect_booking: "只收集目前仍缺少的一項預約資料",
+  manage_booking: "處理既有預約的修改或取消，不混入平行諮詢",
+  answer_clinic_info: "直接回答診所資訊，不延伸未核准內容",
+  answer_safety: "提供安全且可執行的處置方向，必要時轉真人或緊急聯絡",
+  clarify: "只釐清影響下一步判斷的一個關鍵問題",
+  handoff: "說明真人將接手，停止延伸療程內容",
+  fallback: "承接客人的原問題，提供可繼續對話的最小有效回答",
+};
+
+/**
+ * Strategy guidance is deliberately separate from approved knowledge. Legacy
+ * reply copy may remain as a current-turn fallback, but it must not be fed back
+ * to the model as if it were a structured fact.
+ */
+export function buildReplyPlanGuidance(plan: ReplyPlan) {
   return normalizeStrings([
-    ...plan.answerFacts,
-    ...plan.approvedKnowledge,
-    ...plan.recommendationReasons,
-    ...plan.exactPriceFacts,
+    `本輪對話行為：${plan.dialogueAct}`,
+    `本輪目標：${DIALOGUE_ACT_OBJECTIVES[plan.dialogueAct]}`,
+    plan.knownNeeds.length > 0 ? `已知需求：${plan.knownNeeds.join("、")}` : "",
+    plan.nextQuestion ? `本輪完成回答後可追問：${plan.nextQuestion}` : "",
   ]).join("\n").trim();
 }
+
+/** @deprecated Use buildReplyPlanGuidance. */
+export const buildReplyPlanContext = buildReplyPlanGuidance;
 
 export function getReplyPlanFallback(plan: ReplyPlan) {
   return plan.fallbackText;

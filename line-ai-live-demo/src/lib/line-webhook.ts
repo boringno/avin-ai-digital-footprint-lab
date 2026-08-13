@@ -26,9 +26,15 @@ import {
 } from "@/lib/conversation-state";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
-import { renderReplyPlan } from "@/lib/reply-renderer";
+import {
+  renderReplyPlan,
+  toReplyRendererTelemetry,
+  type ReplyRendererResult,
+  type ReplyRendererTelemetry,
+} from "@/lib/reply-renderer";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply, type RouterDecision } from "@/lib/router";
+import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
@@ -59,6 +65,7 @@ type ClassifiedDecision = {
   matchedKey: string;
   matchedType: string;
   nextContext: ConversationContext;
+  rendererTelemetry?: ReplyRendererTelemetry;
   replyMessages?: LineReplyMessage[];
   replyText: string;
   suppressAiFooter?: boolean;
@@ -68,6 +75,7 @@ type ClassifiedDecision = {
 };
 
 const HIGH_RISK_HANDOFF_REASONS = new Set(["post_procedure_emergency", "post_procedure_issue", "serious_complaint"]);
+export const RENDERER_FALLBACK_EXHAUSTED_REASON = "renderer_fallback_exhausted";
 
 export function isHighRiskHandoffReason(reason: string) {
   return HIGH_RISK_HANDOFF_REASONS.has(reason);
@@ -79,6 +87,28 @@ export function getRepeatedHandoffAcknowledgement() {
 
 export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
   return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
+}
+
+export function applyRendererFallbackHandoff(
+  conversationState: ConversationState,
+  rendered: Pick<ReplyRendererResult, "handoffRequired" | "replyText">,
+  recordedAt = new Date().toISOString(),
+) {
+  if (!rendered.handoffRequired) return null;
+  if (!rendered.replyText.trim()) {
+    throw new Error("Renderer fallback exhaustion must include a customer acknowledgement");
+  }
+
+  return {
+    conversationState: recordHandoffPending(
+      conversationState,
+      RENDERER_FALLBACK_EXHAUSTED_REASON,
+      recordedAt,
+    ),
+    decisionType: "handoff_pending" as const,
+    matchedKey: RENDERER_FALLBACK_EXHAUSTED_REASON,
+    matchedType: "handoff_rule" as const,
+  };
 }
 
 type ControlledScheduleDecision = Pick<
@@ -144,6 +174,7 @@ export type ProcessedWebhookResult = {
     replyToken: string;
   };
   replyToken: string;
+  rendererTelemetry?: ReplyRendererTelemetry;
   sourceGroupId: string;
   sourceRoomId: string;
   sourceType: string;
@@ -278,6 +309,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   const currentTime = new Date();
   const currentIso = currentTime.toISOString();
   let conversationState = applyAutoResumeIfDue(loadedState, currentTime);
+  const hadPendingHandoffAtStart = conversationState.status === "handoff_pending";
 
   if (event.type !== "message") {
     return {
@@ -338,6 +370,45 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         lastSeenAt: currentIso,
       },
       replyText: "",
+      shouldIntroduce: false,
+      usedAiHumanizer: false,
+      usedAiReplyGenerator: false,
+    };
+  }
+
+  if (hadPendingHandoffAtStart) {
+    const preflight = runImmediateSafetyPreflight({
+      message: event.message.text ?? "",
+      now: currentTime,
+    });
+    const pendingDecision = preflight?.decisionType === "handoff_pending" ? preflight : null;
+    const handoffReason = pendingDecision?.matchedKey ?? conversationState.handoffReason ?? "handoff_pending";
+    const handoffAcknowledgement = pendingDecision?.replyText ?? getRepeatedHandoffAcknowledgement();
+    if (pendingDecision) {
+      conversationState = recordHandoffPending(conversationState, handoffReason, currentIso);
+    }
+    const nextContext = appendRecentConversationTurns(
+      {
+        ...existingContext,
+        lastIntent: handoffReason,
+        lastSeenAt: currentIso,
+      },
+      [
+        { role: "user", text: event.message.text ?? "" },
+        { role: "assistant", text: handoffAcknowledgement },
+      ],
+    );
+    if (sourceUserId) {
+      await saveConversationContext(nextContext);
+      await saveConversationState(conversationState);
+    }
+    return {
+      conversationState,
+      decisionType: "handoff_pending",
+      matchedKey: handoffReason,
+      matchedType: "handoff_rule",
+      nextContext,
+      replyText: handoffAcknowledgement,
       shouldIntroduce: false,
       usedAiHumanizer: false,
       usedAiReplyGenerator: false,
@@ -486,13 +557,20 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     plan: replyPlan,
     recentTurns: synchronizedContext.recentTurns ?? [],
   });
+  const rendererHandoff = applyRendererFallbackHandoff(conversationState, rendered, currentIso);
+  if (rendererHandoff) {
+    conversationState = rendererHandoff.conversationState;
+  }
   replyText = rendered.replyText;
-  usedAiReplyGenerator = rendered.generated;
+  usedAiReplyGenerator = rendered.generatorInvoked;
   aiModel = rendered.model ?? aiModel;
   aiTokensIn = (aiTokensIn ?? 0) + (rendered.tokensIn ?? 0) || undefined;
   aiTokensOut = (aiTokensOut ?? 0) + (rendered.tokensOut ?? 0) || undefined;
   aiReplySourceUrl = rendered.sourceUrl;
-  const replyMessages = rendered.generated
+  const rendererTelemetry = toReplyRendererTelemetry(rendered);
+  const replyMessages = rendered.handoffRequired
+    ? undefined
+    : rendered.generated
     ? formatReplyMessages(rendered.messages)
     : routedDecision.replyMessages
       ? formatReplyMessages(routedDecision.replyMessages)
@@ -503,6 +581,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     {
       ...synchronizedContext,
       introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
+      lastIntent: rendererHandoff?.matchedKey ?? synchronizedContext.lastIntent,
     },
     [
       { role: "user", text: event.message.text ?? "" },
@@ -527,16 +606,23 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       ...conversationState,
       updatedAt: currentIso,
     },
-    decisionType: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType,
-    matchedKey: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey,
-    matchedType: usedAiReplyGenerator && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
+    decisionType: rendererHandoff?.decisionType ?? (
+      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType
+    ),
+    matchedKey: rendererHandoff?.matchedKey ?? (
+      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey
+    ),
+    matchedType: rendererHandoff?.matchedType ?? (
+      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType
+    ),
     nextContext,
+    rendererTelemetry,
     replyMessages,
     replyText,
-    // Generated fallback messages already include the disclosure, so do not
-    // append a duplicate footer message.
-    suppressAiFooter: shouldSuppressOuterAiFooter(usedAiReplyGenerator, replyPlan),
-    shouldIntroduce: usedAiReplyGenerator ? false : !existingContext.introSent && !introducedInReply,
+    // Customer-visible generated messages already include the disclosure. A
+    // guarded fallback still relies on the outer payload footer.
+    suppressAiFooter: shouldSuppressOuterAiFooter(rendered.generated, replyPlan),
+    shouldIntroduce: rendered.generated ? false : !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
     usedAiReplyGenerator,
   };
@@ -581,6 +667,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       messageText: event.message?.text ?? "",
       replyPayload,
       replyToken,
+      rendererTelemetry: decision.rendererTelemetry,
       sourceGroupId: event.source?.groupId ?? "",
       sourceRoomId: event.source?.roomId ?? "",
       sourceType: event.source?.type ?? "",

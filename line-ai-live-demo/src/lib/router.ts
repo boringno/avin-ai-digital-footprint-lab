@@ -1,5 +1,6 @@
 ﻿import {
   clinicConfig,
+  findAllTreatmentsByMessage,
   findConcernByMessage,
   findAnyBranchByMessage,
   findBranchByMessage,
@@ -16,6 +17,7 @@ import {
   parseBookingTreatmentAction,
   parseTreatmentConversationBehavior,
 } from "@/lib/conversation-behavior";
+import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 import {
   addBookingTreatment,
   beginReplacementBookingDraft,
@@ -28,7 +30,13 @@ import { buildHumanHandoffReply, isGeneralMedicalOutOfScope, isPlasticSurgeryReq
 import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
 import { loadRuntimeContentOverlay, type RuntimeContentOverlay } from "@/lib/runtime-content-release";
-import { isPriceInquiry, isPromotionBrowseIntent, PRICE_ASK_TERMS, resolvePricingSubject } from "@/lib/pricing-subject";
+import {
+  isPriceInquiry,
+  isPromotionBrowseIntent,
+  parsePricingQuestionKind,
+  PRICE_ASK_TERMS,
+  resolvePricingSubject,
+} from "@/lib/pricing-subject";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -41,6 +49,8 @@ import { createEmptyConversationState } from "@/lib/conversation-state";
 import { commitDialogueRouteSelection, synchronizeDialogueStateFromLegacy } from "@/lib/dialogue-state";
 import { buildContextualReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import { buildTreatmentApprovedFacts, resolveTreatmentKnowledgeByKey } from "@/lib/treatment-knowledge";
+import { parseTreatmentSelection } from "@/lib/treatment-selection";
+import { parseTreatmentFollowupIntent } from "@/lib/treatment-followup-intent";
 
 type DecisionType =
   | "clinic_info_reply"
@@ -116,11 +126,14 @@ const APPOINTMENT_TERMS = [
   "想約諮詢",
   "可約",
 ];
-const BOOKING_DECLINE_TERMS = ["先不預約", "暫時不預約", "目前不預約", "還不預約", "不急著預約", "先了解就好"];
 const BOOKING_CANCEL_TERMS = ["取消預約", "取消這次預約", "先取消", "取消掉", "不約了", "先不要約", "取消這次"];
 const BOOKING_MODIFY_TERMS = ["改約", "改預約", "改我的預約", "修改預約", "更改預約", "改時間", "改期", "改日期", "換時間", "換日期", "改成", "改到", "調時間", "改館別", "換館別"];
 const BRANCH_LIST_TERMS = [
   "幾間",
+  "哪些館",
+  "哪幾館",
+  "有哪幾館",
+  "有哪些館",
   "館別",
   "管別",
   "分館",
@@ -358,8 +371,127 @@ function isHardBlockedQuestion(message: string) {
   );
 }
 
+function isAddressQuestion(message: string) {
+  const normalizedMessage = normalizeText(message);
+  if (/(?:地址|怎麼去|怎麼走|交通方式)/u.test(normalizedMessage)) {
+    return true;
+  }
+
+  const hasWhereQuestion = /(?:在哪|哪裡|位置)/u.test(normalizedMessage);
+  if (!hasWhereQuestion) return false;
+
+  return Boolean(
+    findAnyBranchByMessage(message) ||
+      /(?:你們|診所|院所|分館|分店|據點|門市|館別|哪一館|哪個館|看診|店面)/u.test(normalizedMessage),
+  );
+}
+
+function parseContextualTreatmentBehavior(message: string, context: ConversationContext) {
+  const selection = parseTreatmentSelection(message);
+  const explicitTreatments = selection.selected;
+  const activeTreatmentKey = context.treatmentConsultation?.treatmentKey ??
+    context.activeFocus?.treatmentKey ??
+    context.dialogueState?.treatmentKeys[0];
+  const approvedPair = getApprovedCombinationTreatmentKeys(message, context);
+  const hasApprovedCombinationPair = approvedPair.length >= 2;
+  if (
+    selection.excludedKeys.length > 0 &&
+    (
+      selection.selectedKeys.length > 0 ||
+      (context.dialogueState?.treatmentKeys.length ?? 0) > 1 ||
+      context.dialogueState?.awaiting?.kind === "combination" ||
+      context.activeFocus?.awaiting?.kind === "combination"
+    )
+  ) {
+    return "combination_declined" as const;
+  }
+  return parseTreatmentConversationBehavior(message, {
+    awaitingCombinationDetail:
+      context.dialogueState?.awaiting?.kind === "combination" ||
+      context.activeFocus?.awaiting?.kind === "combination",
+    hasApprovedCombinationPair,
+    mentionedTreatmentCount: explicitTreatments.length,
+  });
+}
+
 function isActiveConsultationComparisonQuestion(message: string, context: ConversationContext) {
-  return Boolean(context.treatmentConsultation && parseTreatmentConversationBehavior(message));
+  return Boolean(context.treatmentConsultation && parseContextualTreatmentBehavior(message, context));
+}
+
+function isExplicitConsultationRestart(message: string) {
+  const normalizedMessage = normalizeText(message);
+  return /(?:重新|重來|從頭|再從頭|重新開始)(?:.{0,12})(?:了解|介紹|說明|聊|諮詢|開始)?/u.test(normalizedMessage) ||
+    /(?:從頭|重新).{0,12}(?:介紹|了解|說明)/u.test(message) ||
+    /\u5f9e\u982d.{0,12}\u4ecb\u7d39/u.test(message.normalize("NFC"));
+}
+
+function getPositiveExplicitTreatments(message: string) {
+  return parseTreatmentSelection(message).selected;
+}
+
+function applyTreatmentSelectionToBooking(message: string, context: ConversationContext) {
+  const selection = parseTreatmentSelection(message);
+  const excludedKeys = new Set(selection.excludedKeys);
+  const bookingTreatment = context.bookingDraft.treatment;
+  if (!bookingTreatment) return;
+
+  if (selection.replaceExisting && selection.selected.length > 0) {
+    context.bookingDraft.treatment = selection.selected.map((treatment) => treatment.name).join("、");
+    return;
+  }
+  if (excludedKeys.size === 0) return;
+
+  const remaining = bookingTreatment
+    .split(/[、,，]/u)
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .filter((label) => {
+      const treatment = findTreatmentByMessage(label);
+      return !treatment || !excludedKeys.has(treatment.key);
+    });
+  context.bookingDraft.treatment = remaining.length > 0
+    ? Array.from(new Set(remaining)).join("、")
+    : undefined;
+}
+
+function isMultiTreatmentComparisonRequest(message: string) {
+  const selection = parseTreatmentSelection(message);
+  if (selection.selectedKeys.length < 2 || selection.excludedKeys.length > 0) return false;
+  const normalized = normalizeText(message);
+  return /(?:搭配|一起|組合|合併|同時|同次|比較|差異|差別|不同|區別|和|跟|與|及|配)/u.test(normalized) || /\+/u.test(message);
+}
+
+function buildUnapprovedTreatmentComparisonReply(message: string) {
+  if (!isMultiTreatmentComparisonRequest(message)) return null;
+  const selected = parseTreatmentSelection(message).selected;
+  const names = selected.map((treatment) => treatment.name);
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_compare:${selected.map((treatment) => treatment.key).join(":")}`,
+    matchedType: "guided_reply",
+    replyText: `🟢 ${names.join("與")}的作用方向不同，可以先依同一個需求一起比較；是否適合同次安排，仍要看部位、膚況與醫師現場評估。😊 您主要想同時改善哪些問題呢？`,
+  } satisfies Omit<RouterDecision, "nextContext">;
+}
+
+function getApprovedCombinationTreatmentKeys(message: string, context: ConversationContext) {
+  const explicitKeys = getPositiveExplicitTreatments(message).map((treatment) => treatment.key);
+  const activeKey = context.treatmentConsultation?.treatmentKey ??
+    context.activeFocus?.treatmentKey ??
+    context.dialogueState?.treatmentKeys[0];
+  const candidateKeys = explicitKeys.length >= 2
+    ? explicitKeys
+    : explicitKeys.length === 1
+      ? Array.from(new Set([activeKey, explicitKeys[0]].filter(Boolean))) as string[]
+    : Array.from(new Set([activeKey, ...(context.dialogueState?.treatmentKeys ?? [])].filter(Boolean))) as string[];
+  for (const primaryKey of candidateKeys) {
+    const approved = findTreatmentByKey(primaryKey)?.consultationGuide?.approvedCombinationTreatmentKeys ?? [];
+    const secondaryKey = candidateKeys.find((key) => key !== primaryKey && approved.includes(key));
+    if (secondaryKey) return [primaryKey, secondaryKey];
+    if (explicitKeys.length === 0 && approved.length > 0) {
+      return [primaryKey, approved[0]];
+    }
+  }
+  return [];
 }
 
 function isFocusCorrection(message: string) {
@@ -688,7 +820,10 @@ function getBookingSessionActivityAt(context: ConversationContext) {
 }
 
 function isActiveBookingConversation(context: ConversationContext | undefined, now: Date) {
-  if (!context || !isBookingConversationIntent(context.lastIntent)) {
+  if (
+    !context ||
+    (!isBookingConversationIntent(context.lastIntent) && context.bookingSession?.status !== "collecting")
+  ) {
     return false;
   }
 
@@ -810,7 +945,7 @@ function resolvePreferredBranchFromContext(message: string, context: Conversatio
 
 function updateContextEntities(message: string, context: ConversationContext) {
   const matchedBranch = findBranchByMessage(message);
-  const matchedTreatment = findTreatmentByMessage(message);
+  const matchedTreatment = getPositiveExplicitTreatments(message)[0];
 
   if (matchedBranch) {
     context.locationPreference = matchedBranch.city;
@@ -880,6 +1015,33 @@ function isPlausibleBookingName(candidate: string | undefined) {
   ].some((term) => candidate.includes(term));
 }
 
+function getActiveBookingRouteIntent(context: ConversationContext) {
+  if (context.lastIntent === "booking_modify_request" || context.dialogueState?.bookingIntent === "modify") {
+    return "booking_modify_request" as const;
+  }
+  if (context.lastIntent === "booking_cancel_request" || context.dialogueState?.bookingIntent === "cancel") {
+    return "booking_cancel_request" as const;
+  }
+  return "booking_intake" as const;
+}
+
+function campaignTreatmentKeys(campaign: PricingCampaign) {
+  return Array.from(new Set(
+    (campaign.booking_treatments ?? "")
+      .split(/[|,，、\n]/u)
+      .map((label) => findTreatmentByMessage(label.trim())?.key)
+      .filter((key): key is string => Boolean(key)),
+  ));
+}
+
+function consultationOwnsCampaign(context: ConversationContext, campaign: PricingCampaign) {
+  const requiredTreatmentKeys = campaignTreatmentKeys(campaign);
+  if (requiredTreatmentKeys.length <= 1) return true;
+
+  const activeTreatmentKeys = new Set(context.dialogueState?.treatmentKeys ?? []);
+  return requiredTreatmentKeys.every((key) => activeTreatmentKeys.has(key));
+}
+
 function findConsultationPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
   const treatmentKey = context.treatmentConsultation?.treatmentKey;
   const concernKeys = context.treatmentConsultation?.concernKeys ?? [];
@@ -889,9 +1051,9 @@ function findConsultationPricingCampaign(context: ConversationContext, activeCam
     (item) => item.concernKey === latestConcernKey,
   )?.pricingCampaignId;
 
-  return pricingCampaignId
-    ? activeCampaigns.find((campaign) => campaign.id === pricingCampaignId) ?? null
-    : null;
+  if (!pricingCampaignId) return null;
+  const campaign = activeCampaigns.find((item) => item.id === pricingCampaignId) ?? null;
+  return campaign && consultationOwnsCampaign(context, campaign) ? campaign : null;
 }
 
 function extractBookingName(message: string, allowSelfIntroduction = false) {
@@ -994,7 +1156,7 @@ function updateBookingDraft(
   treatmentAction: ReturnType<typeof parseBookingTreatmentAction> = "use_current",
 ) {
   const branch = findBranchByMessage(message);
-  const treatment = findTreatmentByMessage(message);
+  const treatments = getPositiveExplicitTreatments(message);
   const phone = extractPhone(message);
   const name = extractBookingName(message, true);
   const firstVisit = extractFirstVisit(message);
@@ -1003,8 +1165,10 @@ function updateBookingDraft(
   if (branch) {
     context.bookingDraft.branch = branch.name;
   }
-  if (treatment) {
-    setBookingTreatment(context, treatment.name, treatmentAction);
+  if (treatments.length > 0) {
+    treatments.forEach((treatment, index) => {
+      setBookingTreatment(context, treatment.name, index === 0 ? treatmentAction : "add");
+    });
   }
   rememberBookingContact(context, { name, phone });
   if (firstVisit) {
@@ -1025,7 +1189,7 @@ function applyBookingRequestToDraft(
   requestedAction: ReturnType<typeof parseBookingTreatmentAction> = parseBookingTreatmentAction(message),
 ) {
   const treatmentAction = requestedAction;
-  const explicitTreatment = findTreatmentByMessage(message);
+  const explicitTreatment = getPositiveExplicitTreatments(message)[0];
 
   if (treatmentAction === "replace" && !explicitTreatment && context.confirmedAppointment) {
     updateBookingDraft(message, context, "use_current");
@@ -1150,7 +1314,7 @@ function isFreeTextBookingInfoQuestion(message: string) {
   }
 
   return (
-    includesAnyTerm(message, ADDRESS_TERMS) ||
+    isAddressQuestion(message) ||
     includesAnyTerm(message, BUSINESS_HOUR_TERMS) ||
     includesAnyTerm(message, DOCTOR_SCHEDULE_TERMS) ||
     includesAnyTerm(message, NEAREST_BRANCH_TERMS) ||
@@ -1536,12 +1700,12 @@ function resolveBranchFromContext(message: string, context: ConversationContext)
     return explicitBranch;
   }
 
-  const isAddressQuestion = includesAnyTerm(message, ADDRESS_TERMS);
+  const hasAddressQuestion = isAddressQuestion(message);
   const isImmediateBranchFollowup = /^(branch_(focus|address|hours|phone)|nearest_branch):/.test(context.lastIntent ?? "");
 
   if (
-    includesAnyTerm(message, [...ADDRESS_TERMS, ...BUSINESS_HOUR_TERMS, ...PHONE_TERMS, ...TRANSPORT_TERMS, ...NEAREST_BRANCH_TERMS]) &&
-    (!isAddressQuestion || isImmediateBranchFollowup)
+    (hasAddressQuestion || includesAnyTerm(message, [...BUSINESS_HOUR_TERMS, ...PHONE_TERMS, ...TRANSPORT_TERMS, ...NEAREST_BRANCH_TERMS])) &&
+    (!hasAddressQuestion || isImmediateBranchFollowup)
   ) {
     const preferredBranch = findBranchByName(context.preferredBranch) ?? findBranchByName(context.lastReferencedBranch);
     if (preferredBranch) {
@@ -1653,6 +1817,12 @@ function preferActiveTreatmentConsultationForBooking(context: ConversationContex
   // earlier treatment already collected for this booking and add this one.
   if (treatment) {
     context.bookingDraft.treatment = addBookingTreatment(context.bookingDraft.treatment, treatment.name);
+    for (const relatedKey of context.dialogueState?.treatmentKeys ?? []) {
+      const related = findTreatmentByKey(relatedKey);
+      if (related && related.key !== treatment.key) {
+        context.bookingDraft.treatment = addBookingTreatment(context.bookingDraft.treatment, related.name);
+      }
+    }
     context.lastReferencedTreatment = treatment.name;
   }
 }
@@ -1747,7 +1917,7 @@ function buildConsultationConcernReply(
   const detailMessage = message ?? "";
   const withTreatmentName = (reply: string) =>
     normalizeText(reply).includes(normalizeText(treatment.name)) ? reply : `🟢【${treatment.name}】\n${reply}`;
-  const behavior = parseTreatmentConversationBehavior(detailMessage);
+  const behavior = parseContextualTreatmentBehavior(detailMessage, context);
   const matchingDetailReplies = guide.detailReplies?.filter(
     (item) =>
       item.concernKey === concernKey &&
@@ -1775,7 +1945,7 @@ function buildConsultationConcernReply(
     if (activeConsultation?.primaryConcernKey === concernKey) {
       const progressiveReply =
         concernKey === "jawline_looseness"
-          ? `🟢 已確認您主要在意 ${concernKeyword}。若脂肪感較明顯，${treatment.name} 會先從局部脂肪與下顎線條方向評估；若也有咀嚼肌，再比較肉毒搭配。😊 我接著可以幫您整理單做與搭配的差異。`
+          ? `🟢 已確認您主要在意 ${concernKeyword}。若脂肪感較明顯，${treatment.name} 會先從局部脂肪與下顎線條方向評估；若也有咀嚼肌，再比較肉毒搭配。😊 您想接著比較單做與搭配的差異嗎？`
           : concernKey === "local_contour"
             ? `🟢 已確認您主要在意 ${concernKeyword}。${treatment.name} 會依脂肪厚度、範圍與緊實需求評估施作方向。😊 您可以直接告訴我更在意脂肪厚度或線條鬆弛，我再往下整理。`
             : `🟢 已確認您主要在意 ${concernKeyword}。我會沿著這個需求繼續說明 ${treatment.name}，不需要您重選一次。😊`;
@@ -1991,7 +2161,7 @@ function getConcernReply(message: string, context: ConversationContext): Consult
 
   if (!matchedConcern && consultationTreatment) {
     const activeConsultation = getActiveTreatmentConsultation(context, consultationTreatment.key);
-    const behavior = parseTreatmentConversationBehavior(message);
+    const behavior = parseContextualTreatmentBehavior(message, context);
     const contextualConcernKey = activeConsultation?.primaryConcernKey ??
       (activeConsultation?.concernKeys.length === 1 ? activeConsultation.concernKeys[0] : undefined);
     const matchesContextualDetail = Boolean(
@@ -2109,39 +2279,95 @@ function getRelatedTreatmentConsultationReply(
 
   return {
     decisionType: "treatment_intro_reply",
-    matchedKey: `treatment_consult:${treatment.key}:related:${relatedReply.key}`,
+    matchedKey: `treatment_consult:${treatment.key}:related:${relatedReply.key}${relatedReply.treatmentKey ? `:${relatedReply.treatmentKey}` : ""}`,
     matchedType: "guided_reply",
     replyText: `${relatedReply.reply}\n${relatedReply.followupPrompt}`,
   } satisfies ConsultationConcernDecision;
 }
 
 function getTreatmentBehaviorReply(message: string, context: ConversationContext): ConsultationConcernDecision | null {
-  const behavior = parseTreatmentConversationBehavior(message);
+  const behavior = parseContextualTreatmentBehavior(message, context);
   if (!behavior) {
     return null;
   }
 
-  const explicitTreatment = findTreatmentByMessage(message);
+  const explicitTreatments = getPositiveExplicitTreatments(message);
+  const treatmentSelection = parseTreatmentSelection(message);
   const activeTreatmentKey = context.treatmentConsultation?.treatmentKey ?? context.activeFocus?.treatmentKey;
-  const activeTreatment = activeTreatmentKey ? findTreatmentByKey(activeTreatmentKey) : null;
-  const treatment = activeTreatment?.consultationGuide ? activeTreatment : explicitTreatment?.consultationGuide ? explicitTreatment : null;
-  const activeConsultation = treatment ? getActiveTreatmentConsultation(context, treatment.key) : null;
-  const concernKey =
-    activeConsultation?.primaryConcernKey ??
-    (activeConsultation?.concernKeys.length === 1 ? activeConsultation.concernKeys[0] : undefined) ??
-    findConcernByMessage(message)?.key;
-  const behaviorReply = treatment?.consultationGuide?.detailReplies?.find(
-    (item) => item.behaviors?.includes(behavior) && (!concernKey || item.concernKey === concernKey),
-  );
-
-  if (!treatment || !behaviorReply) {
+  const excludedTreatmentKeys = parseTreatmentSelection(message).excludedKeys;
+  if (
+    (behavior === "combination_declined" || behavior === "single_treatment_preference") &&
+    explicitTreatments.length === 1 &&
+    activeTreatmentKey &&
+    explicitTreatments[0].key !== activeTreatmentKey &&
+    excludedTreatmentKeys.includes(activeTreatmentKey)
+  ) {
     return null;
+  }
+  const activeTreatment = activeTreatmentKey ? findTreatmentByKey(activeTreatmentKey) : null;
+  const candidates = [
+    ...(activeTreatment?.consultationGuide ? [activeTreatment] : []),
+    ...explicitTreatments.filter((treatment) => treatment.consultationGuide),
+  ].filter((treatment, index, all) => all.findIndex((candidate) => candidate.key === treatment.key) === index);
+  const matchedConcernKey = findConcernByMessage(message)?.key;
+  let selected: {
+    behaviorReply: NonNullable<NonNullable<(typeof candidates)[number]["consultationGuide"]>["detailReplies"]>[number];
+    concernKey: string;
+    treatment: (typeof candidates)[number];
+  } | null = null;
+
+  for (const treatment of candidates) {
+    const activeConsultation = getActiveTreatmentConsultation(context, treatment.key);
+    const concernKey =
+      activeConsultation?.primaryConcernKey ??
+      (activeConsultation?.concernKeys.length === 1 ? activeConsultation.concernKeys[0] : undefined) ??
+      matchedConcernKey;
+    const behaviorReply = treatment.consultationGuide?.detailReplies?.find(
+      (item) => item.behaviors?.includes(behavior) && (!concernKey || item.concernKey === concernKey),
+    );
+    if (behaviorReply) {
+      selected = { behaviorReply, concernKey: concernKey ?? behaviorReply.concernKey, treatment };
+      break;
+    }
+  }
+
+  if (!selected) return null;
+  const { behaviorReply, concernKey, treatment } = selected;
+
+  if (behavior === "combination_declined" || behavior === "single_treatment_preference") {
+    return {
+      consultationAspectKey: `detail:${behaviorReply.aspectKey}`,
+      consultationConcernKey: concernKey,
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:${treatment.key}:behavior:${behavior}`,
+      matchedType: "guided_reply",
+      replyText: `😊 可以，這輪就以 ${treatment.name} 為主，不需要一定搭配其他療程。您想先了解作用方式、療程感受，還是核准價格呢？`,
+    } satisfies ConsultationConcernDecision;
+  }
+
+  // An explicit or contextual comparison question must be answered on this
+  // turn even when the same aspect was discussed earlier. `answeredAspectKeys`
+  // prevents unsolicited repetition; it must not suppress a customer's direct
+  // follow-up and replace it with a generic menu.
+  if (behavior === "combination_comparison") {
+    const alreadyAnswered = getActiveTreatmentConsultation(context, treatment.key)
+      ?.answeredAspectKeys.includes(`detail:${behaviorReply.aspectKey}`);
+    return {
+      consultationAspectKey: `detail:${behaviorReply.aspectKey}`,
+      consultationConcernKey: concernKey,
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:${treatment.key}:behavior:${behavior}`,
+      matchedType: "guided_reply",
+      replyText: alreadyAnswered
+        ? `🌿 如果已確認主要是雙下巴脂肪感，通常先評估 ${treatment.name}；若另有咀嚼肌造成的臉寬，才會再比較肉毒搭配。兩者處理方向不同，不是每個人都需要一起做。\n😊 您目前比較偏脂肪厚度，還是咬肌臉寬呢？`
+        : `${behaviorReply.reply}\n${behaviorReply.followupPrompt}`,
+    } satisfies ConsultationConcernDecision;
   }
 
   const concernReply = buildConsultationConcernReply(
     treatment,
-    concernKey ?? behaviorReply.concernKey,
-    getTreatmentConsultationConcernLabel(concernKey ?? behaviorReply.concernKey),
+    concernKey,
+    getTreatmentConsultationConcernLabel(concernKey),
     context,
     message,
   );
@@ -2151,7 +2377,7 @@ function getTreatmentBehaviorReply(message: string, context: ConversationContext
 
   return {
     consultationAspectKey: concernReply.aspectKey,
-    consultationConcernKey: concernKey ?? behaviorReply.concernKey,
+    consultationConcernKey: concernKey,
     decisionType: "treatment_intro_reply",
     matchedKey: `treatment_consult:${treatment.key}:behavior:${behavior}`,
     matchedType: "guided_reply",
@@ -2199,9 +2425,27 @@ function getSemanticTreatmentConsultationReply(
   } as const;
 }
 
-function getBranchListReply() {
+type BranchListQuestionKind = "addresses" | "count" | "names";
+
+function getBranchListQuestionKind(message: string): BranchListQuestionKind | null {
+  const normalized = normalizeText(message);
+  const mentionsBranchList = /(?:分館|分店|據點|門市|館別|哪些館|哪幾館|有幾間|幾間.*館|各館|所有館)/u.test(normalized) ||
+    /^(?:(?:你們|診所|院所|目前|現在))?(?:總共)?有幾家(?:呢|嗎)?$/u.test(normalized);
+  if (!mentionsBranchList) return null;
+  if (/(?:地址|在哪|哪裡|位置|怎麼去|各館.*資料|所有館.*資料)/u.test(normalized)) return "addresses";
+  if (/(?:幾間|幾家|多少間|共幾)/u.test(normalized)) return "count";
+  return "names";
+}
+
+function getBranchListReply(kind: BranchListQuestionKind = "addresses") {
   const branches = listActiveBranches();
   const branchNames = branches.map((branch) => branch.name).join("、");
+  if (kind === "count") {
+    return `目前共有 ${branches.length} 間館別：${branchNames}。您在哪個縣市呢？我可以接著幫您找較方便的館別😊`;
+  }
+  if (kind === "names") {
+    return `目前可安排的館別有 ${branchNames}。您在哪個縣市呢？我可以接著提供較方便館別的地址😊`;
+  }
   const summary = branches
     .map((branch) => `${branch.name}：${branch.hasCompleteAddress ? branch.address : "地址資料待補"}`)
     .join("\n");
@@ -2223,7 +2467,7 @@ function extractUnknownBranchLikeTerm(message: string) {
     return locationStoreCandidate;
   }
 
-  if (includesAnyTerm(message, BRANCH_LIST_TERMS)) {
+  if (getBranchListQuestionKind(message) || includesAnyTerm(message, BRANCH_LIST_TERMS)) {
     return null;
   }
 
@@ -2245,10 +2489,15 @@ function extractUnknownBranchLikeTerm(message: string) {
 }
 
 function getClinicBasicInfoReply(message: string, context: ConversationContext) {
+  const activeTreatmentFollowup = parseTreatmentFollowupIntent(message, {
+    awaiting: context.dialogueState?.awaiting ?? context.activeFocus?.awaiting,
+    previousMatchedKey: context.lastIntent,
+  });
   if (
     hasStructuredBookingForm(message) ||
     isTreatmentComparisonQuestion(message) ||
-    isActiveConsultationComparisonQuestion(message, context)
+    isActiveConsultationComparisonQuestion(message, context) ||
+    activeTreatmentFollowup
   ) {
     return null;
   }
@@ -2257,6 +2506,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
   const resolvedBranch = resolveBranchFromContext(message, context);
   const anyMatchedBranch = findAnyBranchByMessage(message);
   const branchName = resolvedBranch?.name;
+  const branchListQuestionKind = getBranchListQuestionKind(message);
   const unknownBranchLikeTerm = extractUnknownBranchLikeTerm(message);
 
   if (anyMatchedBranch && !anyMatchedBranch.isActive) {
@@ -2266,6 +2516,15 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
       matchedKey: `inactive_branch:${anyMatchedBranch.name}`,
       matchedType: "config",
       replyText: `目前可安排的館別只有 ${activeBranchNames}。${anyMatchedBranch.name} 目前沒有開放接待；如果您方便，我可以直接幫您整理離您較近的館別或預約需求。`,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  if (branchListQuestionKind) {
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: "branch_list",
+      matchedType: "config",
+      replyText: getBranchListReply(branchListQuestionKind),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2289,14 +2548,14 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
   }
 
   if (
-    includesAnyTerm(message, ADDRESS_TERMS) &&
+    isAddressQuestion(message) &&
     (includesAnyTerm(message, BRANCH_LIST_TERMS) || includesAnyTerm(message, ["全部", "所有", "各館"]))
   ) {
     return {
       decisionType: "clinic_info_reply",
       matchedKey: "branch_list",
       matchedType: "config",
-      replyText: getBranchListReply(),
+      replyText: getBranchListReply("addresses"),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2305,7 +2564,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
       decisionType: "clinic_info_reply",
       matchedKey: "branch_list",
       matchedType: "config",
-      replyText: getBranchListReply(),
+      replyText: getBranchListReply("names"),
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
@@ -2318,7 +2577,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, ["預約制", "需要預約", "要預約嗎", "有預約制嗎"])) {
+  if (classifyBookingSpeechAct(message) === "inquiry") {
     return {
       decisionType: "clinic_info_reply",
       matchedKey: "appointment_policy",
@@ -2366,7 +2625,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, ADDRESS_TERMS) && branchName) {
+  if (isAddressQuestion(message) && branchName) {
     const branch = findBranchByName(branchName);
     const replyText = branch?.hasCompleteAddress
       ? `${branch.name}地址是${branch.address}。`
@@ -2380,7 +2639,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
     } satisfies Omit<RouterDecision, "nextContext">;
   }
 
-  if (includesAnyTerm(message, ADDRESS_TERMS) && !branchName) {
+  if (isAddressQuestion(message) && !branchName) {
     return {
       decisionType: "clinic_info_reply",
       matchedKey: "branch_list",
@@ -2449,7 +2708,7 @@ function getClinicBasicInfoReply(message: string, context: ConversationContext) 
 }
 
 function getTreatmentReply(message: string, context: ConversationContext): Omit<RouterDecision, "nextContext"> | null {
-  const matchedTreatment = findTreatmentByMessage(message);
+  const matchedTreatment = getPositiveExplicitTreatments(message)[0];
   if (!matchedTreatment) {
     return null;
   }
@@ -2472,6 +2731,18 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
   const approvedIntroReply = matchedTreatment.approvedContent.introReplies[0];
   const approvedBrandReply = matchedTreatment.approvedContent.brandReplies[0];
   const consultationGuide = matchedTreatment.consultationGuide;
+
+  // Restart is a lifecycle command, so it must win before keyword quick
+  // replies such as "介紹". Otherwise "從頭介紹 ONDA" is treated as one more
+  // detail question and the old episode never resets.
+  if (consultationGuide && isExplicitConsultationRestart(message)) {
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_intro:${matchedTreatment.key}`,
+      matchedType: "config",
+      replyText: `${approvedIntroReply}\n${buildConsultationDiscoveryPrompt(consultationGuide)}`,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
 
   if (isBrandQuestion) {
     if (approvedBrandReply) {
@@ -2509,6 +2780,34 @@ function getTreatmentReply(message: string, context: ConversationContext): Omit<
     : null;
   if (consultationQuickReply) {
     return consultationQuickReply;
+  }
+
+  const activeTreatmentKey = context.treatmentConsultation?.treatmentKey ?? context.activeFocus?.treatmentKey;
+  if (
+    consultationGuide &&
+    activeTreatmentKey === matchedTreatment.key &&
+    !isExplicitConsultationRestart(message)
+  ) {
+    const activeConsultation = getActiveTreatmentConsultation(context, matchedTreatment.key);
+    const concernKey =
+      activeConsultation?.primaryConcernKey ??
+      (activeConsultation?.concernKeys.length === 1 ? activeConsultation.concernKeys[0] : undefined);
+    const contextualReply = concernKey
+      ? buildConsultationConcernReply(
+          matchedTreatment,
+          concernKey,
+          getTreatmentConsultationConcernLabel(concernKey),
+          context,
+          message,
+        )
+      : null;
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:${matchedTreatment.key}:continue`,
+      matchedType: "guided_reply",
+      replyText: contextualReply?.replyText ??
+        `😊 可以，我們接著從 ${matchedTreatment.name} 幫您整理，不需要重新開始。${buildConsultationDiscoveryPrompt(consultationGuide)}`,
+    } satisfies Omit<RouterDecision, "nextContext">;
   }
 
   const canUseOfficialEducation =
@@ -2562,6 +2861,48 @@ function getTreatmentConsultationFollowup(message: string, context: Conversation
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
+function getTreatmentBrandFollowupReply(message: string, context: ConversationContext) {
+  const intent = parseTreatmentFollowupIntent(message, {
+    awaiting: context.dialogueState?.awaiting ?? context.activeFocus?.awaiting,
+    previousMatchedKey: context.lastIntent,
+  });
+  if (!intent) return null;
+
+  const explicitTreatment = getPositiveExplicitTreatments(message)[0];
+  const activeTreatmentKey = context.dialogueState?.treatmentKeys[0] ??
+    context.treatmentConsultation?.treatmentKey ??
+    context.activeFocus?.treatmentKey;
+  const treatment = explicitTreatment ?? (activeTreatmentKey ? findTreatmentByKey(activeTreatmentKey) : null);
+  const brands = treatment?.availableBrands ?? [];
+  if (!treatment || brands.length === 0) return null;
+
+  if (intent.kind === "brand_overview") {
+    const approvedReply = treatment.approvedContent.brandReplies[0];
+    if (!approvedReply) return null;
+    return {
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_brand:${treatment.key}`,
+      matchedType: "config",
+      replyText: `${approvedReply}\n😊 您想先比較各品牌的作用感受、維持方向，還是適合部位呢？`,
+    } satisfies Omit<RouterDecision, "nextContext">;
+  }
+
+  const aspectLabels = {
+    duration: "維持方向",
+    effect: "效果方向",
+    onset: "起效感受",
+    overall: "整體差異",
+    safety: "安全與副作用",
+    suitability: "適合部位",
+  } as const;
+  return {
+    decisionType: "treatment_intro_reply",
+    matchedKey: `treatment_brand_comparison:${treatment.key}:${intent.aspect}`,
+    matchedType: "guided_reply",
+    replyText: `🟢 院內可評估的品牌包含 ${brands.join("、")}。不同品牌的${aspectLabels[intent.aspect]}不能只用好壞判斷，仍會依施作部位、肌肉狀況、醫師評估與現場安排選擇。😊 您主要想改善哪個部位呢？`,
+  } satisfies Omit<RouterDecision, "nextContext">;
+}
+
 function buildPricingReply(campaign: PricingCampaign) {
   const normalizedFallbackMessage = stripPromotionDateWording(campaign.fallback_message.trim());
   const fallbackSuffix = normalizedFallbackMessage
@@ -2591,7 +2932,19 @@ function getPricingReply(
   today: Date,
   bookingIntentActive: boolean,
 ): RouterDecision | null {
-  if (!isPriceInquiry(message)) {
+  const pricingQuestionKind = parsePricingQuestionKind(message);
+  if (!pricingQuestionKind) {
+    return null;
+  }
+  const hasExplicitPriceWording = /(?:價格|價錢|價位|費用|多少錢|報價|原價|正常價|一般價|平常價|活動價|體驗價|優惠價|折扣)/u.test(
+    normalizeText(message),
+  );
+  const continuesPreviousPriceTask = context.activeFocus?.goal === "ask_price" ||
+    context.dialogueState?.dialogueAct === "quote_approved_price" ||
+    context.lastIntent?.startsWith("pricing_") ||
+    context.lastIntent === "promotion_overview" ||
+    context.dialogueState?.answeredTopics.some((topic) => topic.startsWith("price:")) === true;
+  if (pricingQuestionKind === "alternate" && !hasExplicitPriceWording && !continuesPreviousPriceTask) {
     return null;
   }
 
@@ -2601,6 +2954,22 @@ function getPricingReply(
     contextualMaxAgeMs: TREATMENT_CONSULTATION_SESSION_MS,
     now: today,
   });
+
+  if (["regular", "post_campaign", "alternate"].includes(pricingQuestionKind)) {
+    const treatmentKey = subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
+      ? subject.treatmentKey
+      : context.dialogueState?.treatmentKeys[0] ?? context.treatmentConsultation?.treatmentKey;
+    const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
+    const subjectLabel = treatment ? `${treatment.name}的` : "這項療程的";
+    const requestedLabel = pricingQuestionKind === "alternate" ? "其他價格或方案" : "正常價／原價";
+    return {
+      decisionType: "pricing_auto_reply",
+      matchedKey: `pricing_unapproved:${pricingQuestionKind}:${treatmentKey ?? "unknown"}`,
+      matchedType: "guided_reply",
+      nextContext: context,
+      replyText: `目前資料只有診所核准的活動或體驗方案；${subjectLabel}${requestedLabel}尚未有核准資料，我不會自行猜價。😊 如果您願意，我可以先幫您記下療程與館別，由真人客服協助確認。`,
+    } satisfies RouterDecision;
+  }
 
   if (subject.kind === "browse" && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
@@ -2707,13 +3076,17 @@ async function routeCustomerMessageLegacy({
   const currentTime = now ?? new Date();
   const previousContext = cloneContext(conversationContext);
   const nextContext = cloneContext(conversationContext);
+  const bookingSpeechAct = classifyBookingSpeechAct(trimmedMessage);
   clearExpiredBookingSession(previousContext, currentTime);
   clearExpiredBookingSession(nextContext, currentTime);
-  clearStaleBookingDraft(previousContext, currentTime);
-  clearStaleBookingDraft(nextContext, currentTime);
+  if (bookingSpeechAct !== "inquiry") {
+    clearStaleBookingDraft(previousContext, currentTime);
+    clearStaleBookingDraft(nextContext, currentTime);
+  }
   clearStaleTreatmentConsultation(previousContext, currentTime);
   clearStaleTreatmentConsultation(nextContext, currentTime);
   nextContext.lastSeenAt = currentTime.toISOString();
+  applyTreatmentSelectionToBooking(trimmedMessage, nextContext);
 
   if (!trimmedMessage) {
     return {
@@ -2730,6 +3103,7 @@ async function routeCustomerMessageLegacy({
     now: currentTime,
     skipCustomerAccountLookup: hasStructuredBookingMessage || hasBookingFollowup,
   });
+
   if (priorityHandoffReply) {
     nextContext.lastIntent = priorityHandoffReply.matchedKey;
     return {
@@ -2780,7 +3154,7 @@ async function routeCustomerMessageLegacy({
     };
   }
 
-  if (includesAnyTerm(trimmedMessage, BOOKING_DECLINE_TERMS)) {
+  if (bookingSpeechAct === "decline") {
     nextContext.lastIntent = "consultation_continue_without_booking";
     if (nextContext.activeFocus) {
       nextContext.activeFocus = {
@@ -2806,6 +3180,19 @@ async function routeCustomerMessageLegacy({
     };
   }
 
+  // Asking how appointments work is a clinic-policy question, not permission
+  // to create or mutate a booking. Preserve any existing booking draft.
+  if (bookingSpeechAct === "inquiry") {
+    nextContext.lastIntent = "appointment_policy";
+    return {
+      decisionType: "clinic_info_reply",
+      matchedKey: "appointment_policy",
+      matchedType: "config",
+      nextContext,
+      replyText: clinicConfig.appointmentPolicy.summary,
+    };
+  }
+
   if (hasBookingFollowup || hasStructuredBookingMessage) {
     const bookingIntent: "booking_intake" | "booking_modify_request" | "booking_cancel_request" =
       isBookingCancelRequest(trimmedMessage)
@@ -2813,12 +3200,12 @@ async function routeCustomerMessageLegacy({
         : isBookingModifyRequest(trimmedMessage)
           ? "booking_modify_request"
           : isActiveBookingConversation(previousContext, currentTime)
-            ? (previousContext.lastIntent as "booking_intake" | "booking_modify_request" | "booking_cancel_request")
+            ? getActiveBookingRouteIntent(previousContext)
             : "booking_intake";
     if (bookingIntent === "booking_intake") {
-      const explicitBookingRequest = includesAnyTerm(trimmedMessage, APPOINTMENT_TERMS);
-      const explicitAddition = isBookingTreatmentAddition(trimmedMessage) && Boolean(findTreatmentByMessage(trimmedMessage));
-      const structuredTreatmentReplacement = hasStructuredBookingMessage && Boolean(findTreatmentByMessage(trimmedMessage));
+      const explicitBookingRequest = bookingSpeechAct === "create";
+      const explicitAddition = isBookingTreatmentAddition(trimmedMessage) && getPositiveExplicitTreatments(trimmedMessage).length > 0;
+      const structuredTreatmentReplacement = hasStructuredBookingMessage && getPositiveExplicitTreatments(trimmedMessage).length > 0;
       const bookingAction = explicitBookingRequest || explicitAddition || structuredTreatmentReplacement
         ? applyBookingRequestToDraft(
             trimmedMessage,
@@ -2832,7 +3219,7 @@ async function routeCustomerMessageLegacy({
         : (updateBookingDraft(trimmedMessage, nextContext), nextContext.bookingSession?.action ?? "use_current");
       markBookingSession(nextContext, currentTime, "collecting", bookingAction);
     } else {
-      const explicitTreatment = findTreatmentByMessage(trimmedMessage);
+      const explicitTreatment = getPositiveExplicitTreatments(trimmedMessage)[0];
       const bookingAction = explicitTreatment
         ? applyBookingRequestToDraft(
             trimmedMessage,
@@ -2850,7 +3237,7 @@ async function routeCustomerMessageLegacy({
       concernKeys: nextContext.activeFocus?.concernKeys ?? [],
       goal: bookingIntent === "booking_intake" ? "book_consultation" : "manage_booking",
       treatmentKey:
-        findTreatmentByMessage(trimmedMessage)?.key ??
+        getPositiveExplicitTreatments(trimmedMessage)[0]?.key ??
         (bookingIntent === "booking_intake" ? nextContext.activeFocus?.treatmentKey : undefined),
     };
 
@@ -2870,7 +3257,7 @@ async function routeCustomerMessageLegacy({
     };
   }
 
-  if (isBookingCancelRequest(trimmedMessage)) {
+  if (bookingSpeechAct === "cancel" || isBookingCancelRequest(trimmedMessage)) {
     updateBookingDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_cancel_request";
     markBookingSession(nextContext, currentTime, "collecting");
@@ -2890,8 +3277,8 @@ async function routeCustomerMessageLegacy({
     };
   }
 
-  if (isBookingModifyRequest(trimmedMessage)) {
-    const explicitTreatment = findTreatmentByMessage(trimmedMessage);
+  if (bookingSpeechAct === "modify" || isBookingModifyRequest(trimmedMessage)) {
+    const explicitTreatment = getPositiveExplicitTreatments(trimmedMessage)[0];
     const bookingAction = explicitTreatment
       ? applyBookingRequestToDraft(
           trimmedMessage,
@@ -2919,7 +3306,7 @@ async function routeCustomerMessageLegacy({
 
   // An appointment request remains an intake flow even when it names a doctor.
   // The monthly image is reference material, never an appointment confirmation.
-  if (includesAnyTerm(trimmedMessage, APPOINTMENT_TERMS)) {
+  if (bookingSpeechAct === "create") {
     const bookingAction = applyBookingRequestToDraft(trimmedMessage, nextContext);
     nextContext.lastIntent = "booking_intake";
     markBookingSession(nextContext, currentTime, "collecting", bookingAction);
@@ -2929,7 +3316,7 @@ async function routeCustomerMessageLegacy({
       bookingExplicit: true,
       concernKeys: nextContext.activeFocus?.concernKeys ?? [],
       goal: "book_consultation",
-      treatmentKey: findTreatmentByMessage(trimmedMessage)?.key ?? nextContext.activeFocus?.treatmentKey,
+      treatmentKey: getPositiveExplicitTreatments(trimmedMessage)[0]?.key ?? nextContext.activeFocus?.treatmentKey,
     };
     return {
       decisionType: "booking_intake_reply",
@@ -2962,6 +3349,28 @@ async function routeCustomerMessageLegacy({
     };
   }
 
+  // An explicit lifecycle restart must precede behavior/concern routing. It is
+  // the customer's request to discard the current task, not another detail
+  // question inside the old consultation.
+  if (isExplicitConsultationRestart(trimmedMessage)) {
+    const restartReply = getTreatmentReply(trimmedMessage, nextContext);
+    if (restartReply) {
+      const treatmentKey = restartReply.matchedKey.match(/^treatment_intro:([^:]+)$/u)?.[1];
+      const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
+      if (treatment?.consultationGuide) {
+        nextContext.treatmentConsultation = {
+          answeredAspectKeys: [], concernKeys: [], stage: "needs_discovery", treatmentKey: treatment.key,
+        };
+        nextContext.activeFocus = {
+          answeredTopics: [], areaKeys: [], awaiting: { kind: "concern", questionSummary: "確認想改善的部位或困擾" },
+          bookingExplicit: false, concernKeys: [], goal: "learn_treatment", treatmentKey: treatment.key,
+        };
+      }
+      nextContext.lastIntent = restartReply.matchedKey;
+      return { ...restartReply, nextContext };
+    }
+  }
+
   if (isTreatmentCarouselRequest(trimmedMessage)) {
     nextContext.lastIntent = "treatment_carousel";
     return {
@@ -2972,6 +3381,26 @@ async function routeCustomerMessageLegacy({
       replyMessages: [buildTreatmentCarouselMessage()],
       replyText: getTreatmentCarouselReplyText(),
     };
+  }
+
+  const approvedPairForTurn = getApprovedCombinationTreatmentKeys(trimmedMessage, nextContext);
+  const unapprovedComparisonReply = approvedPairForTurn.length < 2
+    ? buildUnapprovedTreatmentComparisonReply(trimmedMessage)
+    : null;
+  if (unapprovedComparisonReply) {
+    const selectedTreatments = parseTreatmentSelection(trimmedMessage).selected;
+    nextContext.lastReferencedTreatment = selectedTreatments[0]?.name ?? nextContext.lastReferencedTreatment;
+    nextContext.lastIntent = unapprovedComparisonReply.matchedKey;
+    nextContext.activeFocus = {
+      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      awaiting: { kind: "priority", questionSummary: "確認兩個療程想一起改善的問題" },
+      bookingExplicit: false,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "compare_options",
+      treatmentKey: selectedTreatments[0]?.key,
+    };
+    return { ...unapprovedComparisonReply, nextContext };
   }
 
   const treatmentBehaviorReply = getTreatmentBehaviorReply(trimmedMessage, nextContext);
@@ -3021,6 +3450,43 @@ async function routeCustomerMessageLegacy({
       nextContext,
       replyText: consultationPriorityReply.replyText,
     };
+  }
+
+  const brandFollowupReply = getTreatmentBrandFollowupReply(trimmedMessage, nextContext);
+  if (brandFollowupReply) {
+    nextContext.lastIntent = brandFollowupReply.matchedKey;
+    nextContext.activeFocus = {
+      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      awaiting: { kind: "priority", questionSummary: "比較肉毒品牌差異與適合部位" },
+      bookingExplicit: false,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "compare_options",
+      treatmentKey: nextContext.dialogueState?.treatmentKeys[0] ?? nextContext.activeFocus?.treatmentKey,
+    };
+    return { ...brandFollowupReply, nextContext };
+  }
+
+  const earlyPricingReply = getPricingReply(
+    trimmedMessage,
+    previousContext,
+    runtimeData.pricingCampaigns,
+    includePending,
+    currentTime,
+    isBookingConversationIntent(previousContext.lastIntent),
+  );
+  if (earlyPricingReply) {
+    nextContext.lastIntent = earlyPricingReply.matchedKey;
+    nextContext.activeFocus = {
+      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
+      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      bookingExplicit: false,
+      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      goal: "ask_price",
+      requestedInfo: "price",
+      treatmentKey: nextContext.activeFocus?.treatmentKey ?? nextContext.treatmentConsultation?.treatmentKey,
+    };
+    return { ...earlyPricingReply, nextContext };
   }
 
   const concernReply = getConcernReply(trimmedMessage, nextContext);
@@ -3077,31 +3543,6 @@ async function routeCustomerMessageLegacy({
     nextContext.lastIntent = treatmentConsultationFollowup.matchedKey;
     return {
       ...treatmentConsultationFollowup,
-      nextContext,
-    };
-  }
-
-  const pricingReply = getPricingReply(
-    trimmedMessage,
-    previousContext,
-    runtimeData.pricingCampaigns,
-    includePending,
-    currentTime,
-    isBookingConversationIntent(previousContext.lastIntent),
-  );
-  if (pricingReply) {
-    nextContext.lastIntent = pricingReply.matchedKey;
-    nextContext.activeFocus = {
-      answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
-      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
-      bookingExplicit: false,
-      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
-      goal: "ask_price",
-      requestedInfo: "price",
-      treatmentKey: nextContext.activeFocus?.treatmentKey ?? nextContext.treatmentConsultation?.treatmentKey,
-    };
-    return {
-      ...pricingReply,
       nextContext,
     };
   }
@@ -3233,14 +3674,45 @@ function buildReplyPlan(
   message: string,
 ): ReplyPlan {
   const dialogue = decision.nextContext.dialogueState;
-  const treatmentKeys = dialogue?.treatmentKeys ?? [
+  const contextualTreatmentKeys = dialogue?.treatmentKeys ?? [
     decision.nextContext.treatmentConsultation?.treatmentKey,
     decision.nextContext.activeFocus?.treatmentKey,
   ].filter((key): key is string => Boolean(key));
+  const explicitlyMentionedTreatmentKeys = getPositiveExplicitTreatments(message).map((treatment) => treatment.key);
+  const isNeutralTreatmentContrast = parseTreatmentSelection(message).neutralContrast;
+  const treatmentConsultMatch = decision.matchedKey.match(/^treatment_consult:([^:]+)(?::(.+))?$/u);
+  const packOwnedTreatmentKey = treatmentConsultMatch &&
+    !(treatmentConsultMatch[2]?.startsWith("behavior:")) &&
+    !(treatmentConsultMatch[2]?.startsWith("related:")) &&
+    treatmentConsultMatch[1] !== "clarify"
+      ? treatmentConsultMatch[1]
+      : undefined;
+  const behavior = parseContextualTreatmentBehavior(message, decision.nextContext);
+  const approvedPairKeys = getApprovedCombinationTreatmentKeys(message, decision.nextContext);
+  const relatedTargetKey = treatmentConsultMatch?.[2]?.match(/^related:[^:]+:([^:]+)$/u)?.[1];
+  const relatedOwnerKeys = treatmentConsultMatch?.[2]?.startsWith("related:")
+    ? Array.from(new Set([treatmentConsultMatch[1], relatedTargetKey, ...explicitlyMentionedTreatmentKeys].filter((key): key is string => Boolean(key))))
+    : [];
+  const treatmentKeys = isNeutralTreatmentContrast
+    ? contextualTreatmentKeys
+    : relatedOwnerKeys.length > 0
+      ? relatedOwnerKeys
+    : packOwnedTreatmentKey
+    ? [packOwnedTreatmentKey]
+    : explicitlyMentionedTreatmentKeys.length > 1
+    ? (behavior === "combination_comparison" && approvedPairKeys.length >= 2
+        ? approvedPairKeys
+        : explicitlyMentionedTreatmentKeys)
+    : explicitlyMentionedTreatmentKeys.length === 1
+      ? explicitlyMentionedTreatmentKeys
+      : contextualTreatmentKeys;
   const knowledge = treatmentKeys
     .map((key) => resolveTreatmentKnowledgeByKey(key))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const knowledgeFacts = knowledge.flatMap(buildTreatmentApprovedFacts);
+  const recommendationReasons = behavior === "combination_comparison" && approvedPairKeys.length >= 2
+    ? knowledge.flatMap((item) => Object.values(item.combinationReasons))
+    : [];
   const generatedFallback =
     decision.decisionType === "fallback_reply" &&
     (shouldAllowAiFallbackReply(message) || isOfficialTreatmentEducationRoute(decision.matchedKey));
@@ -3268,31 +3740,132 @@ function buildReplyPlan(
       treatmentKeys,
     },
     {
-      answerFacts: [decision.replyText],
-      approvedFacts: [decision.replyText, ...knowledgeFacts],
+      approvedFacts: decision.decisionType === "faq_auto_reply"
+        ? [decision.replyText, ...knowledgeFacts]
+        : knowledgeFacts,
       approvedKnowledge: knowledgeFacts,
       exactPriceFacts: decision.decisionType === "pricing_auto_reply" ? [decision.replyText] : [],
       nextQuestion: findNextQuestion(decision.replyText),
-      recommendationReasons: knowledge.flatMap((item) => Object.values(item.combinationReasons)),
+      recommendationReasons,
       renderMode,
     },
   );
 }
 
 export async function routeCustomerMessage(input: RouteCustomerMessageInput): Promise<RouterDecision> {
-  const decision = await routeCustomerMessageLegacy(input);
+  const treatmentSelection = parseTreatmentSelection(input.message);
+  let decision = await routeCustomerMessageLegacy(input);
+  if (treatmentSelection.neutralContrast && input.conversationContext?.dialogueState) {
+    const priorState = input.conversationContext.dialogueState;
+    decision = {
+      ...decision,
+      decisionType: "treatment_intro_reply",
+      matchedKey: "treatment_neutral_clarification",
+      matchedType: "guided_reply",
+      nextContext: {
+        ...decision.nextContext,
+        activeFocus: input.conversationContext.activeFocus
+          ? { ...input.conversationContext.activeFocus }
+          : decision.nextContext.activeFocus,
+        lastReferencedTreatment: input.conversationContext.lastReferencedTreatment,
+        treatmentConsultation: input.conversationContext.treatmentConsultation
+          ? { ...input.conversationContext.treatmentConsultation }
+          : undefined,
+      },
+      replyText: "😊 了解，這句我先不當成排除或更換療程，會保留目前正在談的方向。您是想比較差異，還是要改成另一項療程呢？",
+    };
+    decision.nextContext.dialogueState = { ...priorState, treatmentKeys: [...priorState.treatmentKeys] };
+  }
+  if (
+    treatmentSelection.replaceExisting &&
+    treatmentSelection.excludedKeys.length === 0 &&
+    treatmentSelection.selected.length === 1 &&
+    input.conversationContext?.dialogueState?.treatmentKeys.length &&
+    input.conversationContext.dialogueState.treatmentKeys.length > 1
+  ) {
+    const treatment = treatmentSelection.selected[0];
+    decision = {
+      ...decision,
+      decisionType: "treatment_intro_reply",
+      matchedKey: `treatment_consult:${treatment.key}:behavior:single_treatment_preference`,
+      matchedType: "guided_reply",
+      replyText: `😊 好的，這輪會改以 ${treatment.name} 為主，不再沿用前一個搭配方向。您想先了解作用方式、療程感受，還是核准價格呢？`,
+    };
+  }
   const lifecycle = createEmptyConversationState(decision.nextContext.userId);
   const synchronizedContext = synchronizeDialogueStateFromLegacy(decision.nextContext, lifecycle, {
+    forceNewEpisode: isExplicitConsultationRestart(input.message),
     now: input.now,
   });
   let routed = { ...decision, nextContext: synchronizedContext };
   const replyPlan = buildReplyPlan(routed, input.message);
+  const explicitlyMentionedTreatmentKeys = treatmentSelection.selectedKeys;
+  const excludedTreatmentKeys = treatmentSelection.excludedKeys;
+  const behavior = parseContextualTreatmentBehavior(input.message, synchronizedContext);
+  const priorTreatmentKeys = input.conversationContext?.dialogueState?.treatmentKeys ?? [];
+  const selectedTreatmentKeys = treatmentSelection.neutralContrast
+    ? (priorTreatmentKeys.length > 0 ? priorTreatmentKeys : replyPlan.treatmentKeys)
+    : behavior === "combination_declined" || behavior === "single_treatment_preference"
+      ? (explicitlyMentionedTreatmentKeys.length > 0
+        ? explicitlyMentionedTreatmentKeys.slice(0, 1)
+        : (priorTreatmentKeys.length > 0 ? priorTreatmentKeys : (synchronizedContext.dialogueState?.treatmentKeys ?? [
+            synchronizedContext.treatmentConsultation?.treatmentKey ?? synchronizedContext.activeFocus?.treatmentKey,
+          ])).filter((key): key is string => Boolean(key) && !excludedTreatmentKeys.includes(key)).slice(0, 1))
+    : treatmentSelection.excludedKeys.length > 0
+      ? priorTreatmentKeys.filter((key) => !excludedTreatmentKeys.includes(key))
+      : replyPlan.treatmentKeys;
+  const currentPrimaryTreatmentKey = synchronizedContext.dialogueState?.treatmentKeys[0] ??
+    synchronizedContext.treatmentConsultation?.treatmentKey ??
+    synchronizedContext.activeFocus?.treatmentKey;
   const nextContext = commitDialogueRouteSelection(synchronizedContext, lifecycle, {
     dialogueAct: replyPlan.dialogueAct,
     matchedKey: replyPlan.matchedKey,
+    nextQuestion: replyPlan.nextQuestion,
     now: input.now,
+    replaceTreatmentContext:
+      behavior === "combination_declined" ||
+      behavior === "single_treatment_preference" ||
+      treatmentSelection.replaceExisting ||
+      treatmentSelection.neutralContrast ||
+      isMultiTreatmentComparisonRequest(input.message) ||
+      (explicitlyMentionedTreatmentKeys.length === 1 &&
+        (isExplicitConsultationRestart(input.message) ||
+          Boolean(
+            currentPrimaryTreatmentKey &&
+            explicitlyMentionedTreatmentKeys[0] !== currentPrimaryTreatmentKey &&
+            ((synchronizedContext.dialogueState?.treatmentKeys.length ?? 0) <= 1 || treatmentSelection.hasDirective),
+          ))),
+    treatmentKeys: selectedTreatmentKeys,
   });
-  routed = { ...routed, nextContext };
+  const alignedContext = { ...nextContext };
+  if (
+    (behavior === "combination_declined" || behavior === "single_treatment_preference") &&
+    selectedTreatmentKeys.length === 1 &&
+    alignedContext.bookingDraft.treatment
+  ) {
+    const retainedTreatment = findTreatmentByKey(selectedTreatmentKeys[0]);
+    if (retainedTreatment) alignedContext.bookingDraft.treatment = retainedTreatment.name;
+  }
+  if (treatmentSelection.replaceExisting && selectedTreatmentKeys.length <= 1) {
+    const selectedKey = selectedTreatmentKeys[0];
+    if (!selectedKey) {
+      delete alignedContext.treatmentConsultation;
+      if (alignedContext.activeFocus) {
+        alignedContext.activeFocus = { ...alignedContext.activeFocus, treatmentKey: undefined };
+      }
+      delete alignedContext.lastReferencedTreatment;
+    } else {
+      const selectedTreatment = findTreatmentByKey(selectedKey);
+      if (selectedTreatment) alignedContext.lastReferencedTreatment = selectedTreatment.name;
+      if (alignedContext.treatmentConsultation) {
+        alignedContext.treatmentConsultation = { ...alignedContext.treatmentConsultation, treatmentKey: selectedKey };
+      }
+      if (alignedContext.activeFocus) {
+        alignedContext.activeFocus = { ...alignedContext.activeFocus, treatmentKey: selectedKey };
+      }
+    }
+  }
+  routed = { ...routed, nextContext: alignedContext };
   return {
     ...routed,
     replyPlan,

@@ -17,6 +17,7 @@ export type AiCustomerReplyContext = {
   officialEducationTreatmentKey?: string;
   preferredBranch?: string;
   recentTurns?: Array<{ role: "assistant" | "user"; text: string }>;
+  replyPlanGuidance?: string;
   treatmentFocus?: string;
 };
 
@@ -93,6 +94,12 @@ export function buildCustomerServiceUserPrompt(message: string, context?: AiCust
       ? [
           "以下內容是診所核准資料或已完成官方來源查證的內部知識。請依客人的問法自然整理，不必逐字照抄；不要輸出網址，也不要加入底稿沒有的價格、活動或院內事實。",
           `內部知識：${context.approvedKnowledge}`,
+        ]
+      : []),
+    ...(context?.replyPlanGuidance
+      ? [
+          "以下是本輪對話策略，不是可對客人宣稱的醫療或院內事實；只用來決定回答重點與下一步。",
+          context.replyPlanGuidance,
         ]
       : []),
     ...(context?.officialEducationTreatmentKey && !context.approvedKnowledge

@@ -26,7 +26,8 @@ async function main() {
 
   const face = await route("①", intro.nextContext);
   assert(face.matchedKey === "treatment_consult:onda_pro", "X2: choice one must select the ONDA face scenario");
-  assert(face.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "X2: face scenario must use Xiaoying copy");
+  assert(face.replyText.includes("ONDA Pro 超微波6分鐘"), "X2: face scenario must use the approved ONDA copy");
+  assert(!face.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "X2: face selection alone must not hard-sell Botox");
   assert(!face.replyText.includes("12,999元"), "X2: selecting a concern must not quote before a price question");
   assert(face.nextContext.lastIntent === "treatment_consult:onda_pro", "X2: an understood face need must remain consultation");
   assert(!face.nextContext.bookingDraft.treatment, "X2: consultation must not populate a booking draft");
@@ -51,14 +52,15 @@ async function main() {
   assert(!body.nextContext.bookingDraft.treatment, "X4: body consultation must not start booking");
 
   const naturalFace = await route("我有肉肉的雙下巴");
-  assert(naturalFace.replyText.includes("目前很推薦 ONDA Pro 搭配肉毒小臉"), "X5: a natural face concern must use the approved scenario");
+  assert(naturalFace.replyText.includes("ONDA Pro 超微波6分鐘"), "X5: a natural face concern must use the approved scenario");
+  assert(!naturalFace.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "X5: a natural face concern alone must not hard-sell Botox");
   assert(!naturalFace.replyText.includes("12,999元"), "X5: a natural face concern must not quote without a price question");
   const naturalBody = await route("蝴蝶袖想改善");
   assert(naturalBody.replyText.includes("身體局部脂肪堆積"), "X5: a natural body concern must use the approved scenario");
   assert(!naturalBody.replyText.includes("體驗價 16,888"), "X5: a natural body concern must not quote without a price question");
 
   const botox = await route("肉毒功效是什麼", face.nextContext);
-  assert(botox.matchedKey === "treatment_consult:onda_pro:related:botox_small_face", `X6: ONDA combo context must use the related Botox reply, got ${botox.matchedKey}`);
+  assert(botox.matchedKey === "treatment_consult:onda_pro:related:botox_small_face:botox", `X6: ONDA combo context must use the related Botox reply with its knowledge owner, got ${botox.matchedKey}`);
   assert(botox.replyText.includes("韓國原廠 Neuronox 肉毒桿菌"), "X6: related Botox reply must use Xiaoying copy");
   assert(botox.replyText.includes("約2～4週效果逐漸明顯"), "X6: related Botox reply must preserve approved timing copy");
   assert(!botox.replyText.includes("12,999元"), "X6: related treatment education must not quote without a price question");
@@ -69,8 +71,12 @@ async function main() {
   assert(!directPrice.replyText.includes("12,999"), "X7: direct price without a face need must not substitute the combo");
 
   const facePriceFollowup = await route("多少錢", face.nextContext);
-  assert(facePriceFollowup.replyText.includes("12,999元"), "X8: a face-context price follow-up must retain the combo");
-  assert(!facePriceFollowup.replyText.includes("16,888"), "X8: face-context price must not jump to the standalone campaign");
+  assert(facePriceFollowup.replyText.includes("16,888"), "X8: a face concern alone must retain the standalone ONDA price");
+  assert(!facePriceFollowup.replyText.includes("12,999"), "X8: a face concern alone must not silently select the combo campaign");
+
+  const explicitCombo = await route("想了解ONDA加肉毒的組合", face.nextContext);
+  const explicitComboPrice = await route("多少錢", explicitCombo.nextContext);
+  assert(explicitComboPrice.replyText.includes("12,999元"), "X8b: an explicitly selected ONDA and Botox combination must retain the combo price");
 
   const wrinkleSwitch = await route("那魚尾紋呢？", face.nextContext);
   assert(wrinkleSwitch.matchedKey === "treatment_consult:botox", "X9: a wrinkle concern must still switch to the Botox pack");
@@ -84,7 +90,16 @@ async function main() {
     stage: "needs_discovery",
     treatmentKey: "onda_pro",
   };
-  const restartedIntro = await route("\u60f3\u4e86\u89e3ONDA", oldFaceContext);
+  const continuedIntro = await route("\u60f3\u4e86\u89e3ONDA", oldFaceContext);
+  assert(
+    continuedIntro.nextContext.treatmentConsultation?.concernKeys.includes("jawline_looseness"),
+    "X11: mentioning the active treatment again must preserve its confirmed concern",
+  );
+  assert(
+    !continuedIntro.replyText.includes("\u76ee\u524d\u91ab\u7f8e\u754c\u975e\u5e38\u71b1\u9580"),
+    "X11: mentioning the active treatment again must not replay the first-turn introduction",
+  );
+  const restartedIntro = await route("\u6211\u60f3\u91cd\u65b0\u958b\u59cb\u4e86\u89e3 ONDA", continuedIntro.nextContext);
   assert(
     restartedIntro.nextContext.treatmentConsultation?.concernKeys.length === 0,
     "X11: an explicit treatment restart must clear old concern state",

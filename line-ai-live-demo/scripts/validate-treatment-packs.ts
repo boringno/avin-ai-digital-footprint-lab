@@ -175,7 +175,6 @@ async function validateCombinationDifferenceAnswersDirectly() {
     "單做跟搭配差在哪",
     "一起做有什麼不同",
     "為什麼要搭肉毒",
-    "我只做 ONDA 可以嗎",
   ];
   for (const [index, variant] of variants.entries()) {
     const { context, decisions } = await runTurns(["想了解 ONDA", "雙下巴", variant]);
@@ -187,6 +186,27 @@ async function validateCombinationDifferenceAnswersDirectly() {
     assert(!answer.matchedKey.includes("branch"), `TP3a-${index + 1}: comparison wording must not be mistaken for a branch query`);
     assert(context.treatmentConsultation?.answeredAspectKeys?.includes("detail:jawline_combination_difference"), `TP3a-${index + 1}: answered combination difference must be recorded as a stable aspect`);
   }
+
+  const singlePreference = await runTurns(["想了解 ONDA", "雙下巴", "我只做 ONDA 可以嗎"]);
+  const singleAnswer = singlePreference.decisions[2];
+  assert(
+    singleAnswer.replyText.includes("ONDA") && !singleAnswer.replyText.includes("肉毒"),
+    "TP3a-5: an explicit ONDA-only preference must be acknowledged without re-pushing Botox",
+  );
+  assert(
+    !singleAnswer.replyText.includes("ONDA Pro超微波是目前醫美界"),
+    "TP3a-5: an explicit ONDA-only preference must not replay the first-turn introduction",
+  );
+  assert(!singleAnswer.matchedKey.includes("branch"), "TP3a-5: an ONDA-only preference must not be mistaken for a branch query");
+  assert(
+    singlePreference.context.dialogueState?.treatmentKeys.length === 1 &&
+      singlePreference.context.dialogueState.treatmentKeys[0] === "onda_pro",
+    "TP3a-5: an explicit ONDA-only preference must contract canonical ownership to ONDA",
+  );
+  assert(
+    singlePreference.context.activeFocus?.treatmentKey === "onda_pro",
+    "TP3a-5: an explicit ONDA-only preference must keep legacy focus aligned to ONDA",
+  );
   console.log("PASS: TP3a combination difference is answered before the next question");
 }
 

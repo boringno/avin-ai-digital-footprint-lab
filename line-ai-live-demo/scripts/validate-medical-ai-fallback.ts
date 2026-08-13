@@ -133,6 +133,7 @@ async function assertOfficialSearchIsConstrained() {
     }) as typeof fetch;
 
     const reply = await generateOpenAiReply("M22 彩衝光原理是什麼", {
+      approvedKnowledge: "診所核准知識：院內療程資訊仍以診所資料為準。",
       controlledMedicalFallback: true,
       officialEducationTreatmentKey: "m22_ipl",
     });
@@ -152,6 +153,7 @@ async function assertOfficialSearchIsConstrained() {
     assert(customerDraftRequest.tools === undefined, "M12: customer-facing draft must not call web search directly");
     assert(customerDraftRequest.reasoning?.effort === "none", "M12: GPT-5.6 customer reply must use none reasoning for LINE latency");
     assert(customerDraftRequest.input?.includes("內部知識"), "M12: verified official notes must become internal knowledge");
+    assert(customerDraftRequest.input?.includes("診所核准知識"), "M12: official notes must augment rather than replace clinic-approved knowledge");
 
     const messages = buildAiReplyMessages(reply.text, FOOTER, { medical: true });
     assert(messages.length === 1, "M12: cited response and disclosure should remain together without artificial splitting");
