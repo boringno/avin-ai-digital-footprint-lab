@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import type { DialogueState } from "../src/lib/dialogue-state";
 import { buildApprovedKnowledge, legacyDecisionToReplyPlan } from "../src/lib/reply-plan";
 import {
-  RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT,
-  buildRendererFallbackHandoffMessages,
+  RENDERER_TERMINAL_SAFE_FALLBACK,
+  buildRendererTerminalFallbackMessages,
   renderReplyPlan,
   toReplyRendererPayloadJson,
   toReplyRendererTelemetry,
@@ -289,7 +289,7 @@ async function validateFallbackExhaustionNeverReplaysUncheckedText() {
   const plan = treatmentPlan("第一個安全保底回覆。");
   const recentTurns: Array<{ role: "assistant" | "user"; text: string }> = [];
   const replies: string[] = [];
-  let handoffResult: Awaited<ReturnType<typeof renderReplyPlan>> | undefined;
+  let terminalResult: Awaited<ReturnType<typeof renderReplyPlan>> | undefined;
   for (let turn = 0; turn < 12; turn += 1) {
     const result = await renderReplyPlan({
       customerMessage: "繼續",
@@ -299,8 +299,9 @@ async function validateFallbackExhaustionNeverReplaysUncheckedText() {
       plan,
       recentTurns,
     });
-    if (result.handoffRequired) {
-      handoffResult = result;
+    assert.equal(result.handoffRequired, false, `RR3e: ordinary renderer failure must not request handoff on turn ${turn + 1}`);
+    if (result.replyText === RENDERER_TERMINAL_SAFE_FALLBACK) {
+      terminalResult = result;
       break;
     }
     assert(result.replyText.trim().length > 0, `RR3e: fallback turn ${turn + 1} must remain customer-visible`);
@@ -308,13 +309,12 @@ async function validateFallbackExhaustionNeverReplaysUncheckedText() {
     replies.push(result.replyText);
     recentTurns.push({ role: "assistant", text: result.replyText });
   }
-  assert(replies.length >= 4, "RR3e: the dynamic fallback ladder should provide several distinct safe replies before handoff");
-  assert(handoffResult, "RR3e: exhausting the guarded ladder must terminate in a human handoff");
-  assert.equal(handoffResult.fallbackVariant, "handoff", "RR3e: terminal exhaustion must use the explicit handoff variant");
-  assert.equal(handoffResult.replyText, RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT, "RR3e: terminal exhaustion must use the guarded one-time acknowledgement");
-  assert(handoffResult.replyText.trim().length > 0 && handoffResult.messages.length > 0, "RR3e: terminal exhaustion must never create a silent LINE reply");
-  assert(handoffResult.messages.every((message) => message.type === "text"), "RR3e: terminal handoff acknowledgement must be text-only");
-  assert(!/(?:https?:\/\/|www\.|8\/31|999\s*元|保證|一定有效|永久|完全無副作用)/iu.test(handoffResult.replyText), "RR3e: terminal acknowledgement must remain customer-safe");
+  assert(replies.length >= 4, "RR3e: the dynamic fallback ladder should provide several distinct safe replies before terminal fallback");
+  assert(terminalResult, "RR3e: exhausting the guarded ladder must terminate in a safe customer-visible fallback");
+  assert.equal(terminalResult.fallbackVariant, "safe", "RR3e: terminal exhaustion must use the safe variant");
+  assert(terminalResult.replyText.trim().length > 0 && terminalResult.messages.length > 0, "RR3e: terminal exhaustion must never create a silent LINE reply");
+  assert(terminalResult.messages.every((message) => message.type === "text"), "RR3e: terminal safe fallback must be text-only");
+  assert(!/(?:https?:\/\/|www\.|8\/31|999\s*元|保證|一定有效|永久|完全無副作用)/iu.test(terminalResult.replyText), "RR3e: terminal fallback must remain customer-safe");
 
   const acknowledgementAlreadySeen = await renderReplyPlan({
     customerMessage: "繼續",
@@ -324,20 +324,20 @@ async function validateFallbackExhaustionNeverReplaysUncheckedText() {
     plan,
     recentTurns: [
       ...recentTurns,
-      { role: "assistant", text: RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT },
+      { role: "assistant", text: RENDERER_TERMINAL_SAFE_FALLBACK },
     ],
   });
-  assert.equal(acknowledgementAlreadySeen.handoffRequired, true, "RR3e: repeat protection must not turn a terminal acknowledgement back into silence");
-  assert(acknowledgementAlreadySeen.replyText.trim().length > 0, "RR3e: terminal acknowledgement must remain non-empty even when present in recent context");
+  assert.equal(acknowledgementAlreadySeen.handoffRequired, false, "RR3e: terminal safe fallback must never become a handoff");
+  assert(acknowledgementAlreadySeen.replyText.trim().length > 0, "RR3e: terminal fallback must remain non-empty even when present in recent context");
 
   const planWithStaleRichMessage = treatmentPlan("不應出現的舊答案");
   planWithStaleRichMessage.richMessages = [{ type: "text", text: "STALE_RICH_MESSAGE" }];
-  const textOnlyHandoff = buildRendererFallbackHandoffMessages(
+  const textOnlyFallback = buildRendererTerminalFallbackMessages(
     { footer: FOOTER, includeFooter: true, plan: planWithStaleRichMessage },
-    RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT,
+    RENDERER_TERMINAL_SAFE_FALLBACK,
   );
-  assert(textOnlyHandoff.every((message) => message.type === "text"), "RR3e: terminal handoff builder must only produce text messages");
-  assert(!JSON.stringify(textOnlyHandoff).includes("STALE_RICH_MESSAGE"), "RR3e: terminal handoff must never reuse stale rich messages");
+  assert(textOnlyFallback.every((message) => message.type === "text"), "RR3e: terminal fallback builder must only produce text messages");
+  assert(!JSON.stringify(textOnlyFallback).includes("STALE_RICH_MESSAGE"), "RR3e: terminal fallback must never reuse stale rich messages");
 }
 
 async function validateGuardRejectionUsesPlanFallback() {

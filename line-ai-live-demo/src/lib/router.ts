@@ -2429,8 +2429,8 @@ type BranchListQuestionKind = "addresses" | "count" | "names";
 
 function getBranchListQuestionKind(message: string): BranchListQuestionKind | null {
   const normalized = normalizeText(message);
-  const mentionsBranchList = /(?:分館|分店|據點|門市|館別|哪些館|哪幾館|有幾間|幾間.*館|各館|所有館)/u.test(normalized) ||
-    /^(?:(?:你們|診所|院所|目前|現在))?(?:總共)?有幾家(?:呢|嗎)?$/u.test(normalized);
+  const mentionsBranchList = /(?:分館|分店|據點|門市|館別|哪些館|哪幾館|有幾間|幾間.*館|幾家店|各館|所有館)/u.test(normalized) ||
+    /^(?:(?:你們|診所|院所|目前|現在))?(?:總共)?有幾家(?:店)?(?:呢|嗎)?$/u.test(normalized);
   if (!mentionsBranchList) return null;
   if (/(?:地址|在哪|哪裡|位置|怎麼去|各館.*資料|所有館.*資料)/u.test(normalized)) return "addresses";
   if (/(?:幾間|幾家|多少間|共幾)/u.test(normalized)) return "count";

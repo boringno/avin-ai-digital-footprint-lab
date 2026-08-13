@@ -19,6 +19,7 @@ import {
   loadConversationState,
   markCustomerMessageReceived,
   recordHandoffPending,
+  resumeConversationAi,
   saveConversationState,
   shouldBlockAiReply,
   shouldSuppressRepeatedHandoff,
@@ -89,26 +90,14 @@ export function shouldSuppressHandoffReply(conversationState: ConversationState,
   return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
 }
 
-export function applyRendererFallbackHandoff(
+export function recoverLegacyRendererFallbackHandoff(
   conversationState: ConversationState,
-  rendered: Pick<ReplyRendererResult, "handoffRequired" | "replyText">,
-  recordedAt = new Date().toISOString(),
+  resumedAt = new Date().toISOString(),
 ) {
-  if (!rendered.handoffRequired) return null;
-  if (!rendered.replyText.trim()) {
-    throw new Error("Renderer fallback exhaustion must include a customer acknowledgement");
-  }
-
-  return {
-    conversationState: recordHandoffPending(
-      conversationState,
-      RENDERER_FALLBACK_EXHAUSTED_REASON,
-      recordedAt,
-    ),
-    decisionType: "handoff_pending" as const,
-    matchedKey: RENDERER_FALLBACK_EXHAUSTED_REASON,
-    matchedType: "handoff_rule" as const,
-  };
+  return conversationState.status === "handoff_pending" &&
+    conversationState.handoffReason === RENDERER_FALLBACK_EXHAUSTED_REASON
+    ? resumeConversationAi(conversationState, resumedAt)
+    : conversationState;
 }
 
 type ControlledScheduleDecision = Pick<
@@ -308,7 +297,10 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   const loadedState = sourceUserId ? await loadConversationState(sourceUserId) : createAnonymousState(sourceUserId);
   const currentTime = new Date();
   const currentIso = currentTime.toISOString();
-  let conversationState = applyAutoResumeIfDue(loadedState, currentTime);
+  let conversationState = recoverLegacyRendererFallbackHandoff(
+    applyAutoResumeIfDue(loadedState, currentTime),
+    currentIso,
+  );
   const hadPendingHandoffAtStart = conversationState.status === "handoff_pending";
 
   if (event.type !== "message") {
@@ -557,10 +549,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     plan: replyPlan,
     recentTurns: synchronizedContext.recentTurns ?? [],
   });
-  const rendererHandoff = applyRendererFallbackHandoff(conversationState, rendered, currentIso);
-  if (rendererHandoff) {
-    conversationState = rendererHandoff.conversationState;
-  }
   replyText = rendered.replyText;
   usedAiReplyGenerator = rendered.generatorInvoked;
   aiModel = rendered.model ?? aiModel;
@@ -581,7 +569,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     {
       ...synchronizedContext,
       introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
-      lastIntent: rendererHandoff?.matchedKey ?? synchronizedContext.lastIntent,
+      lastIntent: synchronizedContext.lastIntent,
     },
     [
       { role: "user", text: event.message.text ?? "" },
@@ -606,15 +594,9 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       ...conversationState,
       updatedAt: currentIso,
     },
-    decisionType: rendererHandoff?.decisionType ?? (
-      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType
-    ),
-    matchedKey: rendererHandoff?.matchedKey ?? (
-      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey
-    ),
-    matchedType: rendererHandoff?.matchedType ?? (
-      rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType
-    ),
+    decisionType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType,
+    matchedKey: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey,
+    matchedType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     rendererTelemetry,
     replyMessages,
