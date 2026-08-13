@@ -31,7 +31,7 @@ export type ReplyRendererFallbackReason =
   | "repeated_previous_reply";
 
 export type ReplyRendererMode = "deterministic" | "fallback" | "generated";
-export type ReplyRendererFallbackVariant = "handoff" | "primary" | "secondary" | "safe";
+export type ReplyRendererFallbackVariant = "primary" | "secondary" | "safe";
 
 export type ReplyRendererTelemetry = {
   dialogueAct: DialogueAct;
@@ -76,8 +76,8 @@ export type ReplyRendererResult = {
 };
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 6_000;
-export const RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT =
-  "🧑‍💬 這題我先幫您轉交真人客服確認，您剛才的問題已保留，客服會接續協助。";
+export const RENDERER_TERMINAL_SAFE_FALLBACK =
+  "😊 我剛剛沒有順利接上這題，請再告訴我想先確認的重點，我會重新幫您整理。";
 const BLOCKED_GENERATED_CLAIM_PATTERN =
   /(?:(?:保證|一定|必定|立即|馬上|立刻).{0,6}(?:有效|有感|改善|見效)|(?:每個人|人人).{0,10}(?:有效|有感|改善|效果)|永久|百分之百|100%|(?:完全|絕對|零|無|沒有|幾乎沒有|不會).{0,5}(?:風險|副作用|疼痛|痛|恢復期|修復期)|(?:安全).{0,5}(?:無副作用|沒有副作用|零風險)|(?:無痛|免恢復期|無恢復期|無修復期))/iu;
 const CUSTOMER_VISIBLE_URL_PATTERN = /(?:https?:\/\/|www\.)\S+/iu;
@@ -298,12 +298,12 @@ function buildMessages(
   return appendFooter(baseMessages, footer, includeFooter, plan.suppressAiFooter);
 }
 
-export function buildRendererFallbackHandoffMessages(
+export function buildRendererTerminalFallbackMessages(
   input: Pick<ReplyRendererInput, "footer" | "includeFooter" | "plan">,
   replyText: string,
 ) {
   // Do not reuse input.plan.richMessages. They belong to the failed/stale
-  // answer and can obscure the terminal human-handoff acknowledgement.
+  // answer and can obscure the terminal safe fallback.
   return appendFooter(
     [{ type: "text", text: replyText } satisfies LineTextMessage],
     input.footer,
@@ -434,35 +434,33 @@ function renderGuardedFallback(
     };
   }
 
-  // Exhausting every guarded, non-repeating fallback is a terminal condition,
-  // not permission to go silent. The acknowledgement still passes the same
-  // customer-safety guard, but deliberately skips the repeat check because the
-  // webhook immediately records a pending human handoff and will not invoke
-  // the renderer again while that handoff is pending.
-  const handoffReply = guardFallbackCandidate(
+  // A model or formatting failure is not a customer request for human service.
+  // Keep the conversation active with a guarded text-only fallback; only the
+  // router's explicit safety, complaint, or human-request decisions may hand off.
+  const terminalReply = guardFallbackCandidate(
     input,
-    RENDERER_FALLBACK_HANDOFF_ACKNOWLEDGEMENT,
+    RENDERER_TERMINAL_SAFE_FALLBACK,
     usedGroundedKnowledge,
     { checkRecentReplies: false },
   );
-  if (!handoffReply) {
-    throw new Error("Renderer fallback handoff acknowledgement was rejected by the customer guard");
+  if (!terminalReply) {
+    throw new Error("Renderer terminal safe fallback was rejected by the customer guard");
   }
 
   return {
     dialogueAct: input.plan.dialogueAct,
     fallbackReason,
-    fallbackVariant: "handoff",
+    fallbackVariant: "safe",
     generated: false,
     generatorInvoked: true,
-    handoffRequired: true,
+    handoffRequired: false,
     latencyMs: Date.now() - startedAt,
-    // A terminal handoff acknowledgement must stay plain text. Reusing the
+    // A terminal fallback must stay plain text. Reusing the
     // plan's rich carousel here could repeat the stale answer that exhausted
     // the renderer and obscure the escalation.
-    messages: buildRendererFallbackHandoffMessages(input, handoffReply),
+    messages: buildRendererTerminalFallbackMessages(input, terminalReply),
     model: generationMetadata?.model,
-    replyText: handoffReply,
+    replyText: terminalReply,
     renderMode: "fallback",
     sourceUrl: generationMetadata?.sourceUrl,
     tokensIn: generationMetadata?.tokensIn,

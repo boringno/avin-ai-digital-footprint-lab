@@ -35,6 +35,12 @@ const TEST_CASES: TestCase[] = [
   {
     expectedDecisionType: "clinic_info_reply",
     expectedMatchedKey: "branch_list",
+    message: "你們有幾家店",
+    replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
+  },
+  {
+    expectedDecisionType: "clinic_info_reply",
+    expectedMatchedKey: "branch_list",
     message: "你們有哪些館別",
     replyIncludes: ["高雄館", "台中館", "桃園館", "林口館"],
   },
