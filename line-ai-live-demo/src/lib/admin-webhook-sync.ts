@@ -4,6 +4,7 @@ import { notifyAdminHandoffCreated } from "@/lib/admin-handoff-notifications";
 import { PREGNANCY_RISK_NOTE, PREGNANCY_RISK_REASON_SUFFIX } from "@/lib/admin-risk-flags";
 import { storeRuleIntentLabel } from "@/lib/intent-label-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { isHandoffEscalation, selectHigherPriorityHandoffReason } from "@/lib/handoff-priority";
 import { reportOperationalError } from "@/lib/monitoring";
 import { captureNluShadowObservation } from "@/lib/nlu-shadow";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
@@ -32,8 +33,10 @@ type BookingLeadRow = {
 };
 
 export function buildHandoffReason(result: ProcessedWebhookResult) {
-  const baseReason = result.decision.matchedKey || "unknown";
-  return result.bookingDraft.pregnancyRiskFlag ? `${baseReason}${PREGNANCY_RISK_REASON_SUFFIX}` : baseReason;
+  const baseReason = result.handoffReason?.trim() || result.decision.matchedKey || "unknown";
+  return result.bookingDraft.pregnancyRiskFlag && !baseReason.endsWith(PREGNANCY_RISK_REASON_SUFFIX)
+    ? `${baseReason}${PREGNANCY_RISK_REASON_SUFFIX}`
+    : baseReason;
 }
 
 export function buildBookingLeadNotes(existingNotes: string | undefined, hasPregnancyRisk: boolean) {
@@ -51,7 +54,7 @@ type SyncAdminWebhookInput = {
 
 export type HandoffTaskUpdateClient = {
   from: (table: "handoff_tasks") => {
-    update: (patch: { updated_at: string }) => {
+    update: (patch: { branch?: null | string; reason: string; updated_at: string }) => {
       eq: (column: string, value: string) => Promise<{ error: null | { message: string } }>;
     };
   };
@@ -280,8 +283,12 @@ async function insertAiMessage(conversationId: string, result: ProcessedWebhookR
     return null;
   }
 
-  const supabase = getSupabaseServerClient();
   const replyResult = findReplyResult(result, replyResults);
+  if (!shouldStoreAiMessage(replyResult)) {
+    return null;
+  }
+
+  const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("conversation_messages")
     .insert({
@@ -343,27 +350,64 @@ async function safelyStoreIntentLabel(messageId: string, result: ProcessedWebhoo
 export async function refreshExistingHandoffTask(
   supabase: HandoffTaskUpdateClient,
   taskId: string,
-  refreshedAt = new Date().toISOString(),
+  input: { branch?: null | string; reason: string; refreshedAt?: string },
 ) {
-  const { error } = await supabase.from("handoff_tasks").update({ updated_at: refreshedAt }).eq("id", taskId);
+  const { error } = await supabase.from("handoff_tasks").update({
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
+    reason: input.reason,
+    updated_at: input.refreshedAt ?? new Date().toISOString(),
+  }).eq("id", taskId);
   if (error) {
     throw new Error(`Failed to refresh handoff task: ${error.message}`);
   }
 }
 
+export async function refreshHandoffTaskWithPriority(
+  input: {
+    incomingReason: string;
+    observedReason: null | string;
+  },
+  dependencies: {
+    compareAndSetReason: (expectedReason: null | string, nextReason: string) => Promise<boolean>;
+    loadCurrentReason: () => Promise<null | string | undefined>;
+  },
+  maxAttempts = 3,
+) {
+  let observedReason = input.observedReason;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const effectiveReason = selectHigherPriorityHandoffReason(observedReason, input.incomingReason);
+    if (await dependencies.compareAndSetReason(observedReason, effectiveReason)) {
+      return {
+        escalated: isHandoffEscalation(observedReason, effectiveReason),
+        reason: effectiveReason,
+      };
+    }
+    const latestReason = await dependencies.loadCurrentReason();
+    if (latestReason === undefined) {
+      throw new Error("Handoff task disappeared during priority refresh");
+    }
+    observedReason = latestReason;
+  }
+  throw new Error(`Handoff task priority refresh conflicted after ${maxAttempts} attempts`);
+}
+
 async function maybeCreateHandoffTask(conversationId: string, result: ProcessedWebhookResult) {
-  if (!shouldCreateHandoffTask(result)) {
+  const shouldCreate = shouldCreateHandoffTask(result);
+  const shouldRefresh = shouldRefreshHandoffTask(result);
+  const shouldRecover = shouldRecoverMissingHandoffTask(result);
+  if (!shouldCreate && !shouldRefresh && !shouldRecover) {
     return;
   }
 
   const supabase = getSupabaseServerClient();
   const { data: existing, error: selectError } = await supabase
     .from("handoff_tasks")
-    .select("id")
+    .select("id, reason")
     .eq("tenant_id", TENANT_ID)
     .eq("conversation_id", conversationId)
     .in("status", ["open", "taken"])
-    .limit(1);
+    .limit(1)
+    .retry(false);
 
   if (selectError) {
     throw new Error(`Failed to load handoff task: ${selectError.message}`);
@@ -372,7 +416,54 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   if (existing && existing.length > 0) {
     // The original customer message is already stored above. Refresh the active
     // task so a repeated safety escalation returns to the top of the workbench.
-    await refreshExistingHandoffTask(supabase as unknown as HandoffTaskUpdateClient, existing[0].id);
+    const nextReason = buildHandoffReason(result);
+    const previousReason = typeof existing[0].reason === "string" ? existing[0].reason : null;
+    const refreshResult = await refreshHandoffTaskWithPriority({
+      incomingReason: nextReason,
+      observedReason: previousReason,
+    }, {
+      compareAndSetReason: async (expectedReason, effectiveReason) => {
+        let updateQuery = supabase.from("handoff_tasks").update({
+          ...(result.bookingDraft.branch ? { branch: result.bookingDraft.branch } : {}),
+          reason: effectiveReason,
+          updated_at: new Date().toISOString(),
+        })
+          .eq("id", existing[0].id)
+          .in("status", ["open", "taken"]);
+        updateQuery = expectedReason === null
+          ? updateQuery.is("reason", null)
+          : updateQuery.eq("reason", expectedReason);
+        const { data, error } = await updateQuery.select("id").retry(false);
+        if (error) {
+          throw new Error(`Failed to conditionally refresh handoff task: ${error.message}`);
+        }
+        return Array.isArray(data) && data.length === 1;
+      },
+      loadCurrentReason: async () => {
+        const { data, error } = await supabase
+          .from("handoff_tasks")
+          .select("reason")
+          .eq("tenant_id", TENANT_ID)
+          .eq("id", existing[0].id)
+          .in("status", ["open", "taken"])
+          .maybeSingle<{ reason: null | string }>()
+          .retry(false);
+        if (error) {
+          throw new Error(`Failed to reload handoff task reason: ${error.message}`);
+        }
+        return data?.reason;
+      },
+    });
+    if (refreshResult.escalated) {
+      await notifyAdminHandoffCreated({ conversationId, reason: refreshResult.reason });
+    }
+    return;
+  }
+
+  // A normal AI answer while a task is already pending should refresh an
+  // existing task, but must never invent a new task using the current route's
+  // matched key (for example, branch_list).
+  if (!shouldCreate && !shouldRecover) {
     return;
   }
 
@@ -382,7 +473,7 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
     reason: buildHandoffReason(result),
     status: "open",
     tenant_id: TENANT_ID,
-  });
+  }).retry(false);
 
   if (error) {
     throw new Error(`Failed to create handoff task: ${error.message}`);
@@ -396,6 +487,20 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
 
 export function shouldCreateHandoffTask(result: { decision: Pick<ProcessedWebhookResult["decision"], "decisionType"> }) {
   return ["handoff_pending", "booking_intake_reply"].includes(result.decision.decisionType);
+}
+
+export function shouldStoreAiMessage(replyResult: undefined | Pick<ReplySendResult, "suppressedReason">) {
+  return !replyResult?.suppressedReason;
+}
+
+export function shouldRefreshHandoffTask(result: Pick<ProcessedWebhookResult, "conversationStatus">) {
+  return result.conversationStatus === "handoff_pending";
+}
+
+export function shouldRecoverMissingHandoffTask(
+  result: Pick<ProcessedWebhookResult, "conversationStatus" | "handoffReason">,
+) {
+  return result.conversationStatus === "handoff_pending" && Boolean(result.handoffReason?.trim());
 }
 
 async function maybeUpsertBookingLead(conversationId: string, result: ProcessedWebhookResult) {
@@ -597,6 +702,10 @@ function deriveSendStatus(replyResult: ReplySendResult | undefined): SendStatus 
   }
 
   if (replyResult.responseBody === "No reply payload generated") {
+    return "skipped";
+  }
+
+  if (replyResult.suppressedReason) {
     return "skipped";
   }
 

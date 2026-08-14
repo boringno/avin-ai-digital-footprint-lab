@@ -5,10 +5,10 @@ import {
   DEFAULT_TENANT_ID,
   isSupabaseConversationStoreEnabled,
   loadConversationRuntimeState,
-  saveConversationRuntimeState,
+  saveConversationRuntimeContextIfCurrent,
 } from "@/lib/conversation-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getLatencyCriticalSupabaseServerClient } from "@/lib/supabase-server";
 import type { PersistedDialogueStateV1 } from "@/lib/dialogue-state";
 
 export type BookingDraft = {
@@ -52,6 +52,8 @@ export type ConversationFocus = {
 export type RecentConversationTurn = {
   role: "assistant" | "user";
   text: string;
+  /** Stable per-webhook identity used to remove only an unsent assistant turn. */
+  turnId?: string;
 };
 
 export type ConversationContext = {
@@ -71,6 +73,8 @@ export type ConversationContext = {
   };
   /** Versioned canonical dialogue state. Legacy fields remain during migration. */
   dialogueState?: PersistedDialogueStateV1;
+  /** Optimistic concurrency epoch for the whole dialogue context JSON. */
+  contextRevision?: number;
   introSent: boolean;
   lastIntent?: string;
   lastReferencedBranch?: string;
@@ -118,6 +122,9 @@ function normalizeRecentTurns(value: unknown): RecentConversationTurn[] {
     .map((turn) => ({
       role: turn.role,
       text: sanitizeRecentTurnText(turn.text),
+      ...(typeof turn.turnId === "string" && turn.turnId.trim()
+        ? { turnId: turn.turnId.trim().slice(0, 200) }
+        : {}),
     }))
     .filter((turn) => Boolean(turn.text))
     .slice(-RECENT_TURN_LIMIT);
@@ -206,6 +213,24 @@ export function appendRecentConversationTurns(
   };
 }
 
+export function removeUnsentAssistantTurn(context: ConversationContext, replyText: string, turnId?: string) {
+  const recentTurns = [...(context.recentTurns ?? [])];
+  const sanitizedReply = sanitizeRecentTurnText(replyText);
+  const matchingIndexes = recentTurns.flatMap((turn, index) => {
+    if (turn.role !== "assistant") return [];
+    if (turnId) return turn.turnId === turnId ? [index] : [];
+    return turn.text === sanitizedReply ? [index] : [];
+  });
+  // A stable id is exact. The legacy text fallback is intentionally
+  // conservative: duplicate prose cannot prove which turn was suppressed.
+  const matchingIndex = turnId
+    ? matchingIndexes.at(-1) ?? -1
+    : matchingIndexes.length === 1 ? matchingIndexes[0] : -1;
+  if (matchingIndex < 0) return context;
+  recentTurns.splice(matchingIndex, 1);
+  return { ...context, recentTurns };
+}
+
 function createEmptyBookingDraft(): BookingDraft {
   return {
     requestedTimeSlots: [],
@@ -216,10 +241,51 @@ function createEmptyBookingDraft(): BookingDraft {
 export function createEmptyConversationContext(userId: string): ConversationContext {
   return {
     bookingDraft: createEmptyBookingDraft(),
+    contextRevision: 0,
     introSent: false,
     recentTurns: [],
     userId,
   };
+}
+
+function normalizeContextRevision(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+}
+
+function hydrateConversationContext(
+  userId: string,
+  contextJson: Partial<ConversationContext>,
+  bookingDraftJson: Partial<BookingDraft> = {},
+) {
+  return {
+    ...createEmptyConversationContext(userId),
+    ...contextJson,
+    activeFocus: normalizeConversationFocus(contextJson.activeFocus),
+    bookingSession: normalizeBookingSession(contextJson.bookingSession),
+    confirmedAppointment: normalizeConfirmedAppointment(
+      contextJson.confirmedAppointment,
+      bookingDraftJson.appointmentAt ?? contextJson.bookingDraft?.appointmentAt,
+    ),
+    contextRevision: normalizeContextRevision(contextJson.contextRevision),
+    customerProfile: normalizeCustomerProfile(contextJson.customerProfile),
+    bookingDraft: {
+      ...createEmptyBookingDraft(),
+      ...(contextJson.bookingDraft ?? {}),
+      ...bookingDraftJson,
+      requestedTimeSlots: Array.isArray(bookingDraftJson.requestedTimeSlots)
+        ? bookingDraftJson.requestedTimeSlots
+        : Array.isArray(contextJson.bookingDraft?.requestedTimeSlots)
+          ? contextJson.bookingDraft?.requestedTimeSlots ?? []
+          : [],
+      timeSlots: Array.isArray(bookingDraftJson.timeSlots)
+        ? bookingDraftJson.timeSlots
+        : Array.isArray(contextJson.bookingDraft?.timeSlots)
+          ? contextJson.bookingDraft?.timeSlots ?? []
+          : [],
+    },
+    recentTurns: normalizeRecentTurns(contextJson.recentTurns),
+    userId,
+  } satisfies ConversationContext;
 }
 
 function getConversationContextDir() {
@@ -238,13 +304,14 @@ async function loadConfirmedAppointmentAt(userId: string): Promise<string | null
   }
 
   try {
-    const supabase = getSupabaseServerClient();
+    const supabase = getLatencyCriticalSupabaseServerClient();
     const { data: conversation, error: conversationError } = await supabase
       .from("conversations")
       .select("id")
       .eq("tenant_id", DEFAULT_TENANT_ID)
       .eq("line_user_id", userId)
-      .maybeSingle<{ id: string }>();
+      .maybeSingle<{ id: string }>()
+      .retry(false);
 
     if (conversationError) {
       return undefined;
@@ -258,7 +325,8 @@ async function loadConfirmedAppointmentAt(userId: string): Promise<string | null
       .select("appointment_at")
       .eq("tenant_id", DEFAULT_TENANT_ID)
       .eq("conversation_id", conversation.id)
-      .maybeSingle<{ appointment_at: string | null }>();
+      .maybeSingle<{ appointment_at: string | null }>()
+      .retry(false);
 
     if (leadError) {
       // Keep existing behavior until the schema migration is applied.
@@ -300,34 +368,7 @@ export async function loadConversationContext(userId: string) {
       const bookingDraftJson =
         ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
 
-      return applyConfirmedAppointmentAt({
-        ...createEmptyConversationContext(userId),
-        ...contextJson,
-        activeFocus: normalizeConversationFocus(contextJson.activeFocus),
-        bookingSession: normalizeBookingSession(contextJson.bookingSession),
-        confirmedAppointment: normalizeConfirmedAppointment(
-          contextJson.confirmedAppointment,
-          bookingDraftJson.appointmentAt ?? contextJson.bookingDraft?.appointmentAt,
-        ),
-        customerProfile: normalizeCustomerProfile(contextJson.customerProfile),
-        bookingDraft: {
-          ...createEmptyBookingDraft(),
-          ...(contextJson.bookingDraft ?? {}),
-          ...bookingDraftJson,
-          requestedTimeSlots: Array.isArray(bookingDraftJson.requestedTimeSlots)
-            ? bookingDraftJson.requestedTimeSlots
-            : Array.isArray(contextJson.bookingDraft?.requestedTimeSlots)
-              ? contextJson.bookingDraft?.requestedTimeSlots ?? []
-              : [],
-          timeSlots: Array.isArray(bookingDraftJson.timeSlots)
-            ? bookingDraftJson.timeSlots
-            : Array.isArray(contextJson.bookingDraft?.timeSlots)
-              ? contextJson.bookingDraft?.timeSlots ?? []
-              : [],
-        },
-        recentTurns: normalizeRecentTurns(contextJson.recentTurns),
-        userId,
-      });
+      return applyConfirmedAppointmentAt(hydrateConversationContext(userId, contextJson, bookingDraftJson));
     } catch {
       // Fallback to local file persistence until Supabase schema is ready.
     }
@@ -339,27 +380,7 @@ export async function loadConversationContext(userId: string) {
     const content = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(content) as Partial<ConversationContext>;
 
-    return applyConfirmedAppointmentAt({
-      ...createEmptyConversationContext(userId),
-      ...parsed,
-      activeFocus: normalizeConversationFocus(parsed.activeFocus),
-      bookingSession: normalizeBookingSession(parsed.bookingSession),
-      confirmedAppointment: normalizeConfirmedAppointment(
-        parsed.confirmedAppointment,
-        parsed.bookingDraft?.appointmentAt,
-      ),
-      customerProfile: normalizeCustomerProfile(parsed.customerProfile),
-      bookingDraft: {
-        ...createEmptyBookingDraft(),
-        ...(parsed.bookingDraft ?? {}),
-        requestedTimeSlots: Array.isArray(parsed.bookingDraft?.requestedTimeSlots)
-          ? parsed.bookingDraft.requestedTimeSlots
-          : [],
-        timeSlots: Array.isArray(parsed.bookingDraft?.timeSlots) ? parsed.bookingDraft.timeSlots : [],
-      },
-      recentTurns: normalizeRecentTurns(parsed.recentTurns),
-      userId,
-    });
+    return applyConfirmedAppointmentAt(hydrateConversationContext(userId, parsed, parsed.bookingDraft));
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === "ENOENT") {
@@ -369,24 +390,300 @@ export async function loadConversationContext(userId: string) {
   }
 }
 
-export async function saveConversationContext(context: ConversationContext) {
+function contextTimestamp(context: ConversationContext) {
+  const timestamp = new Date(context.lastSeenAt ?? 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function sameTurn(left: RecentConversationTurn, right: RecentConversationTurn) {
+  if (left.turnId && right.turnId) {
+    return left.turnId === right.turnId;
+  }
+  return left.role === right.role && left.text === right.text;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const ABSENT = Symbol("absent");
+const ACCUMULATING_STRING_ARRAY_PATHS = new Set([
+  "activeFocus.answeredTopics",
+  "activeFocus.areaKeys",
+  "activeFocus.concernKeys",
+  "bookingDraft.requestedTimeSlots",
+  "bookingDraft.timeSlots",
+  "dialogueState.answeredTopics",
+  "dialogueState.areaKeys",
+  "dialogueState.concernKeys",
+  "dialogueState.knownNeeds",
+  "treatmentConsultation.answeredAspectKeys",
+  "treatmentConsultation.concernKeys",
+]);
+
+function valuesEqual(left: unknown | typeof ABSENT, right: unknown | typeof ABSENT): boolean {
+  if (left === ABSENT || right === ABSENT) return left === right;
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => valuesEqual(item, right[index]));
+  }
+  if (isPlainObject(left) && isPlainObject(right)) {
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    return [...keys].every((key) => valuesEqual(
+      Object.prototype.hasOwnProperty.call(left, key) ? left[key] : ABSENT,
+      Object.prototype.hasOwnProperty.call(right, key) ? right[key] : ABSENT,
+    ));
+  }
+  return false;
+}
+
+function rebaseContextValue(
+  base: unknown | typeof ABSENT,
+  incoming: unknown | typeof ABSENT,
+  latest: unknown | typeof ABSENT,
+  incomingIsLater: boolean,
+  path = "",
+): unknown | typeof ABSENT {
+  if (valuesEqual(incoming, base)) return latest;
+  if (valuesEqual(latest, base)) return incoming;
+  if (
+    ACCUMULATING_STRING_ARRAY_PATHS.has(path) &&
+    (base === ABSENT || (Array.isArray(base) && base.every((item) => typeof item === "string"))) &&
+    Array.isArray(incoming) && incoming.every((item) => typeof item === "string") &&
+    Array.isArray(latest) && latest.every((item) => typeof item === "string")
+  ) {
+    const baseItems = base === ABSENT ? [] : base;
+    const incomingRemovedBaseItem = baseItems.some((item) => !incoming.includes(item));
+    const latestRemovedBaseItem = baseItems.some((item) => !latest.includes(item));
+    if (!incomingRemovedBaseItem && !latestRemovedBaseItem) {
+      const ordered = incomingIsLater ? [...latest, ...incoming] : [...incoming, ...latest];
+      return [...new Set(ordered)];
+    }
+    // Removing a prior value represents a correction/replacement rather than
+    // accumulation, so conflicting corrections remain last-event-wins.
+    return incomingIsLater ? incoming : latest;
+  }
+  if (
+    (base === ABSENT || isPlainObject(base)) &&
+    isPlainObject(incoming) &&
+    isPlainObject(latest)
+  ) {
+    const merged: Record<string, unknown> = {};
+    const baseRecord = base === ABSENT ? {} : base;
+    const keys = new Set([...Object.keys(baseRecord), ...Object.keys(incoming), ...Object.keys(latest)]);
+    for (const key of keys) {
+      const value = rebaseContextValue(
+        Object.prototype.hasOwnProperty.call(baseRecord, key) ? baseRecord[key] : ABSENT,
+        Object.prototype.hasOwnProperty.call(incoming, key) ? incoming[key] : ABSENT,
+        Object.prototype.hasOwnProperty.call(latest, key) ? latest[key] : ABSENT,
+        incomingIsLater,
+        path ? `${path}.${key}` : key,
+      );
+      if (value !== ABSENT) merged[key] = value;
+    }
+    return merged;
+  }
+  return incomingIsLater ? incoming : latest;
+}
+
+function extractRecentTurnDelta(baseTurns: RecentConversationTurn[], candidateTurns: RecentConversationTurn[]) {
+  const maximumOverlap = Math.min(baseTurns.length, candidateTurns.length);
+  for (let overlap = maximumOverlap; overlap >= 0; overlap -= 1) {
+    const baseOffset = baseTurns.length - overlap;
+    if (candidateTurns.slice(0, overlap).every((turn, index) => sameTurn(turn, baseTurns[baseOffset + index]))) {
+      return candidateTurns.slice(overlap);
+    }
+  }
+  return candidateTurns;
+}
+
+function isTurnSubsequence(candidate: RecentConversationTurn[], source: RecentConversationTurn[]) {
+  let candidateIndex = 0;
+  for (const turn of source) {
+    if (candidateIndex < candidate.length && sameTurn(candidate[candidateIndex], turn)) {
+      candidateIndex += 1;
+    }
+  }
+  return candidateIndex === candidate.length;
+}
+
+function applyTurnDeletions(
+  baseTurns: RecentConversationTurn[],
+  incomingTurns: RecentConversationTurn[],
+  latestTurns: RecentConversationTurn[],
+) {
+  const remainingIncoming = [...incomingTurns];
+  const removed: RecentConversationTurn[] = [];
+  for (const baseTurn of baseTurns) {
+    const index = remainingIncoming.findIndex((turn) => sameTurn(turn, baseTurn));
+    if (index >= 0) remainingIncoming.splice(index, 1);
+    else removed.push(baseTurn);
+  }
+  const merged = [...latestTurns];
+  for (const removedTurn of removed) {
+    for (let index = merged.length - 1; index >= 0; index -= 1) {
+      if (sameTurn(merged[index], removedTurn)) {
+        merged.splice(index, 1);
+        break;
+      }
+    }
+  }
+  return normalizeRecentTurns(merged);
+}
+
+function mergeConcurrentRecentTurns(
+  latest: ConversationContext,
+  incoming: ConversationContext,
+  incomingIsLater: boolean,
+  base?: ConversationContext,
+) {
+  const latestTurns = normalizeRecentTurns(latest.recentTurns);
+  const incomingTurns = normalizeRecentTurns(incoming.recentTurns);
+  if (base) {
+    const baseTurns = normalizeRecentTurns(base.recentTurns);
+    if (incomingTurns.length < baseTurns.length && isTurnSubsequence(incomingTurns, baseTurns)) {
+      return applyTurnDeletions(baseTurns, incomingTurns, latestTurns);
+    }
+    const latestDelta = extractRecentTurnDelta(baseTurns, latestTurns);
+    const incomingDelta = extractRecentTurnDelta(baseTurns, incomingTurns);
+    return normalizeRecentTurns([
+      ...baseTurns,
+      ...(incomingIsLater ? latestDelta : incomingDelta),
+      ...(incomingIsLater ? incomingDelta : latestDelta),
+    ]);
+  }
+
+  let commonPrefixLength = 0;
+  while (
+    commonPrefixLength < latestTurns.length &&
+    commonPrefixLength < incomingTurns.length &&
+    sameTurn(latestTurns[commonPrefixLength], incomingTurns[commonPrefixLength])
+  ) {
+    commonPrefixLength += 1;
+  }
+
+  const prefix = latestTurns.slice(0, commonPrefixLength);
+  const latestSuffix = latestTurns.slice(commonPrefixLength);
+  const incomingSuffix = incomingTurns.slice(commonPrefixLength);
+  return normalizeRecentTurns([
+    ...prefix,
+    ...(incomingIsLater ? latestSuffix : incomingSuffix),
+    ...(incomingIsLater ? incomingSuffix : latestSuffix),
+  ]);
+}
+
+/**
+ * Resolve a concurrent context write without dropping either visible turn.
+ * With a base snapshot, independent field changes are rebased onto the latest
+ * state; conflicting writes to the same value follow event time.
+ */
+export function mergeConcurrentConversationContexts(
+  latest: ConversationContext,
+  incoming: ConversationContext,
+  base?: ConversationContext,
+) {
+  const incomingIsLater = contextTimestamp(incoming) >= contextTimestamp(latest);
+  const rebased = base
+    ? rebaseContextValue(base, incoming, latest, incomingIsLater)
+    : incomingIsLater ? incoming : latest;
+  const canonical = isPlainObject(rebased) ? rebased as unknown as ConversationContext : incoming;
+  return {
+    ...canonical,
+    contextRevision: normalizeContextRevision(latest.contextRevision),
+    recentTurns: mergeConcurrentRecentTurns(latest, incoming, incomingIsLater, base),
+    userId: canonical.userId || latest.userId || incoming.userId,
+  } satisfies ConversationContext;
+}
+
+async function loadAuthoritativeConversationContext(userId: string) {
+  const row = await loadConversationRuntimeState(userId);
+  const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
+  const bookingDraftJson =
+    ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
+  return hydrateConversationContext(userId, contextJson, bookingDraftJson);
+}
+
+const localContextWriteQueues = new Map<string, Promise<void>>();
+
+async function withLocalContextWriteLock<T>(userId: string, operation: () => Promise<T>) {
+  const previous = localContextWriteQueues.get(userId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current);
+  localContextWriteQueues.set(userId, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (localContextWriteQueues.get(userId) === queued) {
+      localContextWriteQueues.delete(userId);
+    }
+  }
+}
+
+export async function saveConversationContext(context: ConversationContext, baseContext?: ConversationContext) {
   if (!context.userId) {
     return;
   }
 
   if (isSupabaseConversationStoreEnabled()) {
     try {
-      await saveConversationRuntimeState(context.userId, {
-        booking_draft_json: context.bookingDraft as unknown as Record<string, unknown>,
-        context_json: context as unknown as Record<string, unknown>,
-      });
-      return;
+      let expectedRevision = normalizeContextRevision(context.contextRevision);
+      let candidate = {
+        ...context,
+        contextRevision: expectedRevision + 1,
+      } satisfies ConversationContext;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        if (await saveConversationRuntimeContextIfCurrent(
+          context.userId,
+          candidate as unknown as Record<string, unknown>,
+          candidate.bookingDraft as unknown as Record<string, unknown>,
+          expectedRevision,
+        )) {
+          return;
+        }
+
+        const latest = await loadAuthoritativeConversationContext(context.userId);
+        expectedRevision = normalizeContextRevision(latest.contextRevision);
+        candidate = {
+          ...mergeConcurrentConversationContexts(latest, context, baseContext),
+          contextRevision: expectedRevision + 1,
+        };
+      }
+
+      throw new Error("Conversation context compare-and-swap exhausted");
     } catch {
       // Fallback to local file persistence until Supabase schema is ready.
     }
   }
 
-  const directory = getConversationContextDir();
-  await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(buildContextFilePath(context.userId), JSON.stringify(context, null, 2), "utf8");
+  await withLocalContextWriteLock(context.userId, async () => {
+    const filePath = buildContextFilePath(context.userId);
+    let latest = createEmptyConversationContext(context.userId);
+    try {
+      const content = await fs.readFile(filePath, "utf8");
+      const parsed = JSON.parse(content) as Partial<ConversationContext>;
+      latest = hydrateConversationContext(context.userId, parsed, parsed.bookingDraft);
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code !== "ENOENT") throw error;
+    }
+
+    const latestRevision = normalizeContextRevision(latest.contextRevision);
+    const contextRevision = normalizeContextRevision(context.contextRevision);
+    const candidate = latestRevision === contextRevision
+      ? context
+      : mergeConcurrentConversationContexts(latest, context, baseContext);
+    const persisted = {
+      ...candidate,
+      contextRevision: latestRevision + 1,
+    } satisfies ConversationContext;
+    const directory = getConversationContextDir();
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(persisted, null, 2), "utf8");
+  });
 }

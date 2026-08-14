@@ -1,5 +1,5 @@
 import type { FaqEntry, PricingCampaign } from "@/lib/seed-loader";
-import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
+import { getLatencyCriticalSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 const DEFAULT_TENANT_ID = "tenant_001";
 
@@ -30,14 +30,15 @@ export async function loadRuntimeContentOverlayForRelease(input: {
   if (!hasSupabaseServerConfig()) return emptyOverlay();
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-  const supabase = getSupabaseServerClient();
+  const supabase = getLatencyCriticalSupabaseServerClient();
   const { data: release, error: releaseError } = await supabase
     .from("runtime_content_releases")
     .select("id, rollout_percentage")
     .eq("id", input.releaseId)
     .eq("tenant_id", tenantId)
     .in("status", ["draft", "ready", "active"])
-    .maybeSingle<ReleaseRow>();
+    .maybeSingle<ReleaseRow>()
+    .retry(false);
   if (releaseError || !release) return emptyOverlay();
 
   return loadEntriesForRelease({ now: input.now, releaseId: release.id, tenantId });
@@ -63,12 +64,13 @@ export async function loadRuntimeContentOverlay(input: {
   if (!hasSupabaseServerConfig()) return emptyOverlay();
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-  const supabase = getSupabaseServerClient();
+  const supabase = getLatencyCriticalSupabaseServerClient();
   const { data: settings, error: settingsError } = await supabase
     .from("runtime_content_release_settings")
     .select("active_release_id")
     .eq("tenant_id", tenantId)
-    .maybeSingle<{ active_release_id: string | null }>();
+    .maybeSingle<{ active_release_id: string | null }>()
+    .retry(false);
   if (settingsError || !settings?.active_release_id) return emptyOverlay();
 
   const { data: release, error: releaseError } = await supabase
@@ -77,7 +79,8 @@ export async function loadRuntimeContentOverlay(input: {
     .eq("id", settings.active_release_id)
     .eq("tenant_id", tenantId)
     .eq("status", "active")
-    .maybeSingle<ReleaseRow>();
+    .maybeSingle<ReleaseRow>()
+    .retry(false);
   if (releaseError || !release || !isReleaseAudienceIncluded(input.audienceKey, release.rollout_percentage)) {
     return emptyOverlay();
   }
@@ -86,13 +89,14 @@ export async function loadRuntimeContentOverlay(input: {
 }
 
 async function loadEntriesForRelease(input: { now: Date; releaseId: string; tenantId: string }): Promise<RuntimeContentOverlay> {
-  const supabase = getSupabaseServerClient();
+  const supabase = getLatencyCriticalSupabaseServerClient();
   const { data: entries, error: entriesError } = await supabase
     .from("runtime_content_release_entries")
     .select("content_key, content_type, payload_json, start_at, end_at")
     .eq("tenant_id", input.tenantId)
     .eq("release_id", input.releaseId)
-    .returns<ReleaseEntryRow[]>();
+    .returns<ReleaseEntryRow[]>()
+    .retry(false);
   if (entriesError) return emptyOverlay();
 
   const activeEntries = (entries ?? []).filter((entry) => isEntryInWindow(entry, input.now));

@@ -8,7 +8,10 @@ import {
   sendLinePushText,
   updateStaffMessageSendStatus,
 } from "@/lib/admin-workbench-data";
-import { loadConversationState, markHumanTakeover, saveConversationState } from "@/lib/conversation-state";
+import {
+  applyAuthoritativeConversationTransition,
+  markHumanTakeover,
+} from "@/lib/conversation-state";
 import { reportOperationalError } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
@@ -46,14 +49,16 @@ export async function POST(request: Request) {
     staff,
   });
 
-  const before = await loadConversationState(body.user_id, staff.tenantId);
-  const after = markHumanTakeover(before, {
-    assignedTo: body.assigned_to ?? staff.displayName,
-    autoResumeAfterMinutes: body.auto_resume_after_minutes,
-    sentAt: body.sent_at ?? new Date().toISOString(),
-  });
-
-  await saveConversationState(after, staff.tenantId);
+  const sentAt = body.sent_at ?? new Date().toISOString();
+  const { after, before } = await applyAuthoritativeConversationTransition(
+    body.user_id,
+    (state) => markHumanTakeover(state, {
+      assignedTo: body.assigned_to ?? staff.displayName,
+      autoResumeAfterMinutes: body.auto_resume_after_minutes,
+      sentAt,
+    }),
+    staff.tenantId,
+  );
   await markHandoffTaskTaken(staff, body.user_id);
 
   let linePushResult: { body: string; ok: boolean; status: number };

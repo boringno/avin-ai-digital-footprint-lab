@@ -48,6 +48,7 @@ export type SanitizedReplySendResult = {
   messageId: string;
   ok: boolean;
   status: number;
+  suppressed: boolean;
   webhookEventId: string;
 };
 
@@ -206,6 +207,7 @@ export function sanitizeReplySendResult(result: ReplySendResult): SanitizedReply
     messageId: maskIdentifier(result.messageId, "msg"),
     ok: result.ok,
     status: result.status,
+    suppressed: Boolean(result.suppressedReason),
     webhookEventId: maskIdentifier(result.webhookEventId, "evt"),
   };
 }

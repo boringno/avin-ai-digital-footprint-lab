@@ -2,7 +2,8 @@ import path from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 
-import { processWebhookRequestBody, sendReplyPayloads, type ProcessedWebhookResult } from "../src/lib/line-webhook";
+import { isReplyStillAuthorized, processWebhookRequestBody, sendReplyPayloads, type ProcessedWebhookResult } from "../src/lib/line-webhook";
+import { loadConversationState, markHumanTakeover, saveConversationState } from "../src/lib/conversation-state";
 import { splitWebhookResultsByDuplicate } from "../src/lib/webhook-dedupe";
 
 type MockFetch = typeof fetch;
@@ -165,20 +166,148 @@ async function caseDeadLetter() {
   });
 }
 
+async function caseTakeoverBeforeSend() {
+  return withTempLogDir(async () => {
+    const rawBody = await loadSingleEventPayload({
+      messageId: "msg-takeover-001",
+      replyToken: "reply-token-takeover-001",
+      text: "想了解 ONDA",
+      webhookEventId: "evt-takeover-001",
+    });
+    const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+    const result = processed.results[0] as ProcessedWebhookResult;
+    const currentState = await loadConversationState(result.sourceUserId);
+    await saveConversationState(markHumanTakeover(currentState, {
+      assignedTo: "Amy",
+      sentAt: "2099-08-13T12:00:00.000Z",
+    }));
+
+    let fetchCount = 0;
+    const restoreFetch = setMockFetch(async () => {
+      fetchCount += 1;
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      const replyResults = await sendReplyPayloads([result], "test-token", {
+        retryCount: 1,
+        timeoutMs: 500,
+      });
+      return {
+        fetchCount,
+        ok: fetchCount === 0 && replyResults[0]?.ok === true && replyResults[0]?.attempts === 0,
+        result: replyResults[0],
+      };
+    } finally {
+      restoreFetch();
+    }
+  });
+}
+
+async function caseTakeoverBeforeRetry() {
+  return withTempLogDir(async () => {
+    const rawBody = await loadSingleEventPayload({
+      messageId: "msg-takeover-retry-001",
+      replyToken: "reply-token-takeover-retry-001",
+      text: "想了解 ONDA",
+      webhookEventId: "evt-takeover-retry-001",
+    });
+    const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+    const result = processed.results[0] as ProcessedWebhookResult;
+    let fetchCount = 0;
+    const restoreFetch = setMockFetch(async () => {
+      fetchCount += 1;
+      const currentState = await loadConversationState(result.sourceUserId);
+      await saveConversationState(markHumanTakeover(currentState, {
+        assignedTo: "Amy",
+        sentAt: "2099-08-13T12:00:00.000Z",
+      }));
+      throw new Error("temporary network error before staff takeover");
+    });
+    try {
+      const replyResults = await sendReplyPayloads([result], "test-token", {
+        retryCount: 1,
+        timeoutMs: 500,
+      });
+      return {
+        fetchCount,
+        ok: fetchCount === 1 && replyResults[0]?.ok === true && replyResults[0]?.attempts === 1,
+        result: replyResults[0],
+      };
+    } finally {
+      restoreFetch();
+    }
+  });
+}
+
+async function caseAuthorizationUnavailable() {
+  const rawBody = await loadSingleEventPayload({
+    messageId: "msg-auth-unavailable-001",
+    replyToken: "reply-token-auth-unavailable-001",
+    webhookEventId: "evt-auth-unavailable-001",
+  });
+  const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+  let fetchCount = 0;
+  const restoreFetch = setMockFetch(async () => {
+    fetchCount += 1;
+    return new Response("{}", { status: 200 });
+  });
+  try {
+    const replyResults = await sendReplyPayloads(processed.results, "test-token", {
+      authorizeBeforeSend: async () => {
+        throw new Error("state store unavailable");
+      },
+      retryCount: 1,
+      timeoutMs: 500,
+    });
+    return {
+      fetchCount,
+      ok:
+        fetchCount === 0 &&
+        replyResults[0]?.ok === true &&
+        replyResults[0]?.suppressedReason === "conversation_state_unavailable",
+      result: replyResults[0],
+    };
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function caseDefaultAuthorizationFailsClosed() {
+  const rawBody = await loadSingleEventPayload({
+    messageId: "msg-auth-default-unavailable-001",
+    replyToken: "reply-token-auth-default-unavailable-001",
+    webhookEventId: "evt-auth-default-unavailable-001",
+  });
+  const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+  const authorized = await isReplyStillAuthorized(
+    processed.results[0] as ProcessedWebhookResult,
+    async () => { throw new Error("authoritative state unavailable after takeover"); },
+  );
+  return { authorized, ok: authorized === false };
+}
+
 async function main() {
   const duplicateCase = await caseDuplicateMessageId();
   const retryCase = await caseRetrySuccess();
   const deadLetterCase = await caseDeadLetter();
+  const takeoverBeforeSendCase = await caseTakeoverBeforeSend();
+  const takeoverBeforeRetryCase = await caseTakeoverBeforeRetry();
+  const authorizationUnavailableCase = await caseAuthorizationUnavailable();
+  const defaultAuthorizationUnavailableCase = await caseDefaultAuthorizationFailsClosed();
 
   const output = {
+    authorizationUnavailableCase,
+    defaultAuthorizationUnavailableCase,
     deadLetterCase,
     duplicateCase,
     retryCase,
+    takeoverBeforeRetryCase,
+    takeoverBeforeSendCase,
   };
 
   console.log(JSON.stringify(output, null, 2));
 
-  if (!duplicateCase.ok || !retryCase.ok || !deadLetterCase.ok) {
+  if (!authorizationUnavailableCase.ok || !defaultAuthorizationUnavailableCase.ok || !duplicateCase.ok || !retryCase.ok || !deadLetterCase.ok || !takeoverBeforeSendCase.ok || !takeoverBeforeRetryCase.ok) {
     process.exitCode = 1;
   }
 }
