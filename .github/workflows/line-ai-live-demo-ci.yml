@@ -94,6 +94,7 @@ jobs:
           npm run validate:customer-journey-state
           npm run validate:booking-lead-ownership
           npm run validate:conversation-sessions
+          npm run validate:conversation-v2
           npm run validate:pricing-subject
           npm run validate:treatment-packs
           npm run validate:dialogue-state
