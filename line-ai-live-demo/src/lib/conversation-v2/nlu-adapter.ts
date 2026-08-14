@@ -58,6 +58,11 @@ export type ConversationV2NluSupplement = {
   booking?: BookingUnderstanding;
   /** Trusted clarification produced by a deterministic resolver. */
   clarification?: ClarificationNeed;
+  /** Deterministic safety/handoff preflight always outranks model semantics. */
+  hardDecision?: {
+    reason: string;
+    speechAct: "request_handoff" | "urgent_safety";
+  };
   /** Trusted selection parsed against the currently awaited options. */
   selection?: SelectionUnderstanding;
 };
@@ -82,6 +87,7 @@ export type AdaptedConversationV2Turn = TurnUnderstanding & {
 type NormalizedSupplement = {
   booking?: BookingUnderstanding;
   clarification?: ClarificationNeed;
+  hardDecision?: ConversationV2NluSupplement["hardDecision"];
   selection?: SelectionUnderstanding;
   valid: boolean;
 };
@@ -299,17 +305,48 @@ function normalizeClarification(value: unknown) {
   };
 }
 
+function normalizeHardDecision(value: unknown) {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: undefined as ConversationV2NluSupplement["hardDecision"] | undefined,
+    };
+  }
+  if (!isRecord(value) || Object.keys(value).some((key) => !["reason", "speechAct"].includes(key))) {
+    return { valid: false, value: undefined };
+  }
+  const reason = cleanRequiredString(value.reason);
+  if (
+    !reason ||
+    (value.speechAct !== "request_handoff" && value.speechAct !== "urgent_safety")
+  ) {
+    return { valid: false, value: undefined };
+  }
+  return {
+    valid: true,
+    value: {
+      reason,
+      speechAct: value.speechAct as "request_handoff" | "urgent_safety",
+    },
+  };
+}
+
 function normalizeSupplement(value: unknown): NormalizedSupplement {
   if (value === undefined) return { valid: true };
   if (!isRecord(value)) return { valid: false };
+  if (Object.keys(value).some((key) => !["booking", "clarification", "hardDecision", "selection"].includes(key))) {
+    return { valid: false };
+  }
   const booking = normalizeBooking(value.booking);
   const clarification = normalizeClarification(value.clarification);
+  const hardDecision = normalizeHardDecision(value.hardDecision);
   const selection = normalizeSelection(value.selection);
   return {
     ...(booking.value ? { booking: booking.value } : {}),
     ...(clarification.value ? { clarification: clarification.value } : {}),
+    ...(hardDecision.value ? { hardDecision: hardDecision.value } : {}),
     ...(selection.value ? { selection: selection.value } : {}),
-    valid: booking.valid && clarification.valid && selection.valid,
+    valid: booking.valid && clarification.valid && hardDecision.valid && selection.valid,
   };
 }
 
@@ -412,6 +449,20 @@ function adaptEntities(frame: NluFrame): EntityAdaptation {
     });
   }
 
+  for (const areaKey of frame.areas) {
+    if (!AREA_KEYS.has(areaKey)) {
+      valid = false;
+      continue;
+    }
+    addMention(areas, {
+      confidence: frame.confidence,
+      key: areaKey,
+      label: AREA_LABELS.get(areaKey),
+      polarity: negatedAreas.has(areaKey) ? "negated" : "affirmed",
+      resolution: "resolved",
+    });
+  }
+
   for (const concernFrame of frame.concerns) {
     const concern = CONCERNS_BY_KEY.get(concernFrame.key);
     if (!concern) {
@@ -486,33 +537,21 @@ function hasUsefulBookingFields(booking: BookingUnderstanding | undefined) {
   );
 }
 
-function resolveSpeechAct(input: {
-  entities: EntityAdaptation;
-  frame: NluFrame;
-  safety: NluSafetyFrame;
-  supplemental: NormalizedSupplement;
-}): { needsClarification: boolean; speechAct: TurnSpeechAct } {
-  if (input.safety.postTreatmentRisk) {
-    return { needsClarification: false, speechAct: "urgent_safety" };
+function trustedBookingSpeechAct(booking: BookingUnderstanding | undefined): TurnSpeechAct | null {
+  if (!booking) return null;
+  if (booking.explicit && booking.intent !== "none") {
+    return booking.intent === "create" ? "book_consultation" : "manage_booking";
   }
-  if (
-    input.safety.humanRequest ||
-    input.safety.complaint ||
-    input.safety.pregnancyNursing
-  ) {
-    return { needsClarification: false, speechAct: "request_handoff" };
-  }
-  if (input.frame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE) {
-    return { needsClarification: true, speechAct: "unknown" };
-  }
-  if (!input.entities.valid || !input.supplemental.valid) {
-    return { needsClarification: true, speechAct: "unknown" };
-  }
+  return !booking.explicit && hasUsefulBookingFields(booking)
+    ? "provide_booking_field"
+    : null;
+}
 
+function activeIntentFamilies(frame: NluFrame) {
   const negatedIntents = new Set(
-    input.frame.negated.filter((item) => item.type === "intent").map((item) => item.key),
+    frame.negated.filter((item) => item.type === "intent").map((item) => item.key),
   );
-  const activeIntents = input.frame.intents.filter((intent) => !negatedIntents.has(intent));
+  const activeIntents = frame.intents.filter((intent) => !negatedIntents.has(intent));
   const coreIntents = activeIntents.filter(
     (intent) =>
       ![
@@ -532,34 +571,14 @@ function resolveSpeechAct(input: {
       return [];
     }),
   );
+  return { families, hasUnknownIntent };
+}
 
-  if (input.supplemental.selection) {
-    const conflictingFamilies = [...families].filter((family) => family !== "treatment");
-    if (!input.supplemental.booking && conflictingFamilies.length === 0) {
-      return { needsClarification: false, speechAct: "select_options" };
-    }
-    return { needsClarification: true, speechAct: "unknown" };
-  }
-
-  const booking = input.supplemental.booking;
-  if (booking) {
-    const conflictingFamilies = [...families].filter(
-      (family) => family !== "booking" && family !== "treatment",
-    );
-    if (conflictingFamilies.length > 0) {
-      return { needsClarification: true, speechAct: "unknown" };
-    }
-    if (booking.explicit && booking.intent !== "none") {
-      return {
-        needsClarification: false,
-        speechAct: booking.intent === "create" ? "book_consultation" : "manage_booking",
-      };
-    }
-    if (!booking.explicit && hasUsefulBookingFields(booking)) {
-      return { needsClarification: false, speechAct: "provide_booking_field" };
-    }
-    return { needsClarification: true, speechAct: "unknown" };
-  }
+function resolveLegacySpeechAct(input: {
+  entities: EntityAdaptation;
+  frame: NluFrame;
+}): { needsClarification: boolean; speechAct: TurnSpeechAct } {
+  const { families, hasUnknownIntent } = activeIntentFamilies(input.frame);
 
   if (families.has("booking")) {
     return { needsClarification: true, speechAct: "unknown" };
@@ -583,7 +602,7 @@ function resolveSpeechAct(input: {
   );
   const affirmedAreas = input.entities.areas.filter((item) => item.polarity === "affirmed");
   if (affirmedTreatments.length > 1) {
-    // NluFrame has no comparison speech act. Do not infer comparison from two names.
+    // Legacy NluFrame has no comparison speech act. Do not infer comparison from two names.
     return { needsClarification: true, speechAct: "unknown" };
   }
   if (affirmedTreatments.length === 1) {
@@ -593,6 +612,117 @@ function resolveSpeechAct(input: {
     return { needsClarification: false, speechAct: "ask_concern" };
   }
   return { needsClarification: true, speechAct: "unknown" };
+}
+
+function resolveV2SpeechAct(input: {
+  entities: EntityAdaptation;
+  frame: NluFrame;
+}): { needsClarification: boolean; speechAct: TurnSpeechAct } {
+  const dialogue = input.frame.dialogue;
+  const affirmedTreatments = input.entities.treatments.filter(
+    (item) => item.polarity === "affirmed",
+  );
+  const affirmedConcerns = input.entities.concerns.filter(
+    (item) => item.polarity === "affirmed",
+  );
+  const affirmedAreas = input.entities.areas.filter((item) => item.polarity === "affirmed");
+  const hasAffirmedEntities =
+    affirmedTreatments.length > 0 || affirmedConcerns.length > 0 || affirmedAreas.length > 0;
+
+  switch (dialogue.speechAct) {
+    case "request_handoff":
+    case "urgent_safety":
+    case "ask_clinic_info":
+    case "ask_price":
+      return { needsClarification: false, speechAct: dialogue.speechAct };
+    case "compare_treatments": {
+      const enoughExplicitTreatments = affirmedTreatments.length >= 2;
+      const canUseActiveSubject =
+        dialogue.reference === "active_subject" && affirmedTreatments.length >= 1;
+      const canUseActiveComparison =
+        dialogue.reference === "active_comparison" && affirmedTreatments.length === 0;
+      return enoughExplicitTreatments || canUseActiveSubject || canUseActiveComparison
+        ? { needsClarification: false, speechAct: "compare_treatments" }
+        : { needsClarification: true, speechAct: "unknown" };
+    }
+    case "learn_treatment":
+      if (affirmedTreatments.length > 1) {
+        return { needsClarification: true, speechAct: "unknown" };
+      }
+      return hasAffirmedEntities || ["active_subject", "active_comparison"].includes(dialogue.reference)
+        ? { needsClarification: false, speechAct: "learn_treatment" }
+        : { needsClarification: true, speechAct: "unknown" };
+    case "ask_treatment_detail":
+      return hasAffirmedEntities || ["active_subject", "active_comparison"].includes(dialogue.reference)
+        ? { needsClarification: false, speechAct: "ask_treatment_detail" }
+        : { needsClarification: true, speechAct: "unknown" };
+    case "ask_concern":
+      return hasAffirmedEntities || dialogue.reference === "active_subject"
+        ? { needsClarification: false, speechAct: "ask_concern" }
+        : { needsClarification: true, speechAct: "unknown" };
+    case "book_consultation":
+    case "manage_booking":
+    case "provide_booking_field":
+      // Booking mutations and fields require deterministic supplemental evidence.
+      return { needsClarification: true, speechAct: "unknown" };
+    case "select_options":
+    case "unknown":
+      return { needsClarification: true, speechAct: "unknown" };
+  }
+}
+
+function resolveSpeechAct(input: {
+  entities: EntityAdaptation;
+  frame: NluFrame;
+  safety: NluSafetyFrame;
+  supplemental: NormalizedSupplement;
+}): { needsClarification: boolean; speechAct: TurnSpeechAct } {
+  if (input.supplemental.hardDecision) {
+    return {
+      needsClarification: false,
+      speechAct: input.supplemental.hardDecision.speechAct,
+    };
+  }
+  if (input.safety.postTreatmentRisk) {
+    return { needsClarification: false, speechAct: "urgent_safety" };
+  }
+  if (
+    input.safety.humanRequest ||
+    input.safety.complaint ||
+    input.safety.pregnancyNursing
+  ) {
+    return { needsClarification: false, speechAct: "request_handoff" };
+  }
+  if (!input.supplemental.valid) {
+    return { needsClarification: true, speechAct: "unknown" };
+  }
+
+  const trustedBooking = trustedBookingSpeechAct(input.supplemental.booking);
+  if (trustedBooking) {
+    return { needsClarification: false, speechAct: trustedBooking };
+  }
+
+  if (input.supplemental.selection) {
+    const { families } = activeIntentFamilies(input.frame);
+    const conflictingFamilies = [...families].filter((family) => family !== "treatment");
+    if (
+      input.frame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE ||
+      conflictingFamilies.length === 0
+    ) {
+      return { needsClarification: false, speechAct: "select_options" };
+    }
+    return { needsClarification: true, speechAct: "unknown" };
+  }
+  if (input.frame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE) {
+    return { needsClarification: true, speechAct: "unknown" };
+  }
+  if (!input.entities.valid) {
+    return { needsClarification: true, speechAct: "unknown" };
+  }
+
+  return input.frame.schemaVersion === 1
+    ? resolveLegacySpeechAct(input)
+    : resolveV2SpeechAct(input);
 }
 
 function makeMentionsConservative(
@@ -631,17 +761,28 @@ export function adaptNluFrameToConversationV2Turn(
   const supplemental = normalizeSupplement(input.supplemental);
 
   if (!parsedFrame) {
-    const safetySpeechAct: TurnSpeechAct = safetySignals.postTreatmentRisk
-      ? "urgent_safety"
-      : hasAnySafetySignal(safetySignals)
-        ? "request_handoff"
-        : "unknown";
+    const deterministicSpeechAct = supplemental.valid
+      ? trustedBookingSpeechAct(supplemental.booking) ??
+        (supplemental.selection ? "select_options" as const : null)
+      : null;
+    const safetySpeechAct: TurnSpeechAct = supplemental.hardDecision?.speechAct ??
+      (safetySignals.postTreatmentRisk
+        ? "urgent_safety"
+        : hasAnySafetySignal(safetySignals)
+          ? "request_handoff"
+          : deterministicSpeechAct ?? "unknown");
     return {
       areas: [],
+      ...(supplemental.valid && supplemental.booking ? { booking: supplemental.booking } : {}),
+      ...(supplemental.valid && supplemental.clarification ? { clarification: supplemental.clarification } : {}),
+      conversationMove: "none",
       concerns: [],
-      confidence: 0,
+      confidence: deterministicSpeechAct ? 1 : 0,
+      dialogueReference: "none",
+      questionAspect: "none",
       receivedAt: input.receivedAt,
       safetySignals,
+      ...(supplemental.valid && supplemental.selection ? { selection: supplemental.selection } : {}),
       sourceIntents: [],
       speechAct: safetySpeechAct,
       text: input.text,
@@ -662,8 +803,13 @@ export function adaptNluFrameToConversationV2Turn(
     areas: makeMentionsConservative(entities.areas, resolution.needsClarification),
     ...(supplemental.booking ? { booking: supplemental.booking } : {}),
     ...(supplemental.clarification ? { clarification: supplemental.clarification } : {}),
+    conversationMove: parsedFrame.dialogue.move,
     concerns: makeMentionsConservative(entities.concerns, resolution.needsClarification),
-    confidence: parsedFrame.confidence,
+    confidence: trustedBookingSpeechAct(supplemental.booking)
+      ? 1
+      : parsedFrame.confidence,
+    dialogueReference: parsedFrame.dialogue.reference,
+    questionAspect: parsedFrame.dialogue.focus,
     receivedAt: input.receivedAt,
     safetySignals,
     ...(supplemental.selection ? { selection: supplemental.selection } : {}),

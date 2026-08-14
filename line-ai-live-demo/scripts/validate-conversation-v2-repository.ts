@@ -3,7 +3,10 @@ import {
   ConversationV2ReplayRepository,
   type ConversationV2ShadowRecord,
 } from "../src/lib/conversation-v2/repository";
-import type { TurnUnderstanding } from "../src/lib/conversation-v2/types";
+import {
+  CONVERSATION_V2_SCHEMA_VERSION,
+  type TurnUnderstanding,
+} from "../src/lib/conversation-v2/types";
 
 let passed = 0;
 
@@ -12,6 +15,11 @@ function expect(condition: unknown, label: string) {
   passed += 1;
 }
 
+expect(
+  CONVERSATION_V2_REPLAY_RECORD_SCHEMA_VERSION === 2,
+  "replay record schema version matches the required dialogue semantics",
+);
+
 const TENANT = "tenant_001";
 const USER = "line-user-1";
 const EPISODE = "episode-current";
@@ -19,8 +27,11 @@ const EPISODE = "episode-current";
 function turn(overrides: Partial<TurnUnderstanding> = {}): TurnUnderstanding {
   return {
     areas: [],
+    conversationMove: "none",
     concerns: [],
     confidence: 0.99,
+    dialogueReference: "none",
+    questionAspect: "none",
     receivedAt: "2099-01-01T00:00:00.000Z",
     speechAct: "unknown",
     text: "",
@@ -157,6 +168,19 @@ expect(conflict.status === "conflict" && conflict.conflicts[0]?.identity === "me
 expect(conflict.appliedRecordCount === 0 && conflict.state.bookingTask.status === "inactive",
   "a conflicted identity is not chosen arbitrarily or allowed to mutate state");
 
+const semanticVariant = structuredClone(startBooking);
+semanticVariant.turn.questionAspect = "booking_policy";
+const semanticConflict = repository.replay({
+  episodeId: EPISODE,
+  records: [startBooking, semanticVariant],
+  tenantId: TENANT,
+  userId: USER,
+});
+expect(
+  semanticConflict.status === "conflict" && semanticConflict.appliedRecordCount === 0,
+  "different semantic axes for one LINE identity must stop replay instead of choosing a winner",
+);
+
 const wrongSchema = { ...startBooking, schemaVersion: 999 };
 const malformedTurn = {
   ...provideBranch,
@@ -172,21 +196,38 @@ const emptyKeySelection = {
   messageId: "msg-empty-keys",
   turn: turn({ selection: { keys: [], mode: "keys" } }),
 };
+const invalidDialogueMove = {
+  ...provideBranch,
+  messageId: "msg-invalid-move",
+  turn: turn({ conversationMove: "guess" as TurnUnderstanding["conversationMove"] }),
+};
+const missingDialogueReference = {
+  ...provideBranch,
+  messageId: "msg-missing-reference",
+  turn: { ...turn(), dialogueReference: undefined },
+};
 const invalid = repository.replay({
   episodeId: EPISODE,
-  records: [wrongSchema, malformedTurn, zeroIndexSelection, emptyKeySelection],
+  records: [
+    wrongSchema,
+    malformedTurn,
+    zeroIndexSelection,
+    emptyKeySelection,
+    invalidDialogueMove,
+    missingDialogueReference,
+  ],
   tenantId: TENANT,
   userId: USER,
 });
-expect(invalid.source === "invalid_rebuilt" && invalid.invalidRecords.length === 4,
-  "unsupported schemaVersion, damaged turns, and invalid selections are rejected and rebuilt safely");
+expect(invalid.source === "invalid_rebuilt" && invalid.invalidRecords.length === 6,
+  "unsupported schemaVersion, damaged semantic axes, and invalid selections are rejected and rebuilt safely");
 expect(invalid.state.bookingTask.status === "inactive"
   && invalid.state.bookingTask.draft.phone === undefined
   && invalid.state.knowledge.treatmentKeys.length === 0,
   "invalid or missing records rebuild empty booking and knowledge state");
 
 const missing = repository.replay({ records: [], tenantId: TENANT, userId: USER });
-expect(missing.source === "missing_rebuilt" && missing.state.schemaVersion === 1,
+expect(missing.source === "missing_rebuilt" && missing.state.schemaVersion === CONVERSATION_V2_SCHEMA_VERSION,
   "missing records create a schema-versioned fresh state");
 
 const oldEpisode = record({

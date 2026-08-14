@@ -118,6 +118,7 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
           },
           message: result.messageText ?? "",
           messageId: customerMessageId,
+          recentTurns: result.nluRecentTurns,
         });
         if (observation) {
           await captureConversationV2ShadowRecord({

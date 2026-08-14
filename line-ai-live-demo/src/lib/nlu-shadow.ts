@@ -7,10 +7,49 @@ import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/op
 import { evaluateNluDecisionGate } from "@/lib/nlu-decision-adapter";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
-export const NLU_PROMPT_VERSION = "nlu-v2";
+export const NLU_PROMPT_VERSION = "nlu-v3-dialogue";
 type DecisionSnapshot = NluShadowObservation["deterministicDecision"];
 
-export async function requestNluFrame(message: string) {
+export type NluRecentTurn = {
+  role: "assistant" | "user";
+  text: string;
+  turnId?: string;
+};
+
+export function selectNluPriorTurns(
+  recentTurns: readonly NluRecentTurn[] = [],
+  currentTurnIds: ReadonlySet<string> = new Set(),
+) {
+  return recentTurns
+    .filter((turn) => !turn.turnId || !currentTurnIds.has(turn.turnId))
+    .slice(-4)
+    .map(({ role, text }) => ({ role, text }));
+}
+
+function sanitizeNluText(text: string) {
+  return text
+    .replace(/(?:\+?886[-\s]?)?0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}/gu, "[電話已提供]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[Email 已提供]")
+    .replace(/https?:\/\/\S+/giu, "[網址]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+export function buildNluRequestInput(message: string, recentTurns: readonly NluRecentTurn[] = []) {
+  const priorTurns = selectNluPriorTurns(recentTurns)
+    .map((turn) => ({ role: turn.role, text: sanitizeNluText(turn.text) }))
+    .filter((turn) => Boolean(turn.text));
+  return [
+    `priorTurns=${JSON.stringify(priorTurns)}`,
+    `currentMessage=${JSON.stringify(sanitizeNluText(message))}`,
+  ].join("\n");
+}
+
+export async function requestNluFrame(
+  message: string,
+  context: { recentTurns?: readonly NluRecentTurn[] } = {},
+) {
   const config = getRuntimeConfig();
   if (!config.openAiApiKey) return null;
 
@@ -22,7 +61,7 @@ export async function requestNluFrame(message: string) {
       method: "POST",
       headers: { Authorization: `Bearer ${config.openAiApiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        input: `請解析這則客人訊息：\n${message}`,
+        input: buildNluRequestInput(message, context.recentTurns),
         instructions: buildNluInstructions(),
         max_output_tokens: 320,
         model: config.openAiModel,
@@ -51,12 +90,16 @@ export async function requestNluFrame(message: string) {
   }
 }
 
-export async function runNluShadow(message: string, decision: DecisionSnapshot) {
+export async function runNluShadow(
+  message: string,
+  decision: DecisionSnapshot,
+  context: { recentTurns?: readonly NluRecentTurn[] } = {},
+) {
   const config = getRuntimeConfig();
   if (config.openAiNluMode !== "shadow") return null;
   const gate = evaluateNluDecisionGate(`shadow:${message}`, { mode: "shadow", sampleRate: config.openAiNluSampleRate });
   if (!gate.eligible) return null;
-  const result = await requestNluFrame(message);
+  const result = await requestNluFrame(message, context);
   if (!result) return null;
   const divergenceCategories: string[] = [];
   if (!result.frame) divergenceCategories.push("invalid_frame");
@@ -70,14 +113,21 @@ export async function runNluShadow(message: string, decision: DecisionSnapshot) 
 }
 
 export async function captureNluShadowObservation(
-  input: { decision: DecisionSnapshot; message: string; messageId: string },
+  input: {
+    decision: DecisionSnapshot;
+    message: string;
+    messageId: string;
+    recentTurns?: readonly NluRecentTurn[];
+  },
   dependencies: {
     run?: typeof runNluShadow;
     store?: typeof storeNluShadowObservation;
   } = {},
 ) {
   try {
-    const observation = await (dependencies.run ?? runNluShadow)(input.message, input.decision);
+    const observation = await (dependencies.run ?? runNluShadow)(input.message, input.decision, {
+      recentTurns: input.recentTurns,
+    });
     if (observation) {
       const storedObservation = { ...observation, messageId: input.messageId };
       await (dependencies.store ?? storeNluShadowObservation)(storedObservation);

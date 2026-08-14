@@ -12,8 +12,10 @@ import { getRuntimeConfig } from "../src/lib/live-demo-config";
 
 function frame(overrides: Partial<NluFrame> = {}): NluFrame {
   return {
+    areas: [],
     confidence: 0.97,
     concerns: [{ area: "jawline", key: "jawline_looseness" }],
+    dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
     intents: ["treatment_consultation"],
     negated: [],
     safety: {
@@ -22,6 +24,7 @@ function frame(overrides: Partial<NluFrame> = {}): NluFrame {
       postTreatmentRisk: false,
       pregnancyNursing: false,
     },
+    schemaVersion: 1,
     treatments: ["onda_pro"],
     ...overrides,
   };

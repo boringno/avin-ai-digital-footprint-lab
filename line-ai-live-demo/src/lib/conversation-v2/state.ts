@@ -9,6 +9,7 @@ import {
   type ConversationV2State,
   type DialoguePolicyAction,
   type KnowledgeContext,
+  type TreatmentResponseContext,
 } from "./types";
 
 function unique(values: readonly string[]) {
@@ -33,6 +34,18 @@ function cloneAwaiting(awaiting: AwaitingState | undefined): AwaitingState | und
               areaKeys: [...awaiting.pendingKnowledge.areaKeys],
               concernKeys: [...awaiting.pendingKnowledge.concernKeys],
               treatmentKeys: [...awaiting.pendingKnowledge.treatmentKeys],
+            }
+          : undefined,
+        responseContext: awaiting.responseContext
+          ? {
+              ...awaiting.responseContext,
+              affirmedAreaKeys: [...awaiting.responseContext.affirmedAreaKeys],
+              affirmedConcernKeys: [...awaiting.responseContext.affirmedConcernKeys],
+              affirmedTreatmentKeys: [...awaiting.responseContext.affirmedTreatmentKeys],
+              declinedTreatmentKeys: [...awaiting.responseContext.declinedTreatmentKeys],
+              excludedAreaKeys: [...awaiting.responseContext.excludedAreaKeys],
+              excludedConcernKeys: [...awaiting.responseContext.excludedConcernKeys],
+              excludedTreatmentKeys: [...awaiting.responseContext.excludedTreatmentKeys],
             }
           : undefined,
       }
@@ -62,6 +75,13 @@ export function cloneConversationV2State(state: ConversationV2State): Conversati
       handoff: state.control.handoff ? { ...state.control.handoff } : undefined,
     },
     knowledge: cloneKnowledge(state.knowledge),
+    pricingSubjectTreatmentKeys: [...state.pricingSubjectTreatmentKeys],
+    preferences: {
+      ...state.preferences,
+      excludedAreaKeys: [...state.preferences.excludedAreaKeys],
+      excludedConcernKeys: [...state.preferences.excludedConcernKeys],
+      excludedTreatmentKeys: [...state.preferences.excludedTreatmentKeys],
+    },
     processedTurnIds: [...state.processedTurnIds],
   };
 }
@@ -85,7 +105,14 @@ export function createConversationV2State(input: {
       concernKeys: [],
       treatmentKeys: [],
     },
+    pricingSubjectTreatmentKeys: [],
     processedTurnIds: [],
+    preferences: {
+      excludedAreaKeys: [],
+      excludedConcernKeys: [],
+      excludedTreatmentKeys: [],
+      treatmentApproach: "unspecified",
+    },
     revision: 0,
     schemaVersion: CONVERSATION_V2_SCHEMA_VERSION,
     updatedAt: input.now,
@@ -114,20 +141,64 @@ function mergeKnowledge(
   state: ConversationV2State,
   values: Partial<Pick<KnowledgeContext, "areaKeys" | "concernKeys" | "treatmentKeys">>,
   mode: "merge" | "replace_active_subject" = "merge",
+  responseContext?: TreatmentResponseContext,
 ): KnowledgeContext {
-  if (mode === "replace_active_subject") {
-    return {
-      approvedFactIds: [],
-      areaKeys: unique(values.areaKeys ?? []),
-      concernKeys: unique(values.concernKeys ?? []),
-      treatmentKeys: unique(values.treatmentKeys ?? []),
-    };
-  }
+  const base = mode === "replace_active_subject"
+    ? { approvedFactIds: [], areaKeys: [], concernKeys: [], treatmentKeys: [] }
+    : cloneKnowledge(state.knowledge);
+  const excludedAreaKeys = new Set(responseContext?.excludedAreaKeys ?? []);
+  const excludedConcernKeys = new Set(responseContext?.excludedConcernKeys ?? []);
+  const excludedTreatmentKeys = new Set(responseContext?.excludedTreatmentKeys ?? []);
   return {
-    ...cloneKnowledge(state.knowledge),
-    areaKeys: unique([...state.knowledge.areaKeys, ...(values.areaKeys ?? [])]),
-    concernKeys: unique([...state.knowledge.concernKeys, ...(values.concernKeys ?? [])]),
-    treatmentKeys: unique([...state.knowledge.treatmentKeys, ...(values.treatmentKeys ?? [])]),
+    approvedFactIds: [...base.approvedFactIds],
+    areaKeys: unique([...base.areaKeys, ...(values.areaKeys ?? [])]).filter(
+      (key) => !excludedAreaKeys.has(key),
+    ),
+    concernKeys: unique([...base.concernKeys, ...(values.concernKeys ?? [])]).filter(
+      (key) => !excludedConcernKeys.has(key),
+    ),
+    treatmentKeys: unique([...base.treatmentKeys, ...(values.treatmentKeys ?? [])]).filter(
+      (key) => !excludedTreatmentKeys.has(key),
+    ),
+  };
+}
+
+function updatePreferences(
+  state: ConversationV2State,
+  responseContext: TreatmentResponseContext,
+  selectedKnowledge: Partial<Pick<KnowledgeContext, "areaKeys" | "concernKeys" | "treatmentKeys">> = {},
+) {
+  const affirmedAreas = new Set([
+    ...responseContext.affirmedAreaKeys,
+    ...(selectedKnowledge.areaKeys ?? []),
+  ]);
+  const affirmedConcerns = new Set([
+    ...responseContext.affirmedConcernKeys,
+    ...(selectedKnowledge.concernKeys ?? []),
+  ]);
+  const affirmedTreatments = new Set([
+    ...responseContext.affirmedTreatmentKeys,
+    ...(selectedKnowledge.treatmentKeys ?? []),
+  ]);
+  const treatmentApproach = responseContext.conversationMove === "prefer_single"
+    ? "single" as const
+    : ["compare", "replace", "start"].includes(responseContext.conversationMove)
+      ? "unspecified" as const
+      : state.preferences.treatmentApproach;
+  return {
+    excludedAreaKeys: unique([
+      ...state.preferences.excludedAreaKeys,
+      ...responseContext.excludedAreaKeys,
+    ]).filter((key) => !affirmedAreas.has(key)),
+    excludedConcernKeys: unique([
+      ...state.preferences.excludedConcernKeys,
+      ...responseContext.excludedConcernKeys,
+    ]).filter((key) => !affirmedConcerns.has(key)),
+    excludedTreatmentKeys: unique([
+      ...state.preferences.excludedTreatmentKeys,
+      ...responseContext.excludedTreatmentKeys,
+    ]).filter((key) => !affirmedTreatments.has(key)),
+    treatmentApproach,
   };
 }
 
@@ -220,9 +291,54 @@ export function reduceConversationV2State(
   state: ConversationV2State,
   action: DialoguePolicyAction,
 ): ConversationV2State {
-  const next = cloneConversationV2State(state);
+  let next = cloneConversationV2State(state);
   if (state.processedTurnIds.includes(action.turnId)) {
     return next;
+  }
+  if (action.preferenceContext) {
+    const excludedPricingSubjects = new Set(action.preferenceContext.excludedTreatmentKeys);
+    const clinicTreatmentKeys = action.type === "answer_clinic_info"
+      ? action.preferenceContext.affirmedTreatmentKeys
+      : [];
+    const clinicOwnsExplicitTreatment = clinicTreatmentKeys.length > 0;
+    const shouldUpdateOpenCreateBooking =
+      next.bookingTask.intent === "create" &&
+      ["collecting", "suspended"].includes(next.bookingTask.status);
+    const bookingDraft = shouldUpdateOpenCreateBooking
+      ? {
+          ...next.bookingTask.draft,
+          treatmentKeys: next.bookingTask.draft.treatmentKeys.filter(
+            (key) => !excludedPricingSubjects.has(key),
+          ),
+        }
+      : next.bookingTask.draft;
+    const bookingExpectedField = shouldUpdateOpenCreateBooking
+      ? nextMissingBookingField(bookingDraft, "create")
+      : next.bookingTask.expectedField;
+    next = {
+      ...next,
+      bookingTask: shouldUpdateOpenCreateBooking
+        ? {
+            ...next.bookingTask,
+            draft: bookingDraft,
+            expectedField: bookingExpectedField,
+          }
+        : next.bookingTask,
+      knowledge: mergeKnowledge(
+        next,
+        {
+          areaKeys: action.preferenceContext.affirmedAreaKeys,
+          concernKeys: action.preferenceContext.affirmedConcernKeys,
+          treatmentKeys: clinicTreatmentKeys,
+        },
+        clinicOwnsExplicitTreatment ? "replace_active_subject" : "merge",
+        action.preferenceContext,
+      ),
+      preferences: updatePreferences(next, action.preferenceContext),
+      pricingSubjectTreatmentKeys: next.pricingSubjectTreatmentKeys.filter(
+        (key) => !excludedPricingSubjects.has(key),
+      ),
+    };
   }
   const common = {
     lastProcessedTurnId: action.turnId,
@@ -233,14 +349,26 @@ export function reduceConversationV2State(
 
   switch (action.type) {
     case "learn_treatment": {
-      const subjectKey = treatmentSubjectKey(action);
+      const knowledge = mergeKnowledge(
+        next,
+        action,
+        action.knowledgeMode,
+        action.responseContext,
+      );
+      const taskKind = action.taskKind === "compare_treatments" && knowledge.treatmentKeys.length < 2
+        ? knowledge.treatmentKeys.length > 0
+          ? "learn_treatment" as const
+          : "answer_concern" as const
+        : action.taskKind;
+      const subjectKey = knowledgeSubjectKey(taskKind, knowledge);
       return {
         ...next,
         ...common,
-        activeTask: nextTask(next, action.taskKind, action.at, action.turnId, subjectKey),
+        activeTask: nextTask(next, taskKind, action.at, action.turnId, subjectKey),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
-        knowledge: mergeKnowledge(next, action, action.knowledgeMode),
+        knowledge,
+        preferences: updatePreferences(next, action.responseContext),
       };
     }
     case "clarify": {
@@ -249,11 +377,12 @@ export function reduceConversationV2State(
         ...next,
         ...common,
         activeTask: nextTask(next, action.taskKind, action.at, action.turnId, subjectKey),
-        awaiting: cloneAwaiting(action.awaiting),
+        awaiting: cloneAwaiting({ ...action.awaiting, responseContext: action.responseContext }),
         bookingTask: suspendBooking(next),
         knowledge: action.knowledgeMode === "replace_active_subject"
-          ? mergeKnowledge(next, {}, "replace_active_subject")
-          : cloneKnowledge(next.knowledge),
+          ? mergeKnowledge(next, {}, "replace_active_subject", action.responseContext)
+          : mergeKnowledge(next, {}, "merge", action.responseContext),
+        preferences: updatePreferences(next, action.responseContext),
       };
     }
     case "answer_selection": {
@@ -271,6 +400,7 @@ export function reduceConversationV2State(
           treatmentKeys,
         },
         action.knowledgeMode,
+        action.responseContext,
       );
       return {
         ...next,
@@ -283,6 +413,7 @@ export function reduceConversationV2State(
         awaiting: undefined,
         bookingTask: suspendBooking(next),
         knowledge,
+        preferences: updatePreferences(next, action.responseContext, selectedKnowledge),
       };
     }
     case "start_booking": {
@@ -335,14 +466,19 @@ export function reduceConversationV2State(
         },
       };
     }
-    case "answer_clinic_info":
+    case "answer_clinic_info": {
+      const clinicTreatmentKeys = action.preferenceContext?.affirmedTreatmentKeys ?? [];
+      const subjectKey = clinicTreatmentKeys.length > 0
+        ? `treatment:${[...clinicTreatmentKeys].sort().join("+")}`
+        : undefined;
       return {
         ...next,
         ...common,
-        activeTask: nextTask(next, "clinic_info", action.at, action.turnId),
+        activeTask: nextTask(next, "clinic_info", action.at, action.turnId, subjectKey),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
       };
+    }
     case "answer_price":
       return {
         ...next,
@@ -350,7 +486,7 @@ export function reduceConversationV2State(
         activeTask: nextTask(next, "pricing", action.at, action.turnId),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
-        knowledge: mergeKnowledge(next, { treatmentKeys: action.treatmentKeys }),
+        pricingSubjectTreatmentKeys: [...action.treatmentKeys],
       };
     case "queue_handoff":
       return {

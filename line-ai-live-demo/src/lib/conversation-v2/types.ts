@@ -1,4 +1,11 @@
-export const CONVERSATION_V2_SCHEMA_VERSION = 1 as const;
+import type {
+  ConversationMove,
+  DialogueReference,
+  DialogueSpeechAct,
+  QuestionAspect,
+} from "../dialogue-semantics";
+
+export const CONVERSATION_V2_SCHEMA_VERSION = 2 as const;
 
 export type ControlMode =
   | "ai_active"
@@ -100,6 +107,7 @@ export type AwaitingState = {
     "areaKeys" | "concernKeys" | "treatmentKeys"
   >;
   prompt: string;
+  responseContext?: TreatmentResponseContext;
 };
 
 /**
@@ -113,6 +121,13 @@ export type KnowledgeContext = {
   treatmentKeys: string[];
 };
 
+export type ConversationPreferences = {
+  excludedAreaKeys: string[];
+  excludedConcernKeys: string[];
+  excludedTreatmentKeys: string[];
+  treatmentApproach: "single" | "unspecified";
+};
+
 export type ConversationV2State = {
   activeTask: ActiveTask;
   awaiting?: AwaitingState;
@@ -121,9 +136,11 @@ export type ConversationV2State = {
   episodeId: string;
   knowledge: KnowledgeContext;
   lastProcessedTurnId?: string;
+  pricingSubjectTreatmentKeys: string[];
   processedTurnIds: string[];
   revision: number;
   schemaVersion: typeof CONVERSATION_V2_SCHEMA_VERSION;
+  preferences: ConversationPreferences;
   updatedAt: string;
 };
 
@@ -156,28 +173,32 @@ export type BookingUnderstanding = {
   intent: BookingIntent;
 };
 
-export type TurnSpeechAct =
-  | "learn_treatment"
-  | "ask_treatment_detail"
-  | "compare_treatments"
-  | "ask_concern"
-  | "ask_clinic_info"
-  | "ask_price"
-  | "book_consultation"
-  | "manage_booking"
-  | "provide_booking_field"
-  | "request_handoff"
-  | "select_options"
-  | "urgent_safety"
-  | "unknown";
+export type TurnSpeechAct = DialogueSpeechAct;
+
+export type TreatmentResponseContext = {
+  affirmedAreaKeys: string[];
+  affirmedConcernKeys: string[];
+  affirmedTreatmentKeys: string[];
+  conversationMove: ConversationMove;
+  declinedTreatmentKeys: string[];
+  dialogueReference: DialogueReference;
+  excludedAreaKeys: string[];
+  excludedConcernKeys: string[];
+  excludedTreatmentKeys: string[];
+  questionAspect: QuestionAspect;
+  treatmentApproach: ConversationPreferences["treatmentApproach"];
+};
 
 /** Structured output expected from deterministic preflight plus NLU. */
 export type TurnUnderstanding = {
   areas: EntityMention[];
   booking?: BookingUnderstanding;
   clarification?: ClarificationNeed;
+  conversationMove: ConversationMove;
   concerns: EntityMention[];
   confidence: number;
+  dialogueReference: DialogueReference;
+  questionAspect: QuestionAspect;
   receivedAt: string;
   selection?: SelectionUnderstanding;
   speechAct: TurnSpeechAct;
@@ -188,6 +209,8 @@ export type TurnUnderstanding = {
 
 type PolicyActionBase = {
   at: string;
+  /** Turn-level preference changes persist even when price/clinic is the primary action. */
+  preferenceContext?: TreatmentResponseContext;
   turnId: string;
 };
 
@@ -199,6 +222,7 @@ export type DialoguePolicyAction =
       concernKeys: string[];
       areaKeys: string[];
       knowledgeMode: KnowledgeUpdateMode;
+      responseContext: TreatmentResponseContext;
     })
   | (PolicyActionBase & {
       awaiting: AwaitingState;
@@ -208,6 +232,7 @@ export type DialoguePolicyAction =
       taskKind: "learn_treatment" | "compare_treatments" | "answer_concern";
       treatmentKeys: string[];
       type: "clarify";
+      responseContext: TreatmentResponseContext;
     })
   | (PolicyActionBase & {
       areaKeys: string[];
@@ -217,6 +242,7 @@ export type DialoguePolicyAction =
       taskKind: "learn_treatment" | "compare_treatments" | "answer_concern";
       treatmentKeys: string[];
       type: "answer_selection";
+      responseContext: TreatmentResponseContext;
     })
   | (PolicyActionBase & {
       intent: Exclude<BookingIntent, "none">;
@@ -271,11 +297,13 @@ export type GeneratedReplyPlan = ReplyPlanBase & {
     | "introduce_treatment"
     | "answer_followup"
     | "compare_options"
-    | "recommend_direction";
+    | "recommend_direction"
+    | "address_objection";
   knowledgeQuery: ReplyKnowledgeQuery;
   mode: "generated";
   nextQuestion?: string;
   objective: string;
+  responseContext: TreatmentResponseContext;
   selectedOptions?: AwaitingOption[];
 };
 

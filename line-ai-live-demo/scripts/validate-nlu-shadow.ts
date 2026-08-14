@@ -1,5 +1,11 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
-import { captureNluShadowObservation, runNluShadow } from "@/lib/nlu-shadow";
+import {
+  buildNluRequestInput,
+  captureNluShadowObservation,
+  NLU_PROMPT_VERSION,
+  runNluShadow,
+  selectNluPriorTurns,
+} from "@/lib/nlu-shadow";
 
 async function main() {
 const decision = { decisionType: "fallback_reply", matchedKey: "generic_fallback", matchedType: "generic_fallback" };
@@ -37,11 +43,19 @@ globalThis.fetch = async (_input, init) => {
         content: [{
           type: "output_text",
           text: JSON.stringify({
+            areas: ["face"],
             confidence: 0.96,
             concerns: [{ area: "face", key: "dynamic_wrinkles" }],
+            dialogue: {
+              focus: "overview",
+              move: "start",
+              reference: "explicit",
+              speechAct: "learn_treatment",
+            },
             intents: ["treatment_consultation"],
             negated: [],
             safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+            schemaVersion: 2,
             treatments: ["botox"],
           }),
         }],
@@ -50,17 +64,62 @@ globalThis.fetch = async (_input, init) => {
     usage: { input_tokens: 100, output_tokens: 30 },
   }), { status: 200 });
 };
-const restPayloadResult = await runNluShadow("皺眉紋", decision);
+const recentTurns = [
+  { role: "user" as const, text: "最舊一輪不應送出" },
+  { role: "assistant" as const, text: "第二舊一輪也不應送出" },
+  { role: "user" as const, text: "電話 0912-345-678" },
+  { role: "assistant" as const, text: "Email demo@example.com" },
+  { role: "user" as const, text: "網址 https://example.com/private" },
+  { role: "assistant" as const, text: "正在談肉毒" },
+];
+const selectedPriorTurns = selectNluPriorTurns(
+  [
+    ...recentTurns,
+    { role: "user" as const, text: "目前訊息不可成為 prior turn", turnId: "user-current" },
+    { role: "assistant" as const, text: "尚未送出的回答不可成為 prior turn", turnId: "assistant-current" },
+  ],
+  new Set(["user-current", "assistant-current"]),
+);
+if (selectedPriorTurns.length !== 4 || selectedPriorTurns.some((turn) => turn.text.includes("不可成為"))) {
+  throw new Error("NLU prior-turn selection must exclude the current customer and unsent assistant turns");
+}
+const restPayloadResult = await runNluShadow("皺眉紋", decision, { recentTurns });
 globalThis.fetch = originalFetch;
 if (restPayloadResult?.frame?.concerns[0]?.key !== "dynamic_wrinkles") {
   throw new Error("NLU shadow must parse output[].content[] from the raw Responses REST payload");
 }
-const requestBody = capturedRequestBody as unknown as { reasoning?: { effort?: string }; text?: { format?: { type?: string; strict?: boolean } } } | null;
+if (restPayloadResult?.promptVersion !== "nlu-v3-dialogue" || NLU_PROMPT_VERSION !== "nlu-v3-dialogue") {
+  throw new Error("NLU shadow must record the V2 dialogue prompt version");
+}
+if (restPayloadResult?.frame?.dialogue.speechAct !== "learn_treatment") {
+  throw new Error("NLU shadow must retain structured dialogue semantics");
+}
+const requestBody = capturedRequestBody as unknown as {
+  input?: string;
+  reasoning?: { effort?: string };
+  text?: { format?: { type?: string; strict?: boolean } };
+} | null;
 const responseFormat = requestBody?.text?.format;
 if (responseFormat?.type !== "json_schema" || responseFormat.strict !== true) {
   throw new Error("NLU shadow must request strict structured output");
 }
 if (requestBody?.reasoning?.effort !== "none") throw new Error("GPT-5.6 NLU must preserve none reasoning for latency");
+const requestInput = requestBody?.input ?? "";
+if (!requestInput.includes("priorTurns=") || !requestInput.includes('currentMessage="皺眉紋"')) {
+  throw new Error("NLU request must separate prior turns from the current message");
+}
+if (requestInput.includes("最舊一輪") || requestInput.includes("第二舊一輪")) {
+  throw new Error("NLU request must include at most the latest four prior turns");
+}
+for (const secret of ["0912-345-678", "demo@example.com", "https://example.com/private"]) {
+  if (requestInput.includes(secret)) throw new Error("NLU recent context must redact customer identifiers");
+}
+if (!requestInput.includes("[電話已提供]") || !requestInput.includes("[Email 已提供]") || !requestInput.includes("[網址]")) {
+  throw new Error("NLU recent context must retain redacted conversational placeholders");
+}
+if (buildNluRequestInput("目前問題", recentTurns) !== requestInput.replace('currentMessage="皺眉紋"', 'currentMessage="目前問題"')) {
+  throw new Error("NLU request builder must be deterministic");
+}
 
 process.env.OPENAI_NLU_MODE = "decision";
 let rejectedDecisionMode = false;
@@ -73,15 +132,25 @@ if (!rejectedDecisionMode) throw new Error("unimplemented decision mode must be 
 delete process.env.OPENAI_NLU_MODE;
 
 let continuedAfterStoreFailure = false;
+let capturedPriorTurn = "";
 await captureNluShadowObservation(
-  { decision, message: "術後很痛", messageId: "message-id" },
   {
-    run: async () => ({ confidence: null, deterministicDecision: decision, divergenceCategories: [], errorCode: null, frame: null, latencyMs: 1, model: "test", promptVersion: "test", tokensIn: 0, tokensOut: 0 }),
+    decision,
+    message: "術後很痛",
+    messageId: "message-id",
+    recentTurns: [{ role: "user", text: "剛做完療程" }],
+  },
+  {
+    run: async (_message, _decision, context) => {
+      capturedPriorTurn = context?.recentTurns?.[0]?.text ?? "";
+      return { confidence: null, deterministicDecision: decision, divergenceCategories: [], errorCode: null, frame: null, latencyMs: 1, model: "test", promptVersion: "test", tokensIn: 0, tokensOut: 0 };
+    },
     store: async () => { throw new Error("injected shadow store failure"); },
   },
 );
 continuedAfterStoreFailure = true;
 if (!continuedAfterStoreFailure) throw new Error("shadow store failure interrupted post-processing");
+if (capturedPriorTurn !== "剛做完療程") throw new Error("shadow capture must forward prior-turn context");
 console.log("NLU shadow validation passed");
 }
 

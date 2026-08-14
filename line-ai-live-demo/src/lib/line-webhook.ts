@@ -14,7 +14,7 @@ import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getHandoffPriority } from "@/lib/handoff-priority";
 import { reportOperationalError } from "@/lib/monitoring";
 import { resolveNluCanaryDecision } from "@/lib/nlu-decision-adapter";
-import { requestNluFrame } from "@/lib/nlu-shadow";
+import { requestNluFrame, selectNluPriorTurns } from "@/lib/nlu-shadow";
 import {
   applyAutoResumeIfDue,
   createEmptyConversationState,
@@ -334,6 +334,8 @@ export type ProcessedWebhookResult = {
   eventTimestamp?: number;
   messageId: string;
   messageText: string;
+  /** Prior sanitized turns for transient NLU context; never written into shadow observations. */
+  nluRecentTurns?: Array<Pick<RecentConversationTurn, "role" | "text">>;
   replyPayload: null | {
     messages: LineReplyMessage[];
     replyToken: string;
@@ -629,7 +631,9 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       sampleRate: config.openAiNluSampleRate,
     });
     if (gatePreview.gate.allowDecision) {
-      const nluResult = await requestNluFrame(event.message.text ?? "");
+      const nluResult = await requestNluFrame(event.message.text ?? "", {
+        recentTurns: existingContext.recentTurns,
+      });
       const canary = resolveNluCanaryDecision(nluResult?.frame, sampleKey, {
         mode: config.openAiNluDecisionMode,
         sampleRate: config.openAiNluSampleRate,
@@ -851,6 +855,15 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
     const replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
       ? buildReplyPayload(replyToken, decision.replyText, decision.shouldIntroduce, decision.replyMessages, decision.suppressAiFooter)
       : null;
+    const eventIdentity = getEventTurnIdentity(event);
+    const currentTurnIds = new Set([
+      buildConversationTurnId("user", eventIdentity),
+      buildConversationTurnId("assistant", eventIdentity),
+    ].filter((value): value is string => Boolean(value)));
+    const nluRecentTurns = selectNluPriorTurns(
+      decision.nextContext.recentTurns,
+      currentTurnIds,
+    );
 
     results.push({
       aiModel: decision.aiModel,
@@ -881,6 +894,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       eventTimestamp: Number.isFinite(event.timestamp) ? event.timestamp : undefined,
       messageId: event.message?.id ?? "",
       messageText: event.message?.text ?? "",
+      nluRecentTurns,
       replyPayload,
       replyToken,
       rendererTelemetry: decision.rendererTelemetry,
