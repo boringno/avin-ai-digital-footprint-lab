@@ -13,6 +13,7 @@ export type RuntimeConfig = {
   anthropicMaxTokens: number;
   anthropicModel: string;
   claudeApiEnabled: boolean;
+  conversationV2Mode: "off" | "shadow";
   cronSecret: string;
   debugToken: string;
   handoffDigestFrom: string;
@@ -75,6 +76,12 @@ function parseNluDecisionMode(value: string | undefined): "canary" | "off" {
   throw new Error(`Unsupported OPENAI_NLU_DECISION_MODE: ${normalized}`);
 }
 
+function parseConversationV2Mode(value: string | undefined): "off" | "shadow" {
+  const normalized = (value ?? "off").trim().toLowerCase();
+  if (normalized === "off" || normalized === "shadow") return normalized;
+  throw new Error(`Unsupported CONVERSATION_V2_MODE: ${normalized}`);
+}
+
 function parseInteger(value: string | undefined, fallback: number) {
   if (!value) {
     return fallback;
@@ -124,6 +131,12 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   const openAiNluMode = parseNluMode(process.env.OPENAI_NLU_MODE);
   const openAiNluDecisionMode = parseNluDecisionMode(process.env.OPENAI_NLU_DECISION_MODE);
+  const conversationV2Mode = parseConversationV2Mode(process.env.CONVERSATION_V2_MODE);
+  if (conversationV2Mode === "shadow"
+    && openAiNluMode === "shadow"
+    && openAiNluDecisionMode === "canary") {
+    throw new Error("OPENAI_NLU_MODE=shadow cannot run with OPENAI_NLU_DECISION_MODE=canary; one message must make at most one NLU request");
+  }
 
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
@@ -137,6 +150,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     anthropicMaxTokens: parseInteger(process.env.CLAUDE_MAX_TOKENS, 300),
     anthropicModel: process.env.CLAUDE_MODEL ?? "claude-haiku-4-5",
     claudeApiEnabled: parseBoolean(process.env.CLAUDE_API_ENABLED, false),
+    conversationV2Mode,
     cronSecret: process.env.CRON_SECRET ?? "",
     debugToken: process.env.LIVE_DEMO_DEBUG_TOKEN ?? "",
     handoffDigestFrom: process.env.HANDOFF_DIGEST_FROM ?? "",

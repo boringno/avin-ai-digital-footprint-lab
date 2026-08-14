@@ -1,4 +1,5 @@
 import { isGroupSourceResult, type ProcessedWebhookResult, type ReplySendResult } from "@/lib/line-webhook";
+import { captureConversationV2ShadowRecord } from "@/lib/conversation-v2/runtime-shadow";
 import { toReplyRendererPayloadJson } from "@/lib/reply-renderer";
 import { notifyAdminHandoffCreated } from "@/lib/admin-handoff-notifications";
 import { PREGNANCY_RISK_NOTE, PREGNANCY_RISK_REASON_SUFFIX } from "@/lib/admin-risk-flags";
@@ -60,49 +61,75 @@ export type HandoffTaskUpdateClient = {
   };
 };
 
+export async function runAdminSyncInTwoPhases<TItem, TCandidate>(
+  items: readonly TItem[],
+  dependencies: {
+    captureShadow: (candidate: TCandidate) => Promise<void>;
+    persistCore: (item: TItem) => Promise<TCandidate | null>;
+  },
+) {
+  const shadowCandidates: TCandidate[] = [];
+  for (const item of items) {
+    const candidate = await dependencies.persistCore(item);
+    if (candidate !== null) shadowCandidates.push(candidate);
+  }
+  for (const candidate of shadowCandidates) {
+    await dependencies.captureShadow(candidate);
+  }
+}
+
 export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) {
   if (!hasSupabaseServerConfig() || input.results.length === 0) {
     return;
   }
 
   try {
-    for (const result of input.results) {
-      await captureLineGroupSource(result);
+    await runAdminSyncInTwoPhases(input.results, {
+      persistCore: async (result) => {
+        await captureLineGroupSource(result);
 
-      // Groups and rooms are only captured as notification sources. Never
-      // persist their messages as a customer conversation or create a handoff.
-      if (isGroupSourceResult(result)) {
-        continue;
-      }
+        // Groups and rooms are only captured as notification sources. Never
+        // persist their messages as a customer conversation or create a handoff.
+        if (isGroupSourceResult(result) || !result.sourceUserId) return null;
 
-      if (!result.sourceUserId) {
-        continue;
-      }
+        const conversation = await upsertConversation(result);
+        const customerMessageId = await insertCustomerMessage(conversation.id, result);
+        if (!customerMessageId) return null;
 
-      const conversation = await upsertConversation(result);
-      const customerMessageId = await insertCustomerMessage(conversation.id, result);
-
-      if (!customerMessageId) {
-        continue;
-      }
-
-      await safelyStoreIntentLabel(customerMessageId, result, "customer");
-      await captureNluShadowObservation({
-        decision: {
-          decisionType: result.decision.decisionType,
-          matchedKey: result.decision.matchedKey,
-          matchedType: result.decision.matchedType,
-        },
-        message: result.messageText ?? "",
-        messageId: customerMessageId,
-      });
-      const aiMessageId = await insertAiMessage(conversation.id, result, input.replyResults);
-      if (aiMessageId) {
-        await safelyStoreIntentLabel(aiMessageId, result, "ai");
-      }
-      await maybeCreateHandoffTask(conversation.id, result);
-      await maybeUpsertBookingLead(conversation.id, result);
-    }
+        await safelyStoreIntentLabel(customerMessageId, result, "customer");
+        const aiMessageId = await insertAiMessage(conversation.id, result, input.replyResults);
+        if (aiMessageId) {
+          await safelyStoreIntentLabel(aiMessageId, result, "ai");
+        }
+        await maybeCreateHandoffTask(conversation.id, result);
+        await maybeUpsertBookingLead(conversation.id, result);
+        return { conversationId: conversation.id, customerMessageId, result };
+      },
+      // Finish every event's staff-facing persistence before any optional
+      // model observation. A slow first shadow cannot delay the second event's
+      // AI message, handoff task, or booking lead in a multi-event webhook.
+      captureShadow: async ({ conversationId, customerMessageId, result }) => {
+        const observation = await captureNluShadowObservation({
+          decision: {
+            conversationStatus: result.conversationStatus,
+            decisionType: result.decision.decisionType,
+            matchedKey: result.decision.matchedKey,
+            matchedType: result.decision.matchedType,
+          },
+          message: result.messageText ?? "",
+          messageId: customerMessageId,
+        });
+        if (observation) {
+          await captureConversationV2ShadowRecord({
+            conversationId,
+            episodeKey: result.dialogueEpisodeKey,
+            lineTimestamp: result.eventTimestamp,
+            observation,
+            sourceUserId: result.sourceUserId,
+          });
+        }
+      },
+    });
   } catch (error) {
     await reportOperationalError({
       alert: false,
@@ -256,6 +283,8 @@ async function insertCustomerMessage(conversationId: string, result: ProcessedWe
       payload_json: {
         conversation_status: result.conversationStatus,
         decision_type: result.decision.decisionType,
+        dialogue_episode_key: result.dialogueEpisodeKey ?? null,
+        event_timestamp: result.eventTimestamp ?? null,
         event_type: result.eventType,
         matched_key: result.decision.matchedKey,
         matched_type: result.decision.matchedType,
