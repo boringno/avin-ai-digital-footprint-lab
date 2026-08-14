@@ -827,6 +827,7 @@ function MessageBubble({ isCompact, message }: { isCompact: boolean; message: Me
         <p style={messageMetaStyle}>
           {formatMessageAuthor(message)} · {formatTime(message.createdAt)}
           {message.sendStatus === "failed" ? " · 傳送失敗" : ""}
+          {message.sendStatus === "skipped" ? " （未傳送）" : ""}
         </p>
         <p style={messageBodyStyle}>{message.content}</p>
         {message.sendError ? <p style={messageErrorStyle}>{message.sendError}</p> : null}

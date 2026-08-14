@@ -1,6 +1,14 @@
 import { buildHandoffNotificationText, getHandoffNotificationReasonLabel } from "../src/lib/admin-handoff-notifications";
-import { shouldCreateHandoffTask } from "../src/lib/admin-webhook-sync";
+import {
+  buildHandoffReason,
+  refreshHandoffTaskWithPriority,
+  shouldCreateHandoffTask,
+  shouldRecoverMissingHandoffTask,
+  shouldRefreshHandoffTask,
+  shouldStoreAiMessage,
+} from "../src/lib/admin-webhook-sync";
 import { getRuntimeConfig } from "../src/lib/live-demo-config";
+import { isHandoffEscalation, selectHigherPriorityHandoffReason } from "../src/lib/handoff-priority";
 
 let passed = 0;
 
@@ -22,6 +30,24 @@ expect(!text.includes("abc-123") && !text.includes("LINE：") && !text.includes(
 expect(shouldCreateHandoffTask({ decision: { decisionType: "booking_intake_reply" } }), "booking intake creates a human follow-up task");
 expect(getHandoffNotificationReasonLabel("booking_intake") === "新預約需求", "booking intake uses Chinese label");
 expect(!shouldCreateHandoffTask({ decision: { decisionType: "clinic_info_reply" } }), "clinic information does not create a task");
+expect(shouldRefreshHandoffTask({ conversationStatus: "handoff_pending" }), "a pending conversation refreshes an existing task after a new message");
+expect(!shouldRefreshHandoffTask({ conversationStatus: "ai_active" }), "an active AI conversation does not refresh a handoff task");
+expect(shouldRecoverMissingHandoffTask({ conversationStatus: "handoff_pending", handoffReason: "human_request" }), "a pending conversation with a canonical reason can recreate a missing task");
+expect(!shouldRecoverMissingHandoffTask({ conversationStatus: "handoff_pending", handoffReason: null }), "a pending conversation without a canonical reason cannot create a task from the current route");
+expect(!shouldRecoverMissingHandoffTask({ conversationStatus: "ai_active", handoffReason: "human_request" }), "an active AI conversation cannot recreate a stale handoff task");
+expect(buildHandoffReason({
+  bookingDraft: { pregnancyRiskFlag: false },
+  decision: { matchedKey: "branch_list" },
+  handoffReason: "human_request",
+} as never) === "human_request", "task recovery uses the canonical handoff reason instead of the current route");
+expect(isHandoffEscalation("human_request", "post_procedure_emergency"), "an emergency upgrades an existing ordinary handoff task");
+expect(!isHandoffEscalation("post_procedure_emergency", "human_request"), "an ordinary request cannot downgrade an emergency task");
+expect(
+  selectHigherPriorityHandoffReason("post_procedure_emergency", "human_request") === "post_procedure_emergency",
+  "an ordinary refresh preserves the emergency task reason",
+);
+expect(!shouldStoreAiMessage({ suppressedReason: "conversation_state_blocked" }), "an ownership-suppressed reply is not stored as a delivered AI message");
+expect(shouldStoreAiMessage(undefined), "a normal reply remains eligible for AI message storage");
 
 const previousAdminNotifyTarget = process.env.ADMIN_NOTIFY_TARGET;
 const previousLineAlertUserId = process.env.LIVE_DEMO_ALERT_LINE_USER_ID;
@@ -52,4 +78,33 @@ try {
   }
 }
 
-console.log(`admin notification validation passed (${passed} checks)`);
+async function validateConcurrentPriorityRefresh() {
+  let storedReason: null | string = "human_request";
+  let firstAttempt = true;
+  const result = await refreshHandoffTaskWithPriority({
+    incomingReason: "human_request",
+    observedReason: "human_request",
+  }, {
+    compareAndSetReason: async (expectedReason, nextReason) => {
+      if (firstAttempt) {
+        firstAttempt = false;
+        // Simulate an emergency refresh winning immediately before this
+        // ordinary request tries to write its stale reason.
+        storedReason = "post_procedure_emergency";
+      }
+      if (storedReason !== expectedReason) return false;
+      storedReason = nextReason;
+      return true;
+    },
+    loadCurrentReason: async () => storedReason,
+  });
+  expect(result.reason === "post_procedure_emergency", "a concurrent ordinary refresh cannot overwrite an emergency task");
+  expect(storedReason === "post_procedure_emergency", "the persisted task reason stays at the highest observed priority");
+}
+
+validateConcurrentPriorityRefresh()
+  .then(() => console.log(`admin notification validation passed (${passed} checks)`))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

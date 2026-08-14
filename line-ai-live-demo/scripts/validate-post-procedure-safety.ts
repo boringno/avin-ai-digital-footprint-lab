@@ -72,7 +72,7 @@ async function main() {
 
   // P10: an existing open/taken task is refreshed through the same client call
   // used by the webhook sync, without a schema change or a database connection.
-  const updates: Array<{ id: string; patch: { updated_at: string } }> = [];
+  const updates: Array<{ id: string; patch: { branch?: null | string; reason: string; updated_at: string } }> = [];
   const fakeSupabase: HandoffTaskUpdateClient = {
     from: () => ({
       update: (patch) => ({
@@ -83,8 +83,12 @@ async function main() {
       }),
     }),
   };
-  await refreshExistingHandoffTask(fakeSupabase, "existing-open-task", NOW.toISOString());
+  await refreshExistingHandoffTask(fakeSupabase, "existing-open-task", {
+    reason: "post_procedure_issue",
+    refreshedAt: NOW.toISOString(),
+  });
   assert(updates.length === 1 && updates[0].id === "existing-open-task", "P10: existing task update was not recorded");
+  assert(updates[0].patch.reason === "post_procedure_issue", "P10: refreshed task keeps the latest canonical handoff reason");
 
   // P11: pregnancy guidance keeps priority over a booking conversation.
   await assertDecision("P11", "我懷孕了想預約肉毒", "medical_guidance_reply", "pregnancy_caution");

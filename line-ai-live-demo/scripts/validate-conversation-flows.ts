@@ -1,4 +1,11 @@
-import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, type ConversationContext } from "../src/lib/conversation-context";
+import {
+  appendRecentConversationTurns,
+  createEmptyConversationContext,
+  loadConversationContext,
+  mergeConcurrentConversationContexts,
+  removeUnsentAssistantTurn,
+  type ConversationContext,
+} from "../src/lib/conversation-context";
 import { buildCustomerServiceUserPrompt } from "../src/lib/ai-customer-policy";
 import { processWebhookRequestBody } from "../src/lib/line-webhook";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
@@ -272,6 +279,143 @@ async function validateInitialBookingGoal() {
   console.log("PASS: CF12 initial booking collection preserves book-consultation goal");
 }
 
+function validateConcurrentContextMerge() {
+  const base = appendRecentConversationTurns(
+    createEmptyConversationContext("conversation-flow-cf13"),
+    [
+      { role: "user", text: "base question" },
+      { role: "assistant", text: "base answer" },
+    ],
+  );
+  const earlier = appendRecentConversationTurns(
+    {
+      ...base,
+      bookingDraft: { ...base.bookingDraft, branch: "高雄館" },
+      lastSeenAt: "2026-08-13T10:00:01.000Z",
+    },
+    [
+      { role: "user", text: "first concurrent question" },
+      { role: "assistant", text: "first concurrent answer" },
+    ],
+  );
+  const later = appendRecentConversationTurns(
+    {
+      ...base,
+      activeFocus: {
+        answeredTopics: [],
+        areaKeys: [],
+        bookingExplicit: false,
+        concernKeys: [],
+        goal: "ask_clinic_info",
+      },
+      bookingDraft: { ...base.bookingDraft, name: "王小美", phone: "0912345678" },
+      contextRevision: 1,
+      lastSeenAt: "2026-08-13T10:00:02.000Z",
+    },
+    [
+      { role: "user", text: "second concurrent question" },
+      { role: "assistant", text: "second concurrent answer" },
+    ],
+  );
+
+  const merged = mergeConcurrentConversationContexts(later, earlier, base);
+  const mergedText = merged.recentTurns?.map((turn) => turn.text) ?? [];
+  assert(mergedText.includes("first concurrent question") && mergedText.includes("first concurrent answer"), "CF13: an earlier concurrent turn must not disappear");
+  assert(mergedText.includes("second concurrent question") && mergedText.includes("second concurrent answer"), "CF13: the latest saved turn must remain present");
+  assert(mergedText.indexOf("first concurrent question") < mergedText.indexOf("second concurrent question"), "CF13: concurrent turns must be ordered by event time");
+  assert(merged.activeFocus?.goal === "ask_clinic_info", "CF13: the later event must own canonical dialogue state");
+  assert(merged.bookingDraft.branch === "高雄館", "CF13: an earlier concurrent booking field must survive rebasing");
+  assert(merged.bookingDraft.name === "王小美" && merged.bookingDraft.phone === "0912345678", "CF13: later concurrent booking fields must survive rebasing");
+  console.log("PASS: CF13 concurrent context writes preserve both dialogue turns");
+}
+
+function validateConcurrentAccumulationAndCorrection() {
+  const base = {
+    ...createEmptyConversationContext("conversation-flow-cf14"),
+    activeFocus: {
+      answeredTopics: [],
+      areaKeys: [],
+      bookingExplicit: true,
+      concernKeys: [],
+      goal: "book_consultation" as const,
+    },
+  };
+  const arm = {
+    ...base,
+    activeFocus: { ...base.activeFocus, areaKeys: ["arm"], concernKeys: ["local_contour"] },
+    bookingDraft: { ...base.bookingDraft, requestedTimeSlots: ["weekday"] },
+    lastSeenAt: "2026-08-13T10:00:01.000Z",
+  };
+  const abdomen = {
+    ...base,
+    activeFocus: { ...base.activeFocus, areaKeys: ["abdomen"], concernKeys: ["body_contour"] },
+    bookingDraft: { ...base.bookingDraft, requestedTimeSlots: ["weekend"] },
+    contextRevision: 1,
+    lastSeenAt: "2026-08-13T10:00:02.000Z",
+  };
+  const accumulated = mergeConcurrentConversationContexts(abdomen, arm, base);
+  assert(accumulated.activeFocus?.areaKeys.includes("arm") && accumulated.activeFocus.areaKeys.includes("abdomen"), "CF14: concurrent body areas must accumulate");
+  assert(accumulated.activeFocus?.concernKeys.includes("local_contour") && accumulated.activeFocus.concernKeys.includes("body_contour"), "CF14: concurrent concerns must accumulate");
+  assert(accumulated.bookingDraft.requestedTimeSlots?.includes("weekday") && accumulated.bookingDraft.requestedTimeSlots.includes("weekend"), "CF14: concurrent booking slots must accumulate");
+
+  const correctionBase = {
+    ...base,
+    activeFocus: { ...base.activeFocus, areaKeys: ["arm"] },
+  };
+  const concurrentAddition = {
+    ...correctionBase,
+    activeFocus: { ...correctionBase.activeFocus, areaKeys: ["arm", "abdomen"] },
+    lastSeenAt: "2026-08-13T10:00:02.000Z",
+  };
+  const laterCorrection = {
+    ...correctionBase,
+    activeFocus: { ...correctionBase.activeFocus, areaKeys: [] },
+    lastSeenAt: "2026-08-13T10:00:03.000Z",
+  };
+  const corrected = mergeConcurrentConversationContexts(concurrentAddition, laterCorrection, correctionBase);
+  assert(corrected.activeFocus?.areaKeys.length === 0, "CF14: an explicit later replacement must not be converted into accumulation");
+  console.log("PASS: CF14 concurrent accumulations merge while later corrections replace");
+}
+
+function validateSuppressedReplyCleanupAfterConcurrentTurn() {
+  const base = appendRecentConversationTurns(
+    {
+      ...createEmptyConversationContext("conversation-flow-cf15"),
+      lastSeenAt: "2026-08-13T10:00:01.000Z",
+    },
+    [
+      { role: "user", text: "first question", turnId: "user:first" },
+      { role: "assistant", text: "same answer", turnId: "assistant:unsent" },
+      { role: "user", text: "second question", turnId: "user:second" },
+      { role: "assistant", text: "same answer", turnId: "assistant:delivered" },
+    ],
+  );
+  const cleaned = removeUnsentAssistantTurn(base, "same answer", "assistant:unsent");
+  const latest = appendRecentConversationTurns(
+    { ...base, contextRevision: 1, lastSeenAt: "2026-08-13T10:00:02.000Z" },
+    [
+      { role: "user", text: "third question" },
+      { role: "assistant", text: "third answer" },
+    ],
+  );
+  const merged = mergeConcurrentConversationContexts(latest, cleaned, base);
+  const turnIds = merged.recentTurns?.map((turn) => turn.turnId) ?? [];
+  const texts = merged.recentTurns?.map((turn) => turn.text) ?? [];
+  assert(!turnIds.includes("assistant:unsent"), "CF15: the exact suppressed turn must be removed even when it is not final");
+  assert(turnIds.includes("assistant:delivered") && texts.includes("third answer"), "CF15: an identical delivered reply and later turns must be preserved");
+
+  const ambiguousLegacy = appendRecentConversationTurns(createEmptyConversationContext("conversation-flow-cf15-legacy"), [
+    { role: "assistant", text: "same legacy answer" },
+    { role: "user", text: "next question" },
+    { role: "assistant", text: "same legacy answer" },
+  ]);
+  assert(
+    removeUnsentAssistantTurn(ambiguousLegacy, "same legacy answer") === ambiguousLegacy,
+    "CF15: duplicate legacy prose without turn ids must fail closed instead of deleting an arbitrary turn",
+  );
+  console.log("PASS: CF15 suppressed replies use stable identity and preserve identical delivered turns");
+}
+
 async function main() {
   await validateConcernAccumulation();
   await validateBookingEscape();
@@ -285,7 +429,10 @@ async function main() {
   await validateQuestionsDoNotReplaceFocus();
   await validateBookingOwnsAmbiguousPrice();
   await validateInitialBookingGoal();
-  console.log("conversation flow validation passed (12 scenarios)");
+  validateConcurrentContextMerge();
+  validateConcurrentAccumulationAndCorrection();
+  validateSuppressedReplyCleanupAfterConcurrentTurn();
+  console.log("conversation flow validation passed (15 scenarios)");
 }
 
 main().catch((error) => {

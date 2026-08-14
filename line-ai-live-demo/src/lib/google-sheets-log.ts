@@ -406,6 +406,9 @@ function getReplyStatusText(replyResult: ReplySendResult | undefined, result: Pr
     return "pending";
   }
   if (replyResult.ok) {
+    if (replyResult.suppressedReason) {
+      return "skipped";
+    }
     return "sent";
   }
   if (replyResult.responseBody === "No reply payload generated") {

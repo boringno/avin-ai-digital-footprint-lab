@@ -8,19 +8,22 @@ import {
 } from "@/lib/ai-intent-classifier";
 import { getClaudeReplyInvocationCount } from "@/lib/claude-client";
 import { clinicConfig } from "@/lib/clinic-config";
-import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, saveConversationContext, type ConversationContext } from "@/lib/conversation-context";
+import { appendRecentConversationTurns, createEmptyConversationContext, loadConversationContext, removeUnsentAssistantTurn, saveConversationContext, type ConversationContext, type RecentConversationTurn } from "@/lib/conversation-context";
 import { commitDialogueRouteSelection, hydrateDialogueState } from "@/lib/dialogue-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { getHandoffPriority } from "@/lib/handoff-priority";
+import { reportOperationalError } from "@/lib/monitoring";
 import { resolveNluCanaryDecision } from "@/lib/nlu-decision-adapter";
 import { requestNluFrame } from "@/lib/nlu-shadow";
 import {
   applyAutoResumeIfDue,
   createEmptyConversationState,
+  loadAuthoritativeConversationState,
   loadConversationState,
   markCustomerMessageReceived,
   recordHandoffPending,
   resumeConversationAi,
-  saveConversationState,
+  saveConversationStateIfCurrent,
   shouldBlockAiReply,
   shouldSuppressRepeatedHandoff,
   type ConversationState,
@@ -30,16 +33,15 @@ import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import {
   renderReplyPlan,
   toReplyRendererTelemetry,
-  type ReplyRendererResult,
   type ReplyRendererTelemetry,
 } from "@/lib/reply-renderer";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply, type RouterDecision } from "@/lib/router";
-import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 
 type WebhookProcessOptions = {
+  beforeFinalStateCheck?: (sourceUserId: string) => Promise<void>;
   includePending: boolean;
 };
 
@@ -55,6 +57,41 @@ type LineMessageEvent = {
 type LineWebhookPayload = {
   events?: LineMessageEvent[];
 };
+
+type ConversationTurnIdentity = {
+  messageId?: string;
+  replyToken?: string;
+  webhookEventId?: string;
+};
+
+function buildConversationTurnId(role: RecentConversationTurn["role"], identity: ConversationTurnIdentity) {
+  const publicEventId = identity.messageId || identity.webhookEventId;
+  const stableEventId = publicEventId || (identity.replyToken
+    ? crypto.createHash("sha256").update(identity.replyToken).digest("hex").slice(0, 24)
+    : "");
+  return stableEventId ? `${role}:${stableEventId}` : undefined;
+}
+
+function createRecentConversationTurn(
+  role: RecentConversationTurn["role"],
+  text: string,
+  identity: ConversationTurnIdentity,
+): RecentConversationTurn {
+  const turnId = buildConversationTurnId(role, identity);
+  return {
+    role,
+    text,
+    ...(turnId ? { turnId } : {}),
+  };
+}
+
+function getEventTurnIdentity(event: LineMessageEvent): ConversationTurnIdentity {
+  return {
+    messageId: event.message?.id,
+    replyToken: event.replyToken,
+    webhookEventId: event.webhookEventId,
+  };
+}
 
 type ClassifiedDecision = {
   aiModel?: string;
@@ -88,6 +125,135 @@ export function getRepeatedHandoffAcknowledgement() {
 
 export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
   return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
+}
+
+const PENDING_MEDICAL_CONTINUATION_REASONS = new Set(["post_procedure_emergency", "post_procedure_issue"]);
+
+export function shouldKeepPendingHandoffContext(input: {
+  handoffReason: null | string;
+  message: string;
+  routedDecision: Pick<RouterDecision, "decisionType" | "matchedType">;
+}) {
+  if (
+    input.routedDecision.decisionType !== "fallback_reply" ||
+    input.routedDecision.matchedType !== "generic_fallback" ||
+    !input.handoffReason ||
+    !PENDING_MEDICAL_CONTINUATION_REASONS.has(input.handoffReason)
+  ) {
+    return false;
+  }
+
+  const normalizedMessage = input.message.replace(/\s+/gu, "");
+  return /(?:還是|仍然|持續|一直|越來越|又|沒有改善).{0,16}(?:痛|疼|腫|出血|流血|呼吸|不舒服|發熱|發燒)|(?:痛|疼|腫|出血|流血|呼吸|不舒服|發熱|發燒).{0,16}(?:還是|仍然|持續|一直|越來越|又|沒有改善)/u.test(
+    normalizedMessage,
+  );
+}
+
+function nextLifecycleVersion(previousUpdatedAt: string, candidateUpdatedAt: string) {
+  const previousMs = new Date(previousUpdatedAt).getTime();
+  const candidateMs = new Date(candidateUpdatedAt).getTime();
+  if (!Number.isFinite(previousMs)) {
+    return candidateUpdatedAt;
+  }
+  if (Number.isFinite(candidateMs) && candidateMs > previousMs) {
+    return candidateUpdatedAt;
+  }
+  return new Date(previousMs + 1).toISOString();
+}
+
+function mergeCustomerReceiptIntoLatestState(latestState: ConversationState, receivedAt: string) {
+  const receivedState = markCustomerMessageReceived(latestState, receivedAt);
+  return {
+    ...receivedState,
+    // Every successful compare-and-swap must advance the version, even if a
+    // test clock or staff timestamp is ahead of the webhook server clock.
+    updatedAt: nextLifecycleVersion(latestState.updatedAt, receivedAt),
+  };
+}
+
+async function persistWebhookLifecycleState(input: {
+  expectedControlRevision: number;
+  expectedUpdatedAt: string;
+  handoffTransitionReason?: string;
+  proposedState: ConversationState;
+  receivedAt: string;
+}) {
+  const proposedState = {
+    ...input.proposedState,
+    updatedAt: nextLifecycleVersion(input.expectedUpdatedAt, input.proposedState.updatedAt),
+  };
+  let candidateState: ConversationState = proposedState;
+  let expectedUpdatedAt = input.expectedUpdatedAt;
+  let expectedControlRevision = input.expectedControlRevision;
+
+  try {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (await saveConversationStateIfCurrent(
+        candidateState,
+        expectedUpdatedAt,
+        expectedControlRevision,
+      )) {
+        return candidateState;
+      }
+
+      const latestState = applyAutoResumeIfDue(
+        await loadAuthoritativeConversationState(input.proposedState.userId),
+        new Date(),
+      );
+      const controlChanged = latestState.controlRevision !== input.expectedControlRevision;
+      let reconciledState: ConversationState = mergeCustomerReceiptIntoLatestState(latestState, input.receivedAt);
+
+      // Reapply only a handoff created by this event. Existing pending state is
+      // otherwise kept from latest, so an ordinary concurrent message cannot
+      // clear it. Explicit staff ownership changes win; a newly observed
+      // emergency may reopen a task only after staff has resumed AI.
+      const canApplyHandoff = Boolean(input.handoffTransitionReason) &&
+        !shouldBlockAiReply(latestState.status) &&
+        (!controlChanged || (
+          latestState.status === "ai_active" &&
+          getHandoffPriority(input.handoffTransitionReason ?? null) >= 100
+        ));
+      if (canApplyHandoff && input.handoffTransitionReason) {
+        reconciledState = recordHandoffPending(
+          reconciledState,
+          input.handoffTransitionReason,
+          input.receivedAt,
+        );
+      }
+
+      candidateState = {
+        ...reconciledState,
+        updatedAt: nextLifecycleVersion(latestState.updatedAt, reconciledState.updatedAt),
+      };
+      expectedUpdatedAt = latestState.updatedAt;
+      expectedControlRevision = latestState.controlRevision;
+    }
+
+    await reportOperationalError({
+      alert: false,
+      error: new Error("Conversation lifecycle compare-and-swap exhausted"),
+      extra: {
+        handoff_reason: input.handoffTransitionReason ?? null,
+        line_user_id: input.proposedState.userId,
+      },
+      source: "line_webhook_lifecycle_conflict",
+    });
+    return candidateState;
+  } catch (error) {
+    // Preserve the webhook's availability contract. A fresh ownership check is
+    // still performed immediately before LINE send; this merely prevents a
+    // transient state-store error from turning the whole webhook into HTTP 500.
+    await reportOperationalError({
+      alert: false,
+      error,
+      extra: {
+        handoff_reason: input.handoffTransitionReason ?? null,
+        line_user_id: input.proposedState.userId,
+      },
+      source: "line_webhook_lifecycle_persistence",
+    });
+    return candidateState;
+  }
 }
 
 export function recoverLegacyRendererFallbackHandoff(
@@ -149,6 +315,7 @@ export type ProcessedWebhookResult = {
   };
   bookingTreatmentAction?: "add" | "replace" | "use_current";
   conversationStatus: string;
+  handoffReason: null | string;
   decision: {
     decisionType: string;
     matchedKey: string;
@@ -193,6 +360,7 @@ export type ReplySendResult = {
   replyToken: string;
   responseBody: string;
   status: number;
+  suppressedReason?: "conversation_state_blocked" | "conversation_state_unavailable";
   webhookEventId: string;
 };
 
@@ -277,7 +445,8 @@ function createAnonymousState(userId: string) {
   return userId ? createEmptyConversationState(userId) : createEmptyConversationState("");
 }
 
-async function classifyEvent(event: LineMessageEvent, includePending: boolean): Promise<ClassifiedDecision> {
+async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOptions): Promise<ClassifiedDecision> {
+  const { includePending } = options;
   if (event.source?.type === "group" || event.source?.type === "room") {
     return {
       conversationState: createAnonymousState(""),
@@ -301,7 +470,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     applyAutoResumeIfDue(loadedState, currentTime),
     currentIso,
   );
-  const hadPendingHandoffAtStart = conversationState.status === "handoff_pending";
 
   if (event.type !== "message") {
     return {
@@ -330,8 +498,13 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     };
 
     if (sourceUserId) {
-      await saveConversationContext(nextContext);
-      await saveConversationState(conversationState);
+      await saveConversationContext(nextContext, existingContext);
+      conversationState = await persistWebhookLifecycleState({
+        expectedControlRevision: loadedState.controlRevision,
+        expectedUpdatedAt: loadedState.updatedAt,
+        proposedState: conversationState,
+        receivedAt: currentIso,
+      });
     }
 
     return {
@@ -349,7 +522,12 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
 
   if (shouldBlockAiReply(conversationState.status)) {
     if (sourceUserId) {
-      await saveConversationState(conversationState);
+      conversationState = await persistWebhookLifecycleState({
+        expectedControlRevision: loadedState.controlRevision,
+        expectedUpdatedAt: loadedState.updatedAt,
+        proposedState: conversationState,
+        receivedAt: currentIso,
+      });
     }
 
     return {
@@ -362,45 +540,6 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
         lastSeenAt: currentIso,
       },
       replyText: "",
-      shouldIntroduce: false,
-      usedAiHumanizer: false,
-      usedAiReplyGenerator: false,
-    };
-  }
-
-  if (hadPendingHandoffAtStart) {
-    const preflight = runImmediateSafetyPreflight({
-      message: event.message.text ?? "",
-      now: currentTime,
-    });
-    const pendingDecision = preflight?.decisionType === "handoff_pending" ? preflight : null;
-    const handoffReason = pendingDecision?.matchedKey ?? conversationState.handoffReason ?? "handoff_pending";
-    const handoffAcknowledgement = pendingDecision?.replyText ?? getRepeatedHandoffAcknowledgement();
-    if (pendingDecision) {
-      conversationState = recordHandoffPending(conversationState, handoffReason, currentIso);
-    }
-    const nextContext = appendRecentConversationTurns(
-      {
-        ...existingContext,
-        lastIntent: handoffReason,
-        lastSeenAt: currentIso,
-      },
-      [
-        { role: "user", text: event.message.text ?? "" },
-        { role: "assistant", text: handoffAcknowledgement },
-      ],
-    );
-    if (sourceUserId) {
-      await saveConversationContext(nextContext);
-      await saveConversationState(conversationState);
-    }
-    return {
-      conversationState,
-      decisionType: "handoff_pending",
-      matchedKey: handoffReason,
-      matchedType: "handoff_rule",
-      nextContext,
-      replyText: handoffAcknowledgement,
       shouldIntroduce: false,
       usedAiHumanizer: false,
       usedAiReplyGenerator: false,
@@ -422,6 +561,53 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
   let aiReplySourceUrl: string | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
+
+  // A pending handoff is a queued staff task, not a global AI pause. Still,
+  // an unresolved continuation may belong to that task (for example, "it is
+  // getting more painful"). Keep those vague follow-ups with the existing
+  // handoff instead of sending them through the general LLM fallback.
+  if (
+    conversationState.status === "handoff_pending" &&
+    shouldKeepPendingHandoffContext({
+      handoffReason: conversationState.handoffReason,
+      message: event.message.text ?? "",
+      routedDecision,
+    })
+  ) {
+    const handoffReason = conversationState.handoffReason ?? "handoff_pending";
+    const handoffAcknowledgement = getRepeatedHandoffAcknowledgement();
+    const nextContext = appendRecentConversationTurns(
+      {
+        ...existingContext,
+        lastIntent: handoffReason,
+        lastSeenAt: currentIso,
+      },
+      [
+        createRecentConversationTurn("user", event.message.text ?? "", getEventTurnIdentity(event)),
+        createRecentConversationTurn("assistant", handoffAcknowledgement, getEventTurnIdentity(event)),
+      ],
+    );
+    if (sourceUserId) {
+      await saveConversationContext(nextContext, existingContext);
+      conversationState = await persistWebhookLifecycleState({
+        expectedControlRevision: loadedState.controlRevision,
+        expectedUpdatedAt: loadedState.updatedAt,
+        proposedState: conversationState,
+        receivedAt: currentIso,
+      });
+    }
+    return {
+      conversationState,
+      decisionType: "conversation_state_blocked",
+      matchedKey: `handoff_continuation:${handoffReason}`,
+      matchedType: "handoff_rule",
+      nextContext,
+      replyText: handoffAcknowledgement,
+      shouldIntroduce: false,
+      usedAiHumanizer: false,
+      usedAiReplyGenerator: false,
+    };
+  }
 
   // Canary is deliberately narrow: deterministic safety/booking/price/clinic
   // routes run first, and only an otherwise-unresolved fallback may be replaced.
@@ -459,8 +645,14 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     if (shouldSuppressHandoffReply(conversationState, routedDecision.matchedKey)) {
       conversationState = nextState;
       if (sourceUserId) {
-        await saveConversationContext(routedDecision.nextContext);
-        await saveConversationState(conversationState);
+        await saveConversationContext(routedDecision.nextContext, existingContext);
+        conversationState = await persistWebhookLifecycleState({
+          expectedControlRevision: loadedState.controlRevision,
+          expectedUpdatedAt: loadedState.updatedAt,
+          handoffTransitionReason: routedDecision.matchedKey,
+          proposedState: conversationState,
+          receivedAt: currentIso,
+        });
       }
 
       return {
@@ -572,17 +764,50 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
       lastIntent: synchronizedContext.lastIntent,
     },
     [
-      { role: "user", text: event.message.text ?? "" },
-      { role: "assistant", text: replyText },
+      createRecentConversationTurn("user", event.message.text ?? "", getEventTurnIdentity(event)),
+      createRecentConversationTurn("assistant", replyText, getEventTurnIdentity(event)),
     ],
   );
 
+  let persistedConversationState = {
+    ...conversationState,
+    updatedAt: currentIso,
+  };
   if (sourceUserId) {
-    await saveConversationContext(nextContext);
-    await saveConversationState({
-      ...conversationState,
-      updatedAt: currentIso,
+    // Rendering may take several seconds. Persist only while this webhook still
+    // owns the lifecycle snapshot it loaded; otherwise preserve the staff's
+    // newer takeover/resume/close transition.
+    await options.beforeFinalStateCheck?.(sourceUserId);
+    persistedConversationState = await persistWebhookLifecycleState({
+      expectedControlRevision: loadedState.controlRevision,
+      expectedUpdatedAt: loadedState.updatedAt,
+      handoffTransitionReason:
+        routedDecision.decisionType === "handoff_pending" ? routedDecision.matchedKey : undefined,
+      proposedState: persistedConversationState,
+      receivedAt: currentIso,
     });
+    if (shouldBlockAiReply(persistedConversationState.status)) {
+      const blockedContext = appendRecentConversationTurns(
+        {
+          ...existingContext,
+          lastSeenAt: currentIso,
+        },
+        [createRecentConversationTurn("user", event.message.text ?? "", getEventTurnIdentity(event))],
+      );
+      await saveConversationContext(blockedContext, existingContext);
+      return {
+        conversationState: persistedConversationState,
+        decisionType: "conversation_state_blocked",
+        matchedKey: `guard:fresh_${persistedConversationState.status}`,
+        matchedType: "handoff_rule",
+        nextContext: blockedContext,
+        replyText: "",
+        shouldIntroduce: false,
+        usedAiHumanizer: false,
+        usedAiReplyGenerator,
+      };
+    }
+    await saveConversationContext(nextContext, existingContext);
   }
 
   return {
@@ -590,10 +815,7 @@ async function classifyEvent(event: LineMessageEvent, includePending: boolean): 
     aiSourceUrl: aiReplySourceUrl,
     aiTokensIn,
     aiTokensOut,
-    conversationState: {
-      ...conversationState,
-      updatedAt: currentIso,
-    },
+    conversationState: persistedConversationState,
     decisionType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType,
     matchedKey: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey,
     matchedType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
@@ -615,7 +837,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
   const results: ProcessedWebhookResult[] = [];
 
   for (const event of payload.events ?? []) {
-    const decision = await classifyEvent(event, options.includePending);
+    const decision = await classifyEvent(event, options);
     const replyToken = event.replyToken ?? "";
     const replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
       ? buildReplyPayload(replyToken, decision.replyText, decision.shouldIntroduce, decision.replyMessages, decision.suppressAiFooter)
@@ -638,6 +860,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       },
       bookingTreatmentAction: decision.nextContext.bookingSession?.action,
       conversationStatus: decision.conversationState.status,
+      handoffReason: decision.conversationState.handoffReason,
       decision: {
         decisionType: decision.decisionType,
         matchedKey: decision.matchedKey,
@@ -693,9 +916,60 @@ async function sendReplyRequest(replyPayload: NonNullable<ProcessedWebhookResult
 }
 
 type SendReplyPayloadOptions = {
+  authorizeBeforeSend?: (result: ProcessedWebhookResult) => Promise<boolean>;
   retryCount: number;
   timeoutMs: number;
 };
+
+export async function isReplyStillAuthorized(
+  result: ProcessedWebhookResult,
+  loadState: typeof loadAuthoritativeConversationState = loadAuthoritativeConversationState,
+) {
+  if (!result.sourceUserId) {
+    return true;
+  }
+  try {
+    const latestState = applyAutoResumeIfDue(
+      await loadState(result.sourceUserId),
+      new Date(),
+    );
+    return !shouldBlockAiReply(latestState.status);
+  } catch (error) {
+    await reportOperationalError({
+      alert: false,
+      error,
+      extra: { line_user_id: result.sourceUserId },
+      source: "line_reply_authorization_degraded",
+    });
+    // Sending without an authoritative ownership check can talk over a staff
+    // member whose takeover committed immediately before the store outage.
+    // Suppress this one reply; the webhook itself still completes normally.
+    return false;
+  }
+}
+
+async function removeSuppressedReplyFromContext(result: ProcessedWebhookResult) {
+  if (!result.sourceUserId || !result.decision.replyText) return;
+  try {
+    const currentContext = await loadConversationContext(result.sourceUserId);
+    const assistantTurnId = buildConversationTurnId("assistant", {
+      messageId: result.messageId,
+      replyToken: result.replyToken,
+      webhookEventId: result.webhookEventId,
+    });
+    const nextContext = removeUnsentAssistantTurn(currentContext, result.decision.replyText, assistantTurnId);
+    if (nextContext !== currentContext) {
+      await saveConversationContext(nextContext, currentContext);
+    }
+  } catch (error) {
+    await reportOperationalError({
+      alert: false,
+      error,
+      extra: { line_user_id: result.sourceUserId },
+      source: "line_reply_suppressed_context_cleanup",
+    });
+  }
+}
 
 export async function sendReplyPayloads(
   results: ProcessedWebhookResult[],
@@ -722,6 +996,38 @@ export async function sendReplyPayloads(
     let finalResult: ReplySendResult | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let authorized = false;
+      try {
+        authorized = await (options.authorizeBeforeSend ?? isReplyStillAuthorized)(result);
+      } catch (error) {
+        await removeSuppressedReplyFromContext(result);
+        finalResult = {
+          attempts: attempt - 1,
+          errorMessage: error instanceof Error ? error.message : "Reply authorization unavailable",
+          ok: true,
+          messageId: result.messageId,
+          replyToken: result.replyToken,
+          responseBody: "Reply suppressed because authorization was unavailable",
+          status: 0,
+          suppressedReason: "conversation_state_unavailable",
+          webhookEventId: result.webhookEventId,
+        };
+        break;
+      }
+      if (!authorized) {
+        await removeSuppressedReplyFromContext(result);
+        finalResult = {
+          attempts: attempt - 1,
+          ok: true,
+          messageId: result.messageId,
+          replyToken: result.replyToken,
+          responseBody: "Reply suppressed after conversation ownership changed",
+          status: 0,
+          suppressedReason: "conversation_state_blocked",
+          webhookEventId: result.webhookEventId,
+        };
+        break;
+      }
       try {
         const response = await sendReplyRequest(result.replyPayload, accessToken, options.timeoutMs);
         const body = await response.text();

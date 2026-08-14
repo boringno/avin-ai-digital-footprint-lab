@@ -7,8 +7,11 @@ import {
   isSupabaseConversationStoreEnabled,
   loadConversationRuntimeState,
   saveConversationRuntimeState,
+  saveConversationRuntimeStateIfCurrent,
+  type ConversationStoreMode,
 } from "@/lib/conversation-store";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { selectHigherPriorityHandoffReason } from "@/lib/handoff-priority";
 
 export type ConversationStatus = "ai_active" | "handoff_pending" | "human_active" | "ai_paused" | "closed";
 
@@ -18,6 +21,8 @@ export type ConversationState = {
   assignedTo: null | string;
   autoResumeAfterMinutes: number;
   closedAt: null | string;
+  /** Monotonic epoch for staff ownership changes; customer messages never increment it. */
+  controlRevision: number;
   handoffReason: null | string;
   hasNewCustomerMessage: boolean;
   humanTakeoverAt: null | string;
@@ -59,6 +64,27 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+const localStateWriteQueues = new Map<string, Promise<void>>();
+
+async function withLocalStateWriteLock<T>(key: string, operation: () => Promise<T>) {
+  const previous = localStateWriteQueues.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current);
+  localStateWriteQueues.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (localStateWriteQueues.get(key) === queued) {
+      localStateWriteQueues.delete(key);
+    }
+  }
+}
+
 export function createEmptyConversationState(userId: string): ConversationState {
   return {
     aiPausedAt: null,
@@ -66,6 +92,7 @@ export function createEmptyConversationState(userId: string): ConversationState 
     assignedTo: null,
     autoResumeAfterMinutes: clinicConfig.escalationPolicy.autoResumeAfterMinutes,
     closedAt: null,
+    controlRevision: 0,
     handoffReason: null,
     hasNewCustomerMessage: false,
     humanTakeoverAt: null,
@@ -79,6 +106,43 @@ export function createEmptyConversationState(userId: string): ConversationState 
   };
 }
 
+function hydrateConversationState(userId: string, parsed: Partial<ConversationState>) {
+  return {
+    ...createEmptyConversationState(userId),
+    ...parsed,
+    controlRevision:
+      Number.isSafeInteger(parsed.controlRevision) && Number(parsed.controlRevision) >= 0
+        ? Number(parsed.controlRevision)
+        : 0,
+    userId,
+  } satisfies ConversationState;
+}
+
+function nextStateVersion(previousUpdatedAt: string, eventAt = nowIso()) {
+  const previousMs = new Date(previousUpdatedAt).getTime();
+  const eventMs = new Date(eventAt).getTime();
+  if (!Number.isFinite(previousMs)) return Number.isFinite(eventMs) ? eventAt : nowIso();
+  if (Number.isFinite(eventMs) && eventMs > previousMs) return eventAt;
+  return new Date(previousMs + 1).toISOString();
+}
+
+export async function loadAuthoritativeConversationState(
+  userId: string,
+  tenantId: string = DEFAULT_TENANT_ID,
+  mode: ConversationStoreMode = "latency_critical",
+) {
+  if (!userId) {
+    return createEmptyConversationState("");
+  }
+
+  if (isSupabaseConversationStoreEnabled()) {
+    const row = await loadConversationRuntimeState(userId, tenantId, mode);
+    return hydrateConversationState(userId, (row?.state_json ?? {}) as Partial<ConversationState>);
+  }
+
+  return loadConversationState(userId, tenantId);
+}
+
 export async function loadConversationState(userId: string, tenantId: string = DEFAULT_TENANT_ID) {
   if (!userId) {
     return createEmptyConversationState("");
@@ -88,11 +152,7 @@ export async function loadConversationState(userId: string, tenantId: string = D
     try {
       const row = await loadConversationRuntimeState(userId, tenantId);
       const parsed = (row?.state_json ?? {}) as Partial<ConversationState>;
-      return {
-        ...createEmptyConversationState(userId),
-        ...parsed,
-        userId,
-      };
+      return hydrateConversationState(userId, parsed);
     } catch {
       // Fallback to local file persistence until Supabase schema is ready.
     }
@@ -103,11 +163,7 @@ export async function loadConversationState(userId: string, tenantId: string = D
   try {
     const content = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(content) as Partial<ConversationState>;
-    return {
-      ...createEmptyConversationState(userId),
-      ...parsed,
-      userId,
-    };
+    return hydrateConversationState(userId, parsed);
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === "ENOENT") {
@@ -133,9 +189,91 @@ export async function saveConversationState(state: ConversationState, tenantId: 
     }
   }
 
-  const directory = getConversationStateDir();
-  await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(buildConversationStatePath(state.userId, tenantId), JSON.stringify(state, null, 2), "utf8");
+  const key = `${tenantId}:${state.userId}`;
+  await withLocalStateWriteLock(key, async () => {
+    const directory = getConversationStateDir();
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(buildConversationStatePath(state.userId, tenantId), JSON.stringify(state, null, 2), "utf8");
+  });
+}
+
+export async function saveConversationStateIfCurrent(
+  state: ConversationState,
+  expectedUpdatedAt: string,
+  expectedControlRevision: number,
+  tenantId: string = DEFAULT_TENANT_ID,
+  mode: ConversationStoreMode = "latency_critical",
+) {
+  if (!state.userId) {
+    return true;
+  }
+
+  if (isSupabaseConversationStoreEnabled()) {
+    return saveConversationRuntimeStateIfCurrent(
+      state.userId,
+      state as unknown as Record<string, unknown>,
+      expectedUpdatedAt,
+      expectedControlRevision,
+      tenantId,
+      mode,
+    );
+  }
+
+  const key = `${tenantId}:${state.userId}`;
+  return withLocalStateWriteLock(key, async () => {
+    const filePath = buildConversationStatePath(state.userId, tenantId);
+    try {
+      const content = await fs.readFile(filePath, "utf8");
+      const parsed = JSON.parse(content) as Partial<ConversationState>;
+      // Legacy local rows predate lifecycle versioning. Under the local lock,
+      // a missing raw version is an unclaimed slot and may be initialized once.
+      if (typeof parsed.updatedAt === "string" && parsed.updatedAt !== expectedUpdatedAt) {
+        return false;
+      }
+      const currentControlRevision = Number.isSafeInteger(parsed.controlRevision) && Number(parsed.controlRevision) >= 0
+        ? Number(parsed.controlRevision)
+        : 0;
+      if (currentControlRevision !== expectedControlRevision) {
+        return false;
+      }
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const directory = getConversationStateDir();
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
+    return true;
+  });
+}
+
+export async function applyAuthoritativeConversationTransition(
+  userId: string,
+  transition: (state: ConversationState) => ConversationState,
+  tenantId: string = DEFAULT_TENANT_ID,
+  maxAttempts = 3,
+) {
+  if (!userId) {
+    const before = createEmptyConversationState("");
+    return { after: transition(before), before };
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    // Staff control must remain available even when the customer reply-path
+    // breaker is open. It gets its own bounded durable database attempt.
+    const before = await loadAuthoritativeConversationState(userId, tenantId, "durable");
+    const after = transition(before);
+    if (after.controlRevision <= before.controlRevision) {
+      throw new Error("Authoritative conversation control transition must advance controlRevision");
+    }
+    if (await saveConversationStateIfCurrent(after, before.updatedAt, before.controlRevision, tenantId, "durable")) {
+      return { after, before };
+    }
+  }
+
+  throw new Error(`Conversation control transition conflicted after ${maxAttempts} attempts`);
 }
 
 function addMinutes(iso: string, minutes: number) {
@@ -148,7 +286,7 @@ export function markCustomerMessageReceived(state: ConversationState, receivedAt
   return {
     ...state,
     hasNewCustomerMessage:
-      state.status === "human_active" || state.status === "ai_paused" || state.status === "closed"
+      state.status === "handoff_pending" || state.status === "human_active" || state.status === "ai_paused" || state.status === "closed"
         ? true
         : state.hasNewCustomerMessage,
     lastCustomerMessageAt: receivedAt,
@@ -157,17 +295,16 @@ export function markCustomerMessageReceived(state: ConversationState, receivedAt
 }
 
 export function recordHandoffPending(state: ConversationState, handoffReason: string, recordedAt = nowIso()) {
+  const selectedReason = state.status === "handoff_pending"
+    ? selectHigherPriorityHandoffReason(state.handoffReason, handoffReason)
+    : handoffReason;
   if (state.status === "human_active" || state.status === "ai_paused" || state.status === "closed") {
-    return {
-      ...state,
-      handoffReason,
-      updatedAt: recordedAt,
-    } satisfies ConversationState;
+    return state;
   }
 
   return {
     ...state,
-    handoffReason,
+    handoffReason: selectedReason,
     lastHandoffPromptAt: state.lastHandoffPromptAt ?? recordedAt,
     status: "handoff_pending",
     updatedAt: recordedAt,
@@ -176,20 +313,22 @@ export function recordHandoffPending(state: ConversationState, handoffReason: st
 
 export function markHumanTakeover(state: ConversationState, input: StaffMessageInput = {}) {
   const sentAt = input.sentAt ?? nowIso();
+  const controlAt = nowIso();
   const autoResumeAfterMinutes = input.autoResumeAfterMinutes ?? state.autoResumeAfterMinutes;
 
   return {
     ...state,
-    aiPausedAt: sentAt,
-    aiResumeAt: addMinutes(sentAt, autoResumeAfterMinutes),
+    aiPausedAt: controlAt,
+    aiResumeAt: addMinutes(controlAt, autoResumeAfterMinutes),
     assignedTo: input.assignedTo ?? state.assignedTo,
     autoResumeAfterMinutes,
+    controlRevision: state.controlRevision + 1,
     hasNewCustomerMessage: false,
-    humanTakeoverAt: state.humanTakeoverAt ?? sentAt,
+    humanTakeoverAt: state.humanTakeoverAt ?? controlAt,
     lastStaffMessageAt: sentAt,
     manualAiPause: false,
     status: "human_active" as const,
-    updatedAt: sentAt,
+    updatedAt: nextStateVersion(state.updatedAt, controlAt),
   };
 }
 
@@ -198,12 +337,13 @@ export function resumeConversationAi(state: ConversationState, resumedAt = nowIs
     ...state,
     aiPausedAt: null,
     aiResumeAt: null,
+    controlRevision: state.controlRevision + 1,
     hasNewCustomerMessage: false,
     handoffReason: null,
     lastHandoffPromptAt: null,
     manualAiPause: false,
     status: "ai_active" as const,
-    updatedAt: resumedAt,
+    updatedAt: nextStateVersion(state.updatedAt),
   };
 }
 
@@ -212,9 +352,10 @@ export function pauseConversationAi(state: ConversationState, pausedAt = nowIso(
     ...state,
     aiPausedAt: pausedAt,
     aiResumeAt: null,
+    controlRevision: state.controlRevision + 1,
     manualAiPause: true,
     status: "ai_paused" as const,
-    updatedAt: pausedAt,
+    updatedAt: nextStateVersion(state.updatedAt),
   };
 }
 
@@ -223,9 +364,10 @@ export function closeConversation(state: ConversationState, closedAt = nowIso())
     ...state,
     aiResumeAt: null,
     closedAt,
+    controlRevision: state.controlRevision + 1,
     hasNewCustomerMessage: false,
     status: "closed" as const,
-    updatedAt: closedAt,
+    updatedAt: nextStateVersion(state.updatedAt),
   };
 }
 

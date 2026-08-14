@@ -17,6 +17,7 @@ type WebhookResult = {
     treatment?: string;
   };
   conversationStatus: string;
+  handoffReason: null | string;
   decision: { decisionType: string; matchedKey: string; matchedType: string; replyText: string };
   eventType: string;
   messageId: string;
@@ -45,6 +46,7 @@ function result(overrides: Partial<WebhookResult> = {}): WebhookResult {
   return {
     bookingDraft: { timeSlots: [] },
     conversationStatus: "ai_active",
+    handoffReason: null,
     decision: {
       decisionType: "fallback_reply",
       matchedKey: "generic_fallback",
