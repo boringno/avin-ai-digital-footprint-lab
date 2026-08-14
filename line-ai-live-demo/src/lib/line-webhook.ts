@@ -50,6 +50,7 @@ type LineMessageEvent = {
   message?: { id?: string; text?: string; type?: string };
   replyToken?: string;
   source?: { groupId?: string; roomId?: string; type?: string; userId?: string };
+  timestamp?: number;
   type?: string;
   webhookEventId?: string;
 };
@@ -91,6 +92,12 @@ function getEventTurnIdentity(event: LineMessageEvent): ConversationTurnIdentity
     replyToken: event.replyToken,
     webhookEventId: event.webhookEventId,
   };
+}
+
+function buildDialogueEpisodeKey(episodeId: string | undefined) {
+  return episodeId
+    ? `ep_${crypto.createHash("sha256").update(episodeId).digest("hex").slice(0, 24)}`
+    : undefined;
 }
 
 type ClassifiedDecision = {
@@ -322,7 +329,9 @@ export type ProcessedWebhookResult = {
     matchedType: string;
     replyText: string;
   };
+  dialogueEpisodeKey?: string;
   eventType: string;
+  eventTimestamp?: number;
   messageId: string;
   messageText: string;
   replyPayload: null | {
@@ -867,7 +876,9 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
         matchedType: decision.matchedType,
         replyText: decision.replyText,
       },
+      dialogueEpisodeKey: buildDialogueEpisodeKey(decision.nextContext.dialogueState?.episodeId),
       eventType: event.type ?? "",
+      eventTimestamp: Number.isFinite(event.timestamp) ? event.timestamp : undefined,
       messageId: event.message?.id ?? "",
       messageText: event.message?.text ?? "",
       replyPayload,

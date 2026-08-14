@@ -79,9 +79,13 @@ export async function captureNluShadowObservation(
   try {
     const observation = await (dependencies.run ?? runNluShadow)(input.message, input.decision);
     if (observation) {
-      await (dependencies.store ?? storeNluShadowObservation)({ ...observation, messageId: input.messageId });
+      const storedObservation = { ...observation, messageId: input.messageId };
+      await (dependencies.store ?? storeNluShadowObservation)(storedObservation);
+      return storedObservation;
     }
+    return null;
   } catch (error) {
     await reportOperationalError({ alert: false, error, source: "nlu_shadow_capture" });
+    return null;
   }
 }

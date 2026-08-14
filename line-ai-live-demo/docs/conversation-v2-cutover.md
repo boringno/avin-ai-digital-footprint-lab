@@ -3,9 +3,24 @@
 ## Current status
 
 This document describes the replacement target and its release gates. The
-`conversation-v2` module is currently a pure, offline-tested decision core. It
-is not connected to Production routing, persistence, NLU, reply delivery, or a
-customer-visible feature flag yet.
+`conversation-v2` is an offline-tested decision core with a default-off runtime
+shadow adapter. When both NLU shadow and Conversation V2 shadow are explicitly
+enabled, it reuses the captured NLU frame, replays immutable turns in LINE
+timestamp order, and records a PII-free V1/V2 comparison. It is not connected
+to Production routing, live dialogue persistence, reply rendering, booking or
+handoff mutations, or customer-visible delivery.
+
+The runtime gates remain:
+
+- `OPENAI_NLU_MODE=shadow`
+- `OPENAI_NLU_DECISION_MODE=off` (shadow and canary may not run together)
+- `OPENAI_NLU_SAMPLE_RATE=1` for full NLU-frame sampling; runtime replay
+  snapshots remain provisional until an offline materialization pass settles
+  the observation window
+- `CONVERSATION_V2_MODE=shadow`
+
+All three default to disabled or zero. Enabling them is a separately approved
+Production operation; merging the code alone changes no customer behavior.
 
 ## Decision
 
