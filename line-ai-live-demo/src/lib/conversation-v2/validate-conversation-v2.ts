@@ -16,10 +16,15 @@ function turn(
   input: Pick<TurnUnderstanding, "speechAct" | "text" | "turnId"> &
     Partial<Omit<TurnUnderstanding, "speechAct" | "text" | "turnId">>,
 ): TurnUnderstanding {
+  const contextual = ["ask_price", "ask_treatment_detail"].includes(input.speechAct);
+  const startsSubject = ["ask_concern", "learn_treatment"].includes(input.speechAct);
   return {
     areas: [],
+    conversationMove: contextual ? "continue" : startsSubject ? "start" : "none",
     concerns: [],
     confidence: 1,
+    dialogueReference: contextual ? "active_subject" : startsSubject ? "explicit" : "none",
+    questionAspect: "none",
     receivedAt: AT,
     treatments: [],
     ...input,
@@ -506,8 +511,7 @@ function validateUncertainUnderstandingMustClarify() {
       turnId: "uncertain-price",
     }),
   );
-  const priceAction = expectAction(priceAfterUnconfirmedCandidate, "answer_price");
-  assert.deepEqual(priceAction.treatmentKeys, []);
+  expectAction(priceAfterUnconfirmedCandidate, "fallback_clarify");
 
   const confirmedOnda = apply(
     initial,

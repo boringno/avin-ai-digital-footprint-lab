@@ -22,6 +22,29 @@ The runtime gates remain:
 All three default to disabled or zero. Enabling them is a separately approved
 Production operation; merging the code alone changes no customer behavior.
 
+### Semantic-contract milestone (2026-08-14)
+
+The V2 understanding contract now separates four axes that were previously
+collapsed into phrases and `lastIntent`: the customer's speech act, requested
+aspect, conversation move, and dialogue reference. The NLU request receives the
+current message plus at most four redacted prior turns so that references such
+as "that price", objections, topic replacement, and follow-up questions can be
+classified without treating conversation history as instructions or clinic
+facts.
+
+The executable golden suite currently covers 40 human-labelled journeys and
+111 turns, including first introduction versus follow-up, comparison,
+single-versus-combination objections, explicit and subjectless pricing,
+booking interruptions and resume, clinic topics, safety, handoff, duplicate
+delivery, and topic replacement. These fixtures prove the policy contract and
+state transitions; they do **not** prove that a live model still classifies every
+phrase correctly. Recorded-model evaluation is still required before canary.
+
+Production shadow must use a whole-conversation test-account/customer
+allowlist. The current sampling gate is not approval to enable partial random
+multi-turn shadow traffic; an allowlist gate must be added and separately
+approved before Production activation.
+
 ## Decision
 
 Replace the conversation decision core without rewriting the proven LINE,
@@ -85,6 +108,9 @@ The V2 state has independent axes:
   suspended, or completed status
 - `awaiting`: question id, expected field, option ids, and multiple-choice rule
 - `knowledge`: confirmed treatments, concerns, areas, and approved fact ids
+- `preferences`: explicit exclusions and single-treatment preference
+- `pricingSubjectTreatmentKeys`: the unique owner of a subjectless price
+  follow-up, kept separate from general conversation knowledge
 
 Legacy volatile fields are not authoritative in V2. Existing customer messages,
 handoff status, and explicit booking data are preserved. Polluted `lastIntent`,

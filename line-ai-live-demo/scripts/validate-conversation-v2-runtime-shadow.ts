@@ -19,8 +19,15 @@ import {
 
 function frame(input: Partial<NluFrame> = {}): NluFrame {
   return {
+    areas: [],
     confidence: 0.97,
     concerns: [],
+    dialogue: {
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    },
     intents: ["treatment_consultation"],
     negated: [],
     safety: {
@@ -29,6 +36,7 @@ function frame(input: Partial<NluFrame> = {}): NluFrame {
       postTreatmentRisk: false,
       pregnancyNursing: false,
     },
+    schemaVersion: 2,
     treatments: [],
     ...input,
   };
@@ -37,6 +45,7 @@ function frame(input: Partial<NluFrame> = {}): NluFrame {
 function record(input: {
   decisionType?: string;
   frame: NluFrame;
+  legacyDecision?: Partial<ConversationV2ShadowInputRecord["legacyDecision"]>;
   lineTimestamp: number;
   messageId: string;
   text: string;
@@ -47,6 +56,7 @@ function record(input: {
       decisionType: input.decisionType ?? "treatment_intro_reply",
       matchedKey: "fixture",
       matchedType: "guided_reply",
+      ...input.legacyDecision,
     },
     lineMessageId: `line-${input.messageId}`,
     lineTimestamp: input.lineTimestamp,
@@ -69,13 +79,27 @@ const onda = record({
 });
 const contextualPrice = record({
   decisionType: "pricing_auto_reply",
-  frame: frame({ intents: ["pricing"] }),
+  frame: frame({
+    dialogue: {
+      focus: "price_unspecified",
+      move: "continue",
+      reference: "active_subject",
+      speechAct: "ask_price",
+    },
+    intents: ["pricing"],
+  }),
   lineTimestamp: 2_000,
   messageId: "db-price",
   text: "那價錢呢",
 });
 const correction = record({
   frame: frame({
+    dialogue: {
+      focus: "overview",
+      move: "replace",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    },
     negated: [{ key: "onda_pro", type: "treatment" }],
     treatments: ["botox"],
   }),
@@ -113,6 +137,12 @@ assert.equal(
   "negated entities must remain reviewable and never become canonical knowledge",
 );
 assert.ok(replay.turns.every((turn) => turn.divergenceCategories.length === 0));
+assert.equal(replay.schemaVersion, 2, "shadow records must identify the V2 semantic schema");
+assert.equal(replay.adapterVersion, "nlu-frame-adapter-v2");
+assert.equal(replay.policyVersion, "conversation-v2-policy-v2");
+assert.equal(replay.turns[1]?.understanding.questionAspect, "price_unspecified");
+assert.equal(replay.turns[1]?.understanding.conversationMove, "continue");
+assert.equal(replay.turns[1]?.understanding.dialogueReference, "active_subject");
 
 const learnOnly = replayConversationV2Shadow({
   episodeId: "shadow:learn",
@@ -162,6 +192,50 @@ const urgent = replayConversationV2Shadow({
   userId: "line-user-1",
 });
 assert.equal(urgent.turns[0]?.action?.type, "answer_safety", "urgent post-treatment risk must outrank all sales dialogue");
+
+const deterministicUrgent = replayConversationV2Shadow({
+  episodeId: "shadow:deterministic-safety",
+  records: [record({
+    frame: frame(),
+    legacyDecision: {
+      decisionType: "handoff_pending",
+      matchedKey: "post_procedure_emergency",
+      matchedType: "handoff_rule",
+    },
+    lineTimestamp: 1,
+    messageId: "deterministic-safety",
+    text: "打完後呼吸困難",
+  })],
+  tenantId: "tenant_001",
+  userId: "line-user-1",
+});
+assert.equal(
+  deterministicUrgent.turns[0]?.action?.type,
+  "answer_safety",
+  "deterministic emergency preflight must override a benign model frame",
+);
+
+const deterministicHandoff = replayConversationV2Shadow({
+  episodeId: "shadow:deterministic-handoff",
+  records: [record({
+    frame: frame(),
+    legacyDecision: {
+      decisionType: "handoff_pending",
+      matchedKey: "human_request",
+      matchedType: "handoff_rule",
+    },
+    lineTimestamp: 1,
+    messageId: "deterministic-handoff",
+    text: "我要找真人客服",
+  })],
+  tenantId: "tenant_001",
+  userId: "line-user-1",
+});
+assert.equal(
+  deterministicHandoff.turns[0]?.action?.type,
+  "queue_handoff",
+  "deterministic handoff preflight must override a benign model frame",
+);
 
 const duplicated = replayConversationV2Shadow({
   episodeId: "shadow:dedupe",
@@ -391,6 +465,24 @@ assert.ok(stored?.deterministicDecision.conversationV2, "V2 record must enrich t
 const persistedJson = JSON.stringify(stored?.deterministicDecision.conversationV2);
 assert.ok(!persistedJson.includes(onda.text), "V2 diagnostics must not duplicate customer message text");
 assert.ok(!persistedJson.includes("line-user-1"), "V2 diagnostics must not duplicate the LINE user id");
+for (const rawLineIdentity of ["line-db-onda", "event-db-onda", "message:line-db-onda"]) {
+  assert.ok(
+    !persistedJson.includes(rawLineIdentity),
+    "V2 diagnostics must not persist raw LINE message or event identities",
+  );
+}
+const storedTurn = stored?.deterministicDecision.conversationV2 as {
+  turn?: {
+    action?: { turnId?: string };
+    understanding?: { turnId?: string };
+  };
+} | undefined;
+assert.match(storedTurn?.turn?.action?.turnId ?? "", /^turn_[a-f0-9]{16}$/u);
+assert.equal(
+  storedTurn?.turn?.action?.turnId,
+  storedTurn?.turn?.understanding?.turnId,
+  "opaque turn identity must correlate action and understanding without exposing LINE ids",
+);
 
 const staleCategoryPatches: typeof patchedValues = [];
 await captureConversationV2ShadowRecord(

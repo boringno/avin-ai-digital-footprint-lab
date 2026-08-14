@@ -1,4 +1,10 @@
 import { routeConversationTurnV2 } from "./engine";
+import {
+  CONVERSATION_MOVES,
+  DIALOGUE_REFERENCES,
+  DIALOGUE_SPEECH_ACTS,
+  QUESTION_ASPECTS,
+} from "../dialogue-semantics";
 import { cloneConversationV2State, createConversationV2State } from "./state";
 import type {
   BookingDraft,
@@ -8,7 +14,9 @@ import type {
   TurnUnderstanding,
 } from "./types";
 
-export const CONVERSATION_V2_REPLAY_RECORD_SCHEMA_VERSION = 1 as const;
+// Replay records are assembled transiently from captured NLU observations.
+// Version 2 is the first format that requires the explicit dialogue axes.
+export const CONVERSATION_V2_REPLAY_RECORD_SCHEMA_VERSION = 2 as const;
 export const DEFAULT_TEST_ACCOUNT_EPISODE_STRATEGY = "new_episode" as const;
 
 type JsonRecord = Record<string, unknown>;
@@ -98,21 +106,10 @@ type IndexedRecord = {
   record: ConversationV2ShadowRecord;
 };
 
-const SPEECH_ACTS = new Set([
-  "learn_treatment",
-  "ask_treatment_detail",
-  "compare_treatments",
-  "ask_concern",
-  "ask_clinic_info",
-  "ask_price",
-  "book_consultation",
-  "manage_booking",
-  "provide_booking_field",
-  "request_handoff",
-  "select_options",
-  "urgent_safety",
-  "unknown",
-]);
+const SPEECH_ACTS = new Set<string>(DIALOGUE_SPEECH_ACTS);
+const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);
+const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
+const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
 const BOOKING_INTENTS = new Set(["none", "create", "modify", "cancel"]);
 const OPTION_ENTITIES = new Set(["area", "concern", "treatment", "answer"]);
 
@@ -207,6 +204,9 @@ export function parseConversationV2Turn(value: unknown): TurnUnderstanding | nul
     || !isNonEmptyString(value.turnId)
     || typeof value.text !== "string"
     || !SPEECH_ACTS.has(String(value.speechAct))
+    || !CONVERSATION_MOVE_KEYS.has(String(value.conversationMove))
+    || !DIALOGUE_REFERENCE_KEYS.has(String(value.dialogueReference))
+    || !QUESTION_ASPECT_KEYS.has(String(value.questionAspect))
     || (value.booking !== undefined && !isBookingUnderstanding(value.booking))
     || (value.clarification !== undefined && !isClarification(value.clarification))
     || (value.selection !== undefined && !isSelection(value.selection))) {

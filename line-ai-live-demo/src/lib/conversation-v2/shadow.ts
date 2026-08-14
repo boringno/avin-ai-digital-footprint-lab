@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 import type { NluFrame } from "@/lib/nlu-frame";
 
@@ -8,6 +10,7 @@ import {
   type ConversationV2ShadowRecord,
 } from "./repository";
 import { createConversationV2State } from "./state";
+import type { ConversationV2NluSupplement } from "./nlu-adapter";
 import type {
   BookingDraft,
   ConversationV2State,
@@ -16,9 +19,9 @@ import type {
   TurnUnderstanding,
 } from "./types";
 
-export const CONVERSATION_V2_SHADOW_SCHEMA_VERSION = 1 as const;
-export const CONVERSATION_V2_SHADOW_POLICY_VERSION = "conversation-v2-policy-v1";
-export const CONVERSATION_V2_NLU_ADAPTER_VERSION = "nlu-frame-adapter-v1";
+export const CONVERSATION_V2_SHADOW_SCHEMA_VERSION = 2 as const;
+export const CONVERSATION_V2_SHADOW_POLICY_VERSION = "conversation-v2-policy-v2";
+export const CONVERSATION_V2_NLU_ADAPTER_VERSION = "nlu-frame-adapter-v2";
 
 export type LegacyDecisionSnapshot = {
   conversationStatus?: string;
@@ -72,6 +75,9 @@ export type ConversationV2ShadowTurnRecord = {
     };
     concerns: SafeMention[];
     confidence: number;
+    conversationMove: string;
+    dialogueReference: string;
+    questionAspect: string;
     safetySignals: string[];
     sourceIntents: string[];
     speechAct: string;
@@ -102,6 +108,10 @@ function suppliedFieldNames(fields: Partial<BookingDraft> | undefined) {
     .filter(([, value]) => Array.isArray(value) ? value.length > 0 : value !== undefined && value !== "")
     .map(([key]) => key)
     .sort();
+}
+
+function opaqueShadowTurnId(value: string) {
+  return `turn_${crypto.createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
 }
 
 function bookingSupplement(text: string) {
@@ -142,11 +152,14 @@ function summarizeUnderstanding(
       : {}),
     concerns: safeMentions(turn.concerns),
     confidence: turn.confidence,
+    conversationMove: turn.conversationMove,
+    dialogueReference: turn.dialogueReference,
+    questionAspect: turn.questionAspect,
     safetySignals,
     sourceIntents: [...turn.sourceIntents],
     speechAct: turn.speechAct,
     treatments: safeMentions(turn.treatments),
-    turnId: turn.turnId,
+    turnId: opaqueShadowTurnId(turn.turnId),
   };
 }
 
@@ -174,13 +187,22 @@ function summarizeState(state: ConversationV2State) {
       concernKeys: [...state.knowledge.concernKeys],
       treatmentKeys: [...state.knowledge.treatmentKeys],
     },
-    lastProcessedTurnId: state.lastProcessedTurnId ?? null,
+    preferences: {
+      excludedAreaKeys: [...state.preferences.excludedAreaKeys],
+      excludedConcernKeys: [...state.preferences.excludedConcernKeys],
+      excludedTreatmentKeys: [...state.preferences.excludedTreatmentKeys],
+      treatmentApproach: state.preferences.treatmentApproach,
+    },
+    pricingSubjectTreatmentKeys: [...state.pricingSubjectTreatmentKeys],
+    lastProcessedTurnId: state.lastProcessedTurnId
+      ? opaqueShadowTurnId(state.lastProcessedTurnId)
+      : null,
     revision: state.revision,
   };
 }
 
 function summarizeAction(action: DialoguePolicyAction) {
-  const base = { turnId: action.turnId, type: action.type };
+  const base = { turnId: opaqueShadowTurnId(action.turnId), type: action.type };
   switch (action.type) {
     case "learn_treatment":
     case "clarify":
@@ -188,6 +210,7 @@ function summarizeAction(action: DialoguePolicyAction) {
         ...base,
         areaKeys: [...action.areaKeys],
         concernKeys: [...action.concernKeys],
+        responseContext: { ...action.responseContext },
         taskKind: action.taskKind,
         treatmentKeys: [...action.treatmentKeys],
       };
@@ -196,6 +219,7 @@ function summarizeAction(action: DialoguePolicyAction) {
         ...base,
         areaKeys: [...action.areaKeys],
         concernKeys: [...action.concernKeys],
+        responseContext: { ...action.responseContext },
         selectedValues: action.selectedOptions.map((option) => option.value),
         taskKind: action.taskKind,
         treatmentKeys: [...action.treatmentKeys],
@@ -239,6 +263,7 @@ function summarizeReplyPlan(plan: ReplyPlan) {
         treatmentKeys: [...plan.knowledgeQuery.treatmentKeys],
       },
       mode: plan.mode,
+      responseContext: { ...plan.responseContext },
     };
   }
   return {
@@ -305,6 +330,33 @@ function replayIdentity(record: ConversationV2ShadowInputRecord) {
       : `message:${record.messageId}`;
 }
 
+function deterministicHardDecision(
+  decision: LegacyDecisionSnapshot,
+): ConversationV2NluSupplement["hardDecision"] | undefined {
+  if (decision.matchedKey === "post_procedure_emergency") {
+    return {
+      reason: "deterministic_post_procedure_emergency",
+      speechAct: "urgent_safety",
+    };
+  }
+  if (
+    decision.decisionType === "handoff_pending" ||
+    [
+      "human_request",
+      "plastic_surgery_scope",
+      "post_procedure_issue",
+      "pregnancy_caution",
+      "serious_complaint",
+    ].includes(decision.matchedKey)
+  ) {
+    return {
+      reason: `deterministic_${decision.matchedKey}`,
+      speechAct: "request_handoff",
+    };
+  }
+  return undefined;
+}
+
 /**
  * Replays captured turns in stable event order. This function never performs
  * I/O, renders text, sends LINE messages, or mutates live booking/handoff data.
@@ -320,10 +372,17 @@ export function replayConversationV2Shadow(input: {
   const inputByIdentity = new Map<string, ConversationV2ShadowInputRecord>();
   const replayRecords: ConversationV2ShadowRecord[] = input.records.map((record) => {
     const booking = bookingSupplement(record.text);
+    const hardDecision = deterministicHardDecision(record.legacyDecision);
+    const supplemental = booking || hardDecision
+      ? {
+          ...(booking ? { booking } : {}),
+          ...(hardDecision ? { hardDecision } : {}),
+        }
+      : undefined;
     const turn = adaptNluFrameToConversationV2Turn({
       frame: record.frame,
       receivedAt: new Date(record.lineTimestamp).toISOString(),
-      ...(booking ? { supplemental: { booking } } : {}),
+      ...(supplemental ? { supplemental } : {}),
       text: record.text,
       turnId: record.sourceEventId || record.messageId,
     });
@@ -390,7 +449,10 @@ export function replayConversationV2Shadow(input: {
 
   return {
     adapterVersion: CONVERSATION_V2_NLU_ADAPTER_VERSION,
-    conflicts: replay.conflicts.map((conflict) => ({ ...conflict })),
+    conflicts: replay.conflicts.map((conflict) => ({
+      ...conflict,
+      identity: opaqueShadowTurnId(conflict.identity),
+    })),
     coverage: {
       complete,
       duplicateRecordCount: replay.duplicateRecordCount,

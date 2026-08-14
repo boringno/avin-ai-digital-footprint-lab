@@ -12,8 +12,10 @@ let turnSequence = 0;
 
 function frame(overrides: Partial<NluFrame> = {}): NluFrame {
   return {
+    areas: [],
     confidence: 0.92,
     concerns: [],
+    dialogue: { focus: "none", move: "none", reference: "none", speechAct: "unknown" },
     intents: ["unknown"],
     negated: [],
     safety: {
@@ -22,6 +24,7 @@ function frame(overrides: Partial<NluFrame> = {}): NluFrame {
       postTreatmentRisk: false,
       pregnancyNursing: false,
     },
+    schemaVersion: 1,
     treatments: [],
     ...overrides,
   };
@@ -38,6 +41,17 @@ function adapt(
     supplemental,
     text,
     turnId: `turn-${++turnSequence}`,
+  });
+}
+
+function v2Frame(
+  dialogue: NluFrame["dialogue"],
+  overrides: Partial<NluFrame> = {},
+): NluFrame {
+  return frame({
+    ...overrides,
+    dialogue,
+    schemaVersion: 2,
   });
 }
 
@@ -232,6 +246,31 @@ function validateBookingSupplement() {
   } as ConversationV2NluSupplement);
   assert.equal(invalidTreatment.speechAct, "unknown");
   assert.equal(invalidTreatment.booking, undefined, "invalid booking facts must be discarded");
+
+  const lowConfidenceCreate = adapt(frame({ confidence: 0.1, intents: ["unknown"] }), {
+    booking: {
+      explicit: true,
+      fields: { treatmentKeys: ["botox"] },
+      intent: "create",
+    },
+  });
+  assert.equal(
+    lowConfidenceCreate.speechAct,
+    "book_consultation",
+    "trusted deterministic booking evidence must not be vetoed by low-confidence NLU",
+  );
+  assert.equal(lowConfidenceCreate.confidence, 1);
+
+  const missingFrameContinuation = adapt(null, {
+    booking: {
+      explicit: false,
+      fields: { branch: "高雄館" },
+      intent: "none",
+    },
+  });
+  assert.equal(missingFrameContinuation.speechAct, "provide_booking_field");
+  assert.equal(missingFrameContinuation.booking?.fields?.branch, "高雄館");
+  assert.equal(missingFrameContinuation.confidence, 1);
 }
 
 function validateSelectionAndClarification() {
@@ -302,7 +341,12 @@ function validateInvalidAndUnderspecifiedInputs() {
     }),
   );
   assert.equal(unknownNegation.speechAct, "unknown");
-  assert.equal(unknownNegation.treatments[0]?.resolution, "underspecified");
+  assert.equal(unknownNegation.confidence, 0);
+  assert.deepEqual(
+    unknownNegation.treatments,
+    [],
+    "an unknown negation invalidates the frame instead of retaining attacker-controlled data",
+  );
 }
 
 function validateEnvelopeContract() {
@@ -322,6 +366,108 @@ function validateEnvelopeContract() {
   );
 }
 
+function validateV2DialogueContract() {
+  const explicitComparison = adapt(v2Frame({
+    focus: "general_difference",
+    move: "compare",
+    reference: "explicit",
+    speechAct: "compare_treatments",
+  }, {
+    intents: ["treatment_consultation"],
+    treatments: ["onda_pro", "botox"],
+  }));
+  assert.equal(explicitComparison.speechAct, "compare_treatments");
+  assert.equal(explicitComparison.questionAspect, "general_difference");
+  assert.equal(explicitComparison.conversationMove, "compare");
+  assert.equal(explicitComparison.dialogueReference, "explicit");
+
+  const namesWithoutComparison = adapt(v2Frame({
+    focus: "overview",
+    move: "start",
+    reference: "explicit",
+    speechAct: "learn_treatment",
+  }, {
+    intents: ["treatment_consultation"],
+    treatments: ["onda_pro", "botox"],
+  }));
+  assert.equal(
+    namesWithoutComparison.speechAct,
+    "unknown",
+    "two treatment names must not silently override an explicit non-comparison act",
+  );
+
+  const followup = adapt(v2Frame({
+    focus: "mechanism",
+    move: "continue",
+    reference: "active_subject",
+    speechAct: "ask_treatment_detail",
+  }, {
+    intents: ["treatment_consultation"],
+  }));
+  assert.equal(followup.speechAct, "ask_treatment_detail");
+  assert.equal(followup.questionAspect, "mechanism");
+  assert.equal(followup.dialogueReference, "active_subject");
+
+  const activeComparison = adapt(v2Frame({
+    focus: "single_vs_combination",
+    move: "compare",
+    reference: "active_comparison",
+    speechAct: "compare_treatments",
+  }, {
+    intents: ["treatment_consultation"],
+  }));
+  assert.equal(activeComparison.speechAct, "compare_treatments");
+
+  const unsupportedBookingMutation = adapt(v2Frame({
+    focus: "none",
+    move: "start",
+    reference: "explicit",
+    speechAct: "book_consultation",
+  }, {
+    intents: ["booking"],
+  }));
+  assert.equal(
+    unsupportedBookingMutation.speechAct,
+    "unknown",
+    "LLM dialogue semantics alone must never mutate booking state",
+  );
+
+  const explicitArea = adapt(v2Frame({
+    focus: "suitability",
+    move: "start",
+    reference: "explicit",
+    speechAct: "ask_concern",
+  }, {
+    areas: ["abdomen"],
+    intents: ["treatment_consultation"],
+  }));
+  assert.equal(explicitArea.speechAct, "ask_concern");
+  assert.deepEqual(explicitArea.areas.map((item) => item.key), ["abdomen"]);
+}
+
+function validateDeterministicHardDecision() {
+  const validButOverridden = adapt(
+    v2Frame({
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    { hardDecision: { reason: "deterministic_post_treatment_risk", speechAct: "urgent_safety" } },
+  );
+  assert.equal(validButOverridden.speechAct, "urgent_safety");
+
+  const malformedButOverridden = adapt(
+    { ...frame(), treatments: ["not_in_ontology"] } as NluFrame,
+    { hardDecision: { reason: "deterministic_human_request", speechAct: "request_handoff" } },
+  );
+  assert.equal(malformedButOverridden.speechAct, "request_handoff");
+  assert.equal(malformedButOverridden.confidence, 0);
+}
+
 validateTreatmentAndEntityMapping();
 validateNegationPolarity();
 validateMultipleIntentResolution();
@@ -330,5 +476,7 @@ validateBookingSupplement();
 validateSelectionAndClarification();
 validateInvalidAndUnderspecifiedInputs();
 validateEnvelopeContract();
+validateV2DialogueContract();
+validateDeterministicHardDecision();
 
-console.log("Conversation V2 NLU adapter validation passed (8 scenario families)");
+console.log("Conversation V2 NLU adapter validation passed (10 scenario families)");
