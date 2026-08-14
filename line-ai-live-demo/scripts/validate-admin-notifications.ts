@@ -1,4 +1,8 @@
-import { buildHandoffNotificationText, getHandoffNotificationReasonLabel } from "../src/lib/admin-handoff-notifications";
+import {
+  buildHandoffNotificationText,
+  getHandoffNotificationReasonLabel,
+  notifyAdminHandoffCreated,
+} from "../src/lib/admin-handoff-notifications";
 import {
   buildHandoffReason,
   refreshHandoffTaskWithPriority,
@@ -102,7 +106,68 @@ async function validateConcurrentPriorityRefresh() {
   expect(storedReason === "post_procedure_emergency", "the persisted task reason stays at the highest observed priority");
 }
 
-validateConcurrentPriorityRefresh()
+async function validateAdminNotificationRecipientIsolation() {
+  const fetchCalls: Array<{ body: string; url: string }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({
+      body: String(init?.body ?? ""),
+      url: String(input),
+    });
+    return {
+      ok: true,
+      status: 200,
+      text: async () => "ok",
+    };
+  };
+  const input = { conversationId: "customer-conversation", reason: "human_request" };
+  const makeDependencies = (adminNotifyTarget: string) => ({
+    fetchImpl,
+    getConfig: () => ({
+      adminNotifyTarget,
+      appBaseUrl: "https://example.test",
+      lineAccessToken: "test-token",
+    }),
+    getSupportStatus: () => ({ inServiceHours: true }),
+  });
+
+  const invalidTargets = [
+    { label: "empty target", value: "" },
+    { label: "customer user target", value: `U${"3".repeat(32)}` },
+    { label: "LINE room target", value: `R${"4".repeat(32)}` },
+  ];
+
+  for (const target of invalidTargets) {
+    const callCountBefore = fetchCalls.length;
+    const result = await notifyAdminHandoffCreated(input, makeDependencies(target.value));
+    expect(result.skipped, `${target.label} is skipped`);
+    expect(
+      fetchCalls.length === callCountBefore,
+      `${target.label} cannot receive a workbench notification`,
+    );
+  }
+
+  const adminGroupId = `C${"5".repeat(32)}`;
+  const groupResult = await notifyAdminHandoffCreated(input, makeDependencies(adminGroupId));
+  expect(!groupResult.skipped && groupResult.ok, "a valid LINE group receives the admin notification");
+  expect(fetchCalls.length === 1, "only the valid LINE group triggers fetch");
+
+  const payload = JSON.parse(fetchCalls[0]?.body ?? "{}") as {
+    messages?: Array<{ text?: string }>;
+    to?: string;
+  };
+  expect(payload.to === adminGroupId, "the push recipient is the validated LINE group");
+  expect(
+    payload.messages?.[0]?.text?.includes("/admin/workbench"),
+    "the internal workbench link is included only in the group notification",
+  );
+}
+
+async function runAsyncValidations() {
+  await validateAdminNotificationRecipientIsolation();
+  await validateConcurrentPriorityRefresh();
+}
+
+runAsyncValidations()
   .then(() => console.log(`admin notification validation passed (${passed} checks)`))
   .catch((error) => {
     console.error(error);

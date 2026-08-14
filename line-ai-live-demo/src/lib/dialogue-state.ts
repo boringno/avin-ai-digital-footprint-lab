@@ -257,6 +257,117 @@ function inferBookingIntent(context: ConversationContext): BookingIntent {
   return "none";
 }
 
+function isLegacyBookingIntent(intent: string | undefined) {
+  return ["booking_intake", "booking_modify_request", "booking_cancel_request"].includes(intent ?? "");
+}
+
+function treatmentTaskOwnsLegacyContext(context: ConversationContextWithDialogueState) {
+  return Boolean(
+    context.activeFocus &&
+      ["learn_treatment", "compare_options"].includes(context.activeFocus.goal) &&
+      context.activeFocus.bookingExplicit === false &&
+      !isLegacyBookingIntent(context.lastIntent),
+  );
+}
+
+function treatmentGoalFromDialogueAct(dialogueAct: DialogueAct): ConversationFocusGoal {
+  return ["compare_options", "explain_combination"].includes(dialogueAct)
+    ? "compare_options"
+    : "learn_treatment";
+}
+
+type TreatmentAwaiting = DialogueAwaiting & {
+  kind: "area" | "combination" | "concern" | "priority";
+};
+
+function normalizeTreatmentAwaiting(value: unknown): TreatmentAwaiting | undefined {
+  const awaiting = normalizeAwaiting(value);
+  return awaiting && ["area", "combination", "concern", "priority"].includes(awaiting.kind)
+    ? awaiting as TreatmentAwaiting
+    : undefined;
+}
+
+/**
+ * Repair contradictory booking ownership left by older routing rules.
+ *
+ * The booking draft is customer data, so it is retained.  Only the active
+ * booking task is suspended: a treatment task cannot simultaneously own a
+ * create/modify/cancel intent.  This adapter is intentionally read-safe and
+ * never mutates the supplied persisted context.
+ */
+export function repairBookingStateOnRead(
+  context: ConversationContextWithDialogueState,
+  options: { now?: Date } = {},
+): ConversationContextWithDialogueState {
+  const canonical = context.dialogueState;
+  const treatmentOwns = treatmentTaskOwnsLegacyContext(context);
+  const canonicalTreatmentWins = Boolean(
+    canonical && canonical.bookingIntent !== "none" && canonical.topic === "treatment",
+  );
+  const staleBookingOwnsTreatment = Boolean(
+    canonical && canonical.topic === "booking" && canonical.bookingIntent !== "none" && treatmentOwns,
+  );
+  const legacyConflict = Boolean(context.bookingSession?.status === "collecting" && treatmentOwns);
+
+  if (!canonicalTreatmentWins && !staleBookingOwnsTreatment && !legacyConflict) {
+    return context;
+  }
+
+  const repaired = cloneLegacyContext(context);
+  const topic = canonicalTreatmentWins ? "treatment" : inferTopic(repaired);
+  const dialogueAct = canonicalTreatmentWins && canonical
+    ? canonical.dialogueAct
+    : inferDialogueAct(repaired);
+  const repairedAwaiting = topic === "treatment"
+    ? normalizeTreatmentAwaiting(canonicalTreatmentWins ? canonical?.awaiting : repaired.activeFocus?.awaiting)
+    : undefined;
+  const at = (options.now ?? new Date()).toISOString();
+
+  if (repaired.bookingSession?.status === "collecting") {
+    repaired.bookingSession = {
+      ...repaired.bookingSession,
+      lastActiveAt: at,
+      status: "stale",
+    };
+  }
+  if (repaired.activeFocus) {
+    repaired.activeFocus = {
+      ...repaired.activeFocus,
+      awaiting: repairedAwaiting
+        ? { ...repairedAwaiting }
+        : undefined,
+      bookingExplicit: false,
+      ...(topic === "treatment"
+        ? {
+            goal: treatmentGoalFromDialogueAct(dialogueAct),
+            treatmentKey: canonicalTreatmentWins
+              ? canonical?.treatmentKeys[0] ?? repaired.activeFocus.treatmentKey
+              : repaired.activeFocus.treatmentKey,
+          }
+        : {}),
+    };
+  }
+  if (isLegacyBookingIntent(repaired.lastIntent)) {
+    delete repaired.lastIntent;
+  }
+  if (canonical) {
+    repaired.dialogueState = {
+      ...canonical,
+      awaiting: repairedAwaiting,
+      bookingAction: null,
+      bookingIntent: "none",
+      dialogueAct,
+      lastTransitionAt: at,
+      topic,
+      treatmentKeys: canonicalTreatmentWins
+        ? [...canonical.treatmentKeys]
+        : inferTreatmentKeys(repaired, topic),
+    };
+  }
+
+  return repaired;
+}
+
 function resolveTreatmentKey(label: string | undefined) {
   return label ? findTreatmentByMessage(label)?.key : undefined;
 }
@@ -327,35 +438,36 @@ export function hydrateDialogueState(
   lifecycle: ConversationState,
   options: DialogueHydrationOptions = {},
 ): DialogueState {
+  const effectiveContext = repairBookingStateOnRead(context, { now: options.now });
   const now = options.now ?? new Date();
   const at = normalizeIso(
-    context.bookingSession?.lastActiveAt ?? context.lastSeenAt ?? lifecycle.updatedAt,
+    effectiveContext.bookingSession?.lastActiveAt ?? effectiveContext.lastSeenAt ?? lifecycle.updatedAt,
     now.toISOString(),
   );
-  const topic = inferTopic(context);
-  const areaKeys = uniqueStrings(context.activeFocus?.areaKeys);
-  const concernKeys = uniqueStrings(context.treatmentConsultation?.concernKeys ?? context.activeFocus?.concernKeys);
+  const topic = inferTopic(effectiveContext);
+  const areaKeys = uniqueStrings(effectiveContext.activeFocus?.areaKeys);
+  const concernKeys = uniqueStrings(effectiveContext.treatmentConsultation?.concernKeys ?? effectiveContext.activeFocus?.concernKeys);
   const answeredTopics = uniqueStrings(
-    context.treatmentConsultation?.answeredAspectKeys ?? context.activeFocus?.answeredTopics,
+    effectiveContext.treatmentConsultation?.answeredAspectKeys ?? effectiveContext.activeFocus?.answeredTopics,
   );
   const fallback: DialogueState = {
     answeredTopics,
     areaKeys,
-    awaiting: normalizeAwaiting(context.activeFocus?.awaiting),
-    bookingAction: context.bookingSession?.action ?? null,
-    bookingIntent: inferBookingIntent(context),
+    awaiting: normalizeAwaiting(effectiveContext.activeFocus?.awaiting),
+    bookingAction: effectiveContext.bookingSession?.status === "collecting" ? effectiveContext.bookingSession.action ?? null : null,
+    bookingIntent: inferBookingIntent(effectiveContext),
     concernKeys,
-    dialogueAct: inferDialogueAct(context),
-    episodeId: (options.episodeIdFactory ?? defaultEpisodeId)(context.userId, at),
+    dialogueAct: inferDialogueAct(effectiveContext),
+    episodeId: (options.episodeIdFactory ?? defaultEpisodeId)(effectiveContext.userId, at),
     handoffStatus: lifecycle.status,
     knownNeeds: inferKnownNeeds(areaKeys, concernKeys),
     lastTransitionAt: at,
-    primaryConcernKey: context.treatmentConsultation?.primaryConcernKey,
+    primaryConcernKey: effectiveContext.treatmentConsultation?.primaryConcernKey,
     schemaVersion: DIALOGUE_STATE_SCHEMA_VERSION,
     topic,
-    treatmentKeys: inferTreatmentKeys(context, topic),
+    treatmentKeys: inferTreatmentKeys(effectiveContext, topic),
   };
-  const persisted = normalizePersistedDialogueState(context.dialogueState, fallback);
+  const persisted = normalizePersistedDialogueState(effectiveContext.dialogueState, fallback);
   if (!persisted) return fallback;
 
   return {

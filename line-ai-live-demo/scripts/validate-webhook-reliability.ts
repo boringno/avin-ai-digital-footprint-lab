@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 
 import { isReplyStillAuthorized, processWebhookRequestBody, sendReplyPayloads, type ProcessedWebhookResult } from "../src/lib/line-webhook";
+import { loadConversationContext } from "../src/lib/conversation-context";
 import { loadConversationState, markHumanTakeover, saveConversationState } from "../src/lib/conversation-state";
 import { splitWebhookResultsByDuplicate } from "../src/lib/webhook-dedupe";
 
@@ -154,10 +155,19 @@ async function caseDeadLetter() {
       const deadLetterPath = path.join(logDir, "line-reply-dead-letter.jsonl");
       const deadLetterContent = await readFile(deadLetterPath, "utf8");
       const deadLetterLines = deadLetterContent.split(/\r?\n/).filter(Boolean);
+      const contextAfterFailure = await loadConversationContext(result.sourceUserId);
+      const failedReplyStillVisible = contextAfterFailure.recentTurns?.some(
+        (turn) => turn.role === "assistant" && turn.text === result.decision.replyText,
+      );
 
       return {
         deadLetterCount: deadLetterLines.length,
-        ok: replyResults[0]?.ok === false && replyResults[0]?.attempts === 2 && deadLetterLines.length === 1,
+        failedReplyStillVisible,
+        ok:
+          replyResults[0]?.ok === false &&
+          replyResults[0]?.attempts === 2 &&
+          deadLetterLines.length === 1 &&
+          failedReplyStillVisible === false,
         result: replyResults[0],
       };
     } finally {

@@ -1,10 +1,28 @@
 import { getHumanSupportStatus } from "@/lib/human-support";
+import { isLineGroupId } from "@/lib/line-recipient-id";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 
 export type HandoffNotificationInput = {
   conversationId: string;
   reason: string;
+};
+
+type AdminHandoffNotificationConfig = Pick<
+  ReturnType<typeof getRuntimeConfig>,
+  "adminNotifyTarget" | "appBaseUrl" | "lineAccessToken"
+>;
+
+type AdminHandoffNotificationFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Pick<Response, "ok" | "status" | "text">>;
+
+export type AdminHandoffNotificationDependencies = {
+  fetchImpl?: AdminHandoffNotificationFetch;
+  getConfig?: () => AdminHandoffNotificationConfig;
+  getSupportStatus?: () => Pick<ReturnType<typeof getHumanSupportStatus>, "inServiceHours">;
+  reportError?: typeof reportOperationalError;
 };
 
 const handoffReasonLabels: Record<string, string> = {
@@ -21,8 +39,11 @@ const handoffReasonLabels: Record<string, string> = {
   unsupported_treatment_or_unapproved_content: "需人工確認療程問題",
 };
 
-export async function notifyAdminHandoffCreated(input: HandoffNotificationInput) {
-  const supportStatus = getHumanSupportStatus();
+export async function notifyAdminHandoffCreated(
+  input: HandoffNotificationInput,
+  dependencies: AdminHandoffNotificationDependencies = {},
+) {
+  const supportStatus = (dependencies.getSupportStatus ?? getHumanSupportStatus)();
   if (!supportStatus.inServiceHours) {
     return {
       ok: true,
@@ -31,8 +52,8 @@ export async function notifyAdminHandoffCreated(input: HandoffNotificationInput)
     };
   }
 
-  const config = getRuntimeConfig();
-  if (!config.adminNotifyTarget || !config.lineAccessToken) {
+  const config = (dependencies.getConfig ?? getRuntimeConfig)();
+  if (!config.lineAccessToken) {
     return {
       ok: true,
       skipped: true,
@@ -40,8 +61,19 @@ export async function notifyAdminHandoffCreated(input: HandoffNotificationInput)
     };
   }
 
+  // Internal workbench links must never be pushed to a customer or room ID.
+  // ADMIN_NOTIFY_TARGET is therefore group-only, even though LINE Push accepts
+  // other recipient types.
+  if (!isLineGroupId(config.adminNotifyTarget)) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "notification_target_not_group",
+    };
+  }
+
   try {
-    const response = await fetch("https://api.line.me/v2/bot/message/push", {
+    const response = await (dependencies.fetchImpl ?? fetch)("https://api.line.me/v2/bot/message/push", {
       body: JSON.stringify({
         messages: [
           {
@@ -60,7 +92,7 @@ export async function notifyAdminHandoffCreated(input: HandoffNotificationInput)
     const body = await response.text();
 
     if (!response.ok) {
-      await reportOperationalError({
+      await (dependencies.reportError ?? reportOperationalError)({
         alert: false,
         error: new Error(`Admin handoff notification failed: ${response.status} ${body}`),
         extra: {
@@ -79,7 +111,7 @@ export async function notifyAdminHandoffCreated(input: HandoffNotificationInput)
       status: response.status,
     };
   } catch (error) {
-    await reportOperationalError({
+    await (dependencies.reportError ?? reportOperationalError)({
       alert: false,
       error,
       extra: {
