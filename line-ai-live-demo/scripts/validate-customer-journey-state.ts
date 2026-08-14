@@ -33,6 +33,7 @@ function oldBookingContext() {
     timeSlots: ["8月18號下午"],
     treatment: "ONDA PRO",
   };
+  context.bookingSession = { action: "use_current", lastActiveAt: NOW.toISOString(), status: "collecting" };
   context.lastIntent = "booking_intake";
   context.lastReferencedTreatment = "ONDA PRO";
   context.treatmentConsultation = {

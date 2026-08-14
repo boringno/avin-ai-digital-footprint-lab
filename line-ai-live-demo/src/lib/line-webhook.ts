@@ -1085,6 +1085,13 @@ export async function sendReplyPayloads(
     }
 
     if (!finalResult.ok) {
+      // A non-2xx LINE response confirms that this reply was not delivered.
+      // Do not let later turns treat the unsent text as conversation history.
+      // Network failures have status 0 and remain unknown until the durable
+      // outbox can reconcile them without risking a duplicate customer reply.
+      if (finalResult.status > 0) {
+        await removeSuppressedReplyFromContext(result);
+      }
       await appendReplyDeadLetter({
         attemptedAt: new Date().toISOString(),
         attempts: finalResult.attempts,

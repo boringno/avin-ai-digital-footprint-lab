@@ -46,7 +46,11 @@ import {
   type LineTextMessage,
 } from "@/lib/treatment-carousel";
 import { createEmptyConversationState } from "@/lib/conversation-state";
-import { commitDialogueRouteSelection, synchronizeDialogueStateFromLegacy } from "@/lib/dialogue-state";
+import {
+  commitDialogueRouteSelection,
+  repairBookingStateOnRead,
+  synchronizeDialogueStateFromLegacy,
+} from "@/lib/dialogue-state";
 import { buildContextualReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import { buildTreatmentApprovedFacts, resolveTreatmentKnowledgeByKey } from "@/lib/treatment-knowledge";
 import { parseTreatmentSelection } from "@/lib/treatment-selection";
@@ -820,12 +824,29 @@ function getBookingSessionActivityAt(context: ConversationContext) {
 }
 
 function isActiveBookingConversation(context: ConversationContext | undefined, now: Date) {
-  if (
-    !context ||
-    (!isBookingConversationIntent(context.lastIntent) && context.bookingSession?.status !== "collecting")
-  ) {
+  if (!context || context.bookingSession?.status !== "collecting") {
     return false;
   }
+
+  const canonicalOwnsBooking = Boolean(
+    context.dialogueState?.bookingIntent &&
+      context.dialogueState.bookingIntent !== "none" &&
+      (
+        context.dialogueState.topic === "booking" ||
+        (context.activeFocus?.bookingExplicit === true &&
+          ["book_consultation", "manage_booking"].includes(context.activeFocus.goal))
+      ),
+  );
+  const legacyOwnsBooking = Boolean(
+    !context.dialogueState &&
+      isBookingConversationIntent(context.lastIntent) &&
+      (
+        !context.activeFocus ||
+        (context.activeFocus.bookingExplicit === true &&
+          ["book_consultation", "manage_booking"].includes(context.activeFocus.goal))
+      ),
+  );
+  if (!canonicalOwnsBooking && !legacyOwnsBooking) return false;
 
   const activityAt = getBookingSessionActivityAt(context);
   if (!activityAt) {
@@ -1334,14 +1355,6 @@ function hasExplicitBookingDetails(message: string) {
   );
 }
 
-function hasFreeTextBookingSignal(message: string) {
-  if (isFreeTextBookingInfoQuestion(message)) {
-    return false;
-  }
-
-  return Boolean(findBranchByMessage(message)) || Boolean(findTreatmentByMessage(message));
-}
-
 function isBookingFollowupMessage(message: string, previousContext: ConversationContext | undefined, now: Date) {
   if (!previousContext) {
     return false;
@@ -1362,13 +1375,6 @@ function isBookingFollowupMessage(message: string, previousContext: Conversation
 
   if (isActiveBookingConversation(previousContext, now)) {
     return hasBookingDraftProgress(message, previousContext);
-  }
-
-  if (previousContext.lastIntent === "human_request") {
-    return (
-      (hasBookingDraftValue(previousContext) && hasBookingDraftProgress(message, previousContext)) ||
-      hasFreeTextBookingSignal(message)
-    );
   }
 
   return false;
@@ -3753,10 +3759,16 @@ function buildReplyPlan(
 }
 
 export async function routeCustomerMessage(input: RouteCustomerMessageInput): Promise<RouterDecision> {
-  const treatmentSelection = parseTreatmentSelection(input.message);
-  let decision = await routeCustomerMessageLegacy(input);
-  if (treatmentSelection.neutralContrast && input.conversationContext?.dialogueState) {
-    const priorState = input.conversationContext.dialogueState;
+  const effectiveInput: RouteCustomerMessageInput = {
+    ...input,
+    conversationContext: input.conversationContext
+      ? repairBookingStateOnRead(input.conversationContext, { now: input.now })
+      : undefined,
+  };
+  const treatmentSelection = parseTreatmentSelection(effectiveInput.message);
+  let decision = await routeCustomerMessageLegacy(effectiveInput);
+  if (treatmentSelection.neutralContrast && effectiveInput.conversationContext?.dialogueState) {
+    const priorState = effectiveInput.conversationContext.dialogueState;
     decision = {
       ...decision,
       decisionType: "treatment_intro_reply",
@@ -3764,12 +3776,12 @@ export async function routeCustomerMessage(input: RouteCustomerMessageInput): Pr
       matchedType: "guided_reply",
       nextContext: {
         ...decision.nextContext,
-        activeFocus: input.conversationContext.activeFocus
-          ? { ...input.conversationContext.activeFocus }
+        activeFocus: effectiveInput.conversationContext.activeFocus
+          ? { ...effectiveInput.conversationContext.activeFocus }
           : decision.nextContext.activeFocus,
-        lastReferencedTreatment: input.conversationContext.lastReferencedTreatment,
-        treatmentConsultation: input.conversationContext.treatmentConsultation
-          ? { ...input.conversationContext.treatmentConsultation }
+        lastReferencedTreatment: effectiveInput.conversationContext.lastReferencedTreatment,
+        treatmentConsultation: effectiveInput.conversationContext.treatmentConsultation
+          ? { ...effectiveInput.conversationContext.treatmentConsultation }
           : undefined,
       },
       replyText: "😊 了解，這句我先不當成排除或更換療程，會保留目前正在談的方向。您是想比較差異，還是要改成另一項療程呢？",
@@ -3780,8 +3792,8 @@ export async function routeCustomerMessage(input: RouteCustomerMessageInput): Pr
     treatmentSelection.replaceExisting &&
     treatmentSelection.excludedKeys.length === 0 &&
     treatmentSelection.selected.length === 1 &&
-    input.conversationContext?.dialogueState?.treatmentKeys.length &&
-    input.conversationContext.dialogueState.treatmentKeys.length > 1
+    effectiveInput.conversationContext?.dialogueState?.treatmentKeys.length &&
+    effectiveInput.conversationContext.dialogueState.treatmentKeys.length > 1
   ) {
     const treatment = treatmentSelection.selected[0];
     decision = {
@@ -3793,16 +3805,17 @@ export async function routeCustomerMessage(input: RouteCustomerMessageInput): Pr
     };
   }
   const lifecycle = createEmptyConversationState(decision.nextContext.userId);
-  const synchronizedContext = synchronizeDialogueStateFromLegacy(decision.nextContext, lifecycle, {
-    forceNewEpisode: isExplicitConsultationRestart(input.message),
-    now: input.now,
+  const repairedDecisionContext = repairBookingStateOnRead(decision.nextContext, { now: effectiveInput.now });
+  const synchronizedContext = synchronizeDialogueStateFromLegacy(repairedDecisionContext, lifecycle, {
+    forceNewEpisode: isExplicitConsultationRestart(effectiveInput.message),
+    now: effectiveInput.now,
   });
   let routed = { ...decision, nextContext: synchronizedContext };
-  const replyPlan = buildReplyPlan(routed, input.message);
+  const replyPlan = buildReplyPlan(routed, effectiveInput.message);
   const explicitlyMentionedTreatmentKeys = treatmentSelection.selectedKeys;
   const excludedTreatmentKeys = treatmentSelection.excludedKeys;
-  const behavior = parseContextualTreatmentBehavior(input.message, synchronizedContext);
-  const priorTreatmentKeys = input.conversationContext?.dialogueState?.treatmentKeys ?? [];
+  const behavior = parseContextualTreatmentBehavior(effectiveInput.message, synchronizedContext);
+  const priorTreatmentKeys = effectiveInput.conversationContext?.dialogueState?.treatmentKeys ?? [];
   const selectedTreatmentKeys = treatmentSelection.neutralContrast
     ? (priorTreatmentKeys.length > 0 ? priorTreatmentKeys : replyPlan.treatmentKeys)
     : behavior === "combination_declined" || behavior === "single_treatment_preference"
@@ -3821,15 +3834,15 @@ export async function routeCustomerMessage(input: RouteCustomerMessageInput): Pr
     dialogueAct: replyPlan.dialogueAct,
     matchedKey: replyPlan.matchedKey,
     nextQuestion: replyPlan.nextQuestion,
-    now: input.now,
+    now: effectiveInput.now,
     replaceTreatmentContext:
       behavior === "combination_declined" ||
       behavior === "single_treatment_preference" ||
       treatmentSelection.replaceExisting ||
       treatmentSelection.neutralContrast ||
-      isMultiTreatmentComparisonRequest(input.message) ||
+      isMultiTreatmentComparisonRequest(effectiveInput.message) ||
       (explicitlyMentionedTreatmentKeys.length === 1 &&
-        (isExplicitConsultationRestart(input.message) ||
+        (isExplicitConsultationRestart(effectiveInput.message) ||
           Boolean(
             currentPrimaryTreatmentKey &&
             explicitlyMentionedTreatmentKeys[0] !== currentPrimaryTreatmentKey &&

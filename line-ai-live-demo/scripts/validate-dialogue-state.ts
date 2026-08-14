@@ -5,6 +5,7 @@ import { createEmptyConversationState } from "../src/lib/conversation-state";
 import {
   createDialogueRuntime,
   hydrateDialogueState,
+  repairBookingStateOnRead,
   reduceDialogueRuntime,
   reduceDialogueState,
   synchronizeDialogueStateFromLegacy,
@@ -233,6 +234,90 @@ function validateMaterializationAndLegacySyncBoundaries() {
   assert.notEqual(migrated.dialogueState?.dialogueAct, "handle_objection", "DS9: legacy sync is migration-only and must not be used after final policy selection");
 }
 
+function validatePollutedBookingStateRepairsOnRead() {
+  const context = oldBookingContext();
+  context.lastIntent = "treatment_intro:onda_pro";
+  context.activeFocus = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "concern", questionSummary: "確認想改善的部位或困擾" },
+    bookingExplicit: false,
+    concernKeys: [],
+    goal: "learn_treatment",
+    treatmentKey: "onda_pro",
+  };
+  context.dialogueState = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "branch", questionSummary: "收集預約所需資料" },
+    bookingAction: "use_current",
+    bookingIntent: "create",
+    concernKeys: [],
+    dialogueAct: "collect_booking",
+    episodeId: "polluted-booking-state",
+    knownNeeds: [],
+    lastTransitionAt: NOW,
+    schemaVersion: 1,
+    topic: "booking",
+    treatmentKeys: ["onda_pro"],
+  };
+
+  const repaired = repairBookingStateOnRead(context, { now: new Date(NOW) });
+  const hydrated = hydrateDialogueState(repaired, createEmptyConversationState("dialogue-test"), { now: new Date(NOW) });
+
+  assert.equal(context.bookingSession?.status, "collecting", "DS10: read repair must not mutate the supplied context");
+  assert.equal(repaired.bookingDraft.treatment, "ONDA PRO", "DS10: repair must preserve the customer's booking draft");
+  assert.equal(repaired.bookingSession?.status, "stale", "DS10: conflicting legacy booking ownership must be suspended");
+  assert.equal(repaired.activeFocus?.bookingExplicit, false, "DS10: legacy bookingExplicit must be cleared");
+  assert.equal(repaired.dialogueState?.bookingIntent, "none", "DS10: persisted canonical booking intent must be cleared");
+  assert.equal(hydrated.bookingIntent, "none", "DS10: future hydration must not revive the polluted booking intent");
+  assert.equal(hydrated.topic, "treatment", "DS10: the winning treatment task must own the repaired state");
+
+  const canonicalTreatment = oldBookingContext();
+  canonicalTreatment.activeFocus = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "branch", questionSummary: "收集預約所需資料" },
+    bookingExplicit: true,
+    concernKeys: ["jawline_looseness"],
+    goal: "book_consultation",
+    treatmentKey: "onda_pro",
+  };
+  canonicalTreatment.dialogueState = {
+    answeredTopics: [],
+    areaKeys: [],
+    awaiting: { kind: "priority", questionSummary: "比較療程差異" },
+    bookingAction: "use_current",
+    bookingIntent: "create",
+    concernKeys: ["jawline_looseness"],
+    dialogueAct: "compare_options",
+    episodeId: "canonical-treatment-wins",
+    knownNeeds: [{ key: "jawline_looseness", kind: "concern", source: "explicit" }],
+    lastTransitionAt: NOW,
+    schemaVersion: 1,
+    topic: "treatment",
+    treatmentKeys: ["onda_pro"],
+  };
+
+  const canonicalRepaired = repairBookingStateOnRead(canonicalTreatment, { now: new Date(NOW) });
+  assert.equal(canonicalRepaired.dialogueState?.topic, "treatment", "DS10b: canonical treatment topic must win over legacy booking focus");
+  assert.equal(canonicalRepaired.dialogueState?.dialogueAct, "compare_options", "DS10b: canonical treatment act must survive repair");
+  assert.equal(canonicalRepaired.dialogueState?.bookingIntent, "none", "DS10b: canonical treatment cannot retain create intent");
+  assert.equal(canonicalRepaired.activeFocus?.goal, "compare_options", "DS10b: legacy focus must align to the winning canonical treatment task");
+  assert.equal(canonicalRepaired.activeFocus?.bookingExplicit, false, "DS10b: aligned legacy focus must clear booking ownership");
+  assert.equal(canonicalRepaired.dialogueState?.awaiting?.kind, "priority", "DS10b: a valid canonical treatment question must survive repair");
+  assert.equal(canonicalRepaired.activeFocus?.awaiting?.kind, "priority", "DS10b: valid treatment awaiting must project to legacy focus");
+  assert.equal(canonicalRepaired.bookingSession?.status, "stale", "DS10b: conflicting booking session must be suspended");
+  assert.equal(canonicalRepaired.bookingDraft.treatment, "ONDA PRO", "DS10b: exact contradictory repair must preserve draft data");
+
+  const bookingAwaitingPollution = structuredClone(canonicalTreatment);
+  bookingAwaitingPollution.dialogueState!.awaiting = { kind: "branch", questionSummary: "收集預約館別" };
+  const awaitingRepaired = repairBookingStateOnRead(bookingAwaitingPollution, { now: new Date(NOW) });
+  assert.equal(awaitingRepaired.dialogueState?.topic, "treatment", "DS10c: treatment still owns the repaired task");
+  assert.equal(awaitingRepaired.dialogueState?.awaiting, undefined, "DS10c: booking-only canonical awaiting must not leak into treatment");
+  assert.equal(awaitingRepaired.activeFocus?.awaiting, undefined, "DS10c: booking-only legacy awaiting must be cleared with booking ownership");
+}
+
 validateHydrationAndLifecycleAuthority();
 validateImmutableStateReducer();
 validateReplacementStartsFreshDraft();
@@ -242,5 +327,6 @@ validateBookingTimeOwnership();
 validateConsultationSwitchAndCorrection();
 validatePersistedStateDoesNotDuplicateHandoffAuthority();
 validateMaterializationAndLegacySyncBoundaries();
+validatePollutedBookingStateRepairsOnRead();
 
-console.log("dialogue state validation passed (9 scenario families, including canonical materialization boundaries)");
+console.log("dialogue state validation passed (10 scenario families, including polluted booking read repair)");

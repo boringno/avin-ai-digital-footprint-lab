@@ -176,6 +176,52 @@ async function validateCanonicalActMatchesReplyPlan() {
   }
 }
 
+async function validateHumanHandoffDoesNotCreateBooking() {
+  const handoff = await route("我要找真人接手", createEmptyConversationContext("dialogue-policy-human-learning"));
+  assert(handoff.decisionType === "handoff_pending", "DP11: explicit human request must create only a handoff task");
+
+  const learning = await route("我想了解 ONDA", handoff.nextContext);
+  assert(learning.decisionType === "treatment_intro_reply", "DP11: a treatment enquiry after handoff must remain education");
+  assert(learning.nextContext.dialogueState?.bookingIntent === "none", "DP11: canonical booking intent must stay clear");
+  assert(learning.nextContext.activeFocus?.bookingExplicit === false, "DP11: legacy booking ownership must stay clear");
+  assert(learning.nextContext.bookingSession?.status !== "collecting", "DP11: no booking session may start implicitly");
+
+  const booking = await route("我想預約 ONDA", learning.nextContext);
+  assert(booking.decisionType === "booking_intake_reply", "DP11: an explicit later booking request must still start intake");
+  assert(booking.nextContext.dialogueState?.bookingIntent === "create", "DP11: explicit booking must own canonical create intent");
+}
+
+async function validateTreatmentTaskSuspendsBookingWithoutLosingDraft() {
+  const started = await route("我想預約 ONDA", createEmptyConversationContext("dialogue-policy-suspend-booking"));
+  assert(started.nextContext.bookingSession?.status === "collecting", "DP12: explicit booking must be active before suspension");
+
+  const learning = await route("我想先了解 ONDA", started.nextContext);
+  assert(learning.decisionType === "treatment_intro_reply", "DP12: explicit learning task must win over booking collection");
+  assert(learning.nextContext.bookingDraft.treatment === "ONDA PRO", "DP12: suspension must preserve the customer booking draft");
+  assert(learning.nextContext.bookingSession?.status === "stale", "DP12: the mutually exclusive legacy booking task must be suspended");
+  assert(learning.nextContext.dialogueState?.bookingIntent === "none", "DP12: treatment ownership must clear canonical booking intent");
+  assert(learning.nextContext.activeFocus?.bookingExplicit === false, "DP12: treatment ownership must clear legacy bookingExplicit");
+
+  const branchQuestion = await route("高雄館在哪", learning.nextContext);
+  assert(branchQuestion.decisionType === "clinic_info_reply", "DP12: a suspended draft must not capture an unrelated branch question");
+}
+
+async function validateSameBaseContextKeepsIntentIsolation() {
+  const handoff = await route("我要找真人接手", createEmptyConversationContext("dialogue-policy-parallel-intent"));
+  const base = structuredClone(handoff.nextContext);
+  const before = structuredClone(base);
+  const [learning, booking] = await Promise.all([
+    route("我想了解 ONDA", base),
+    route("我想預約 ONDA", base),
+  ]);
+
+  assert(learning.decisionType === "treatment_intro_reply", "DP13: parallel-style learning must not inherit booking ownership");
+  assert(learning.nextContext.dialogueState?.bookingIntent === "none", "DP13: learning result must have no canonical booking intent");
+  assert(booking.decisionType === "booking_intake_reply", "DP13: parallel-style explicit booking must still start intake");
+  assert(booking.nextContext.dialogueState?.bookingIntent === "create", "DP13: booking result alone must own create intent");
+  assert(JSON.stringify(base) === JSON.stringify(before), "DP13: parallel-style routes must not mutate their shared input context");
+}
+
 async function main() {
   const scenarios = [
     ["DP1", validateOndaSingleTreatmentJourney],
@@ -186,6 +232,9 @@ async function main() {
     ["DP9", validateGeneralVsActualPostProcedure],
     ["DP4-DP5", validateExistingBookingAddAndReplace],
     ["DP10", validateCanonicalActMatchesReplyPlan],
+    ["DP11", validateHumanHandoffDoesNotCreateBooking],
+    ["DP12", validateTreatmentTaskSuspendsBookingWithoutLosingDraft],
+    ["DP13", validateSameBaseContextKeepsIntentIsolation],
   ] as const;
   const failures: string[] = [];
   for (const [name, validate] of scenarios) {
