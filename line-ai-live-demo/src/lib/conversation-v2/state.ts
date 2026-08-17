@@ -119,6 +119,85 @@ export function createConversationV2State(input: {
   };
 }
 
+/**
+ * Records an accepted event without applying a fact-dependent policy action.
+ * A held turn must still be idempotent: the same LINE event cannot mutate the
+ * conversation later merely because the clinic data source changed meanwhile.
+ */
+export function recordConversationV2TurnReceipt(
+  state: ConversationV2State,
+  turnId: string,
+  at: string,
+): ConversationV2State {
+  const next = cloneConversationV2State(state);
+  if (next.processedTurnIds.includes(turnId)) return next;
+  return {
+    ...next,
+    lastProcessedTurnId: turnId,
+    processedTurnIds: [...next.processedTurnIds, turnId].slice(-PROCESSED_TURN_ID_LIMIT),
+    revision: next.revision + 1,
+    updatedAt: at,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/**
+ * Treat persisted V2 state as untrusted JSON. This intentionally validates the
+ * state envelope and every array cloned by the reducer; malformed or older
+ * payloads start a fresh V2 episode instead of crashing the LINE webhook.
+ */
+export function parsePersistedConversationV2State(value: unknown): ConversationV2State | null {
+  if (!isRecord(value) || value.schemaVersion !== CONVERSATION_V2_SCHEMA_VERSION) return null;
+  const activeTask = value.activeTask;
+  const bookingTask = value.bookingTask;
+  const control = value.control;
+  const knowledge = value.knowledge;
+  const preferences = value.preferences;
+  if (
+    !isRecord(activeTask) ||
+    typeof activeTask.id !== "string" ||
+    typeof activeTask.kind !== "string" ||
+    typeof activeTask.startedAt !== "string" ||
+    !isRecord(bookingTask) ||
+    !isRecord(bookingTask.draft) ||
+    !isStringArray(bookingTask.draft.timeSlots) ||
+    !isStringArray(bookingTask.draft.treatmentKeys) ||
+    !["none", "create", "modify", "cancel"].includes(String(bookingTask.intent)) ||
+    !["inactive", "collecting", "suspended", "completed"].includes(String(bookingTask.status)) ||
+    !isRecord(control) ||
+    !["ai_active", "handoff_pending", "human_active", "ai_paused", "closed"].includes(String(control.mode)) ||
+    typeof value.episodeId !== "string" || !value.episodeId ||
+    !isRecord(knowledge) ||
+    !isStringArray(knowledge.approvedFactIds) ||
+    !isStringArray(knowledge.areaKeys) ||
+    !isStringArray(knowledge.concernKeys) ||
+    !isStringArray(knowledge.treatmentKeys) ||
+    !isStringArray(value.pricingSubjectTreatmentKeys) ||
+    !isStringArray(value.processedTurnIds) ||
+    !isRecord(preferences) ||
+    !isStringArray(preferences.excludedAreaKeys) ||
+    !isStringArray(preferences.excludedConcernKeys) ||
+    !isStringArray(preferences.excludedTreatmentKeys) ||
+    !["single", "unspecified"].includes(String(preferences.treatmentApproach)) ||
+    !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 ||
+    typeof value.updatedAt !== "string"
+  ) {
+    return null;
+  }
+  try {
+    return cloneConversationV2State(value as unknown as ConversationV2State);
+  } catch {
+    return null;
+  }
+}
+
 export const PROCESSED_TURN_ID_LIMIT = 64;
 
 function appendProcessedTurnId(state: ConversationV2State, turnId: string) {
@@ -214,7 +293,7 @@ export const BOOKING_FIELDS_BY_INTENT: Record<Exclude<BookingIntent, "none">, Bo
   modify: ["appointment_reference", "change_request"],
 };
 
-function nextMissingBookingField(
+export function nextMissingBookingField(
   draft: BookingDraft,
   intent: Exclude<BookingIntent, "none">,
 ): BookingField | undefined {

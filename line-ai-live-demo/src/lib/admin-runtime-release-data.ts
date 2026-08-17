@@ -80,7 +80,8 @@ export async function createRuntimeRelease(staff: AdminStaffUser, releaseName: s
     p_tenant_id: staff.tenantId,
   });
   if (error || !data) throw new Error("無法建立 release snapshot。請確認已有已發布的 FAQ 或活動內容。");
-  await writeAdminAuditLog({ action: "runtime_release.created", after: { release_name: normalizedName }, staff, targetId: String(data), targetTable: "runtime_content_releases" });
+  const releaseId = String(data);
+  await writeAdminAuditLog({ action: "runtime_release.created", after: { release_name: normalizedName }, staff, targetId: releaseId, targetTable: "runtime_content_releases" });
 }
 
 export async function runRuntimeReleaseRegression(staff: AdminStaffUser, releaseId: string) {

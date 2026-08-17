@@ -10,6 +10,10 @@ import {
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getLatencyCriticalSupabaseServerClient } from "@/lib/supabase-server";
 import type { PersistedDialogueStateV1 } from "@/lib/dialogue-state";
+import {
+  parsePersistedConversationV2State,
+} from "@/lib/conversation-v2/state";
+import type { ConversationV2State } from "@/lib/conversation-v2/types";
 
 export type BookingDraft = {
   appointmentAt?: string;
@@ -73,6 +77,8 @@ export type ConversationContext = {
   };
   /** Versioned canonical dialogue state. Legacy fields remain during migration. */
   dialogueState?: PersistedDialogueStateV1;
+  /** Test-account V2 state; ignored by V1 and validated before every read. */
+  conversationV2State?: ConversationV2State;
   /** Optimistic concurrency epoch for the whole dialogue context JSON. */
   contextRevision?: number;
   introSent: boolean;
@@ -267,6 +273,7 @@ function hydrateConversationContext(
       bookingDraftJson.appointmentAt ?? contextJson.bookingDraft?.appointmentAt,
     ),
     contextRevision: normalizeContextRevision(contextJson.contextRevision),
+    conversationV2State: parsePersistedConversationV2State(contextJson.conversationV2State) ?? undefined,
     customerProfile: normalizeCustomerProfile(contextJson.customerProfile),
     bookingDraft: {
       ...createEmptyBookingDraft(),
@@ -420,6 +427,7 @@ const ACCUMULATING_STRING_ARRAY_PATHS = new Set([
   "treatmentConsultation.answeredAspectKeys",
   "treatmentConsultation.concernKeys",
 ]);
+const ATOMIC_CONTEXT_PATHS = new Set(["conversationV2State"]);
 
 function valuesEqual(left: unknown | typeof ABSENT, right: unknown | typeof ABSENT): boolean {
   if (left === ABSENT || right === ABSENT) return left === right;
@@ -446,6 +454,9 @@ function rebaseContextValue(
 ): unknown | typeof ABSENT {
   if (valuesEqual(incoming, base)) return latest;
   if (valuesEqual(latest, base)) return incoming;
+  if (ATOMIC_CONTEXT_PATHS.has(path)) {
+    return incomingIsLater ? incoming : latest;
+  }
   if (
     ACCUMULATING_STRING_ARRAY_PATHS.has(path) &&
     (base === ABSENT || (Array.isArray(base) && base.every((item) => typeof item === "string"))) &&

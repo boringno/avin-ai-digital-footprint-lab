@@ -6,6 +6,8 @@
 
 安全基線永遠是既有 seed。runtime release 只覆蓋已發布的 FAQ 與活動價格內容，不能覆蓋安全分流、真人接手、預約、館別與醫師班表規則。
 
+對被灰度選入 release 的客人，該 snapshot 內的活動價格清單是完整且唯一的價格來源；未收進 snapshot 的 seed 價格不會補回。建立 release 前，必須先確認所有仍要對客顯示的核准活動價格皆為已發布狀態。未被灰度選入、尚未啟用 release 或 rollback 後，才使用 seed 基線。
+
 ## 正式操作
 
 1. 在 `/admin/content` 將 FAQ 或活動內容走完草稿、送審與發布。

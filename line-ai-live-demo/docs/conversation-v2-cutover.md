@@ -3,12 +3,14 @@
 ## Current status
 
 This document describes the replacement target and its release gates. The
-`conversation-v2` is an offline-tested decision core with a default-off runtime
-shadow adapter. When both NLU shadow and Conversation V2 shadow are explicitly
-enabled, it reuses the captured NLU frame, replays immutable turns in LINE
-timestamp order, and records a PII-free V1/V2 comparison. It is not connected
-to Production routing, live dialogue persistence, reply rendering, booking or
-handoff mutations, or customer-visible delivery.
+`conversation-v2` is an offline-tested decision core with both a default-off
+runtime shadow adapter and a default-off, exact-account canary path. Shadow
+reuses captured NLU frames and records a PII-free V1/V2 comparison. Canary is
+wired to the existing LINE pipeline, stores versioned V2 state inside the
+existing context JSON, projects booking/handoff results back into the proven
+admin integrations, and still uses the single existing renderer and LINE
+sender. No customer uses this path unless both canary mode and an exact LINE
+user allowlist are configured.
 
 The runtime gates remain:
 
@@ -18,6 +20,13 @@ The runtime gates remain:
   snapshots remain provisional until an offline materialization pass settles
   the observation window
 - `CONVERSATION_V2_MODE=shadow`
+
+The separately approved customer-visible test-account gate is:
+
+- `OPENAI_NLU_MODE=off`
+- `OPENAI_NLU_DECISION_MODE=off`
+- `CONVERSATION_V2_MODE=canary`
+- `CONVERSATION_V2_CANARY_USER_IDS=<exact LINE user ids>`
 
 All three default to disabled or zero. Enabling them is a separately approved
 Production operation; merging the code alone does not route customers through
@@ -43,10 +52,10 @@ delivery, and topic replacement. These fixtures prove the policy contract and
 state transitions; they do **not** prove that a live model still classifies every
 phrase correctly. Recorded-model evaluation is still required before canary.
 
-Production shadow must use a whole-conversation test-account/customer
-allowlist. The current sampling gate is not approval to enable partial random
-multi-turn shadow traffic; an allowlist gate must be added and separately
-approved before Production activation.
+Customer-visible V2 uses a whole-conversation test-account allowlist. Matching
+is exact and user-scoped; it never samples individual messages, and group/room
+sources cannot enter canary. Merging the code is not approval to set these
+Production variables.
 
 ### Turn-scoped clinic-facts milestone (2026-08-14)
 
@@ -55,9 +64,11 @@ snapshot. The same snapshot can supply the NLU ontology and the policy's
 treatment, price, and clinic-fact resolution, so a content update cannot make
 the model recognize one catalog while the decision layer uses another.
 
-The initial provider is an injectable bridge over the existing config shapes
-and caller-supplied approved price records; it does not fetch runtime content by
-itself. Treatment and price catalogs default to `partial`: a missing item means
+The runtime provider now composes reviewed static treatment knowledge, seed
+campaigns, and the active runtime release exactly once per turn. Runtime source
+failure closes only price output and cannot revive an older seed price; static
+treatment education remains available. Treatment and price catalogs default to
+`partial`: a missing item means
 `unknown`, never `not_offered`. V2 may say a treatment is unavailable only when
 the snapshot carries explicit negative evidence. Likewise, a customer-visible
 price exists only for an approved campaign that is current at the turn time and
@@ -66,7 +77,9 @@ ambiguous, or unavailable price data produces no amount and requests internal
 fact confirmation without pausing the conversation.
 
 The contract supports snapshot replacement and rollback without editing the
-router or dialogue policy. A future database/content-admin provider must retain
+router or dialogue policy. The current admin/runtime release schema publishes
+FAQ and campaign/price entries. Treatment profiles are still compiled reviewed
+content; adding treatment-profile publishing later must retain
 the same semantics, approval states, provenance, and per-turn snapshot pinning.
 Snapshots are deep immutable, and every offered/stale/not-offered inventory key
 must exist in that snapshot's recognition ontology. Recognition-only entries
@@ -81,11 +94,38 @@ dose, and session count. Missing or mismatched qualifiers fail closed instead
 of borrowing another branch's or package's amount. V2 never quotes the legacy
 free-text `price_text`: it requires a separately approved
 `customer_price_text`, while campaign name and start/end dates remain internal.
-The runtime merge now preserves combination ownership and suppresses matching
-seed ids before filtering an expired replacement, so an updated or withdrawn
-price cannot revive an older seed value. Loading that merged catalog into the
-V2 provider and enabling a customer-visible V2 canary are still separate
-milestones; V2 remains default-off.
+The runtime merge now preserves combination ownership. For an audience selected
+into an active release, that immutable release is the complete authority for
+customer-visible prices: a campaign omitted from it cannot fall through to an
+older seed amount. No follow-up database write is required after release
+creation. Rollback, no active release, and rollout exclusion deliberately
+return to the seed baseline. The V2 runtime provider is now wired,
+but V2 remains default-off and the Production canary allowlist remains a
+separate operational approval.
+
+### Current canary limits
+
+- Canary is for exact LINE test accounts only. It is not approval for broad or
+  percentage traffic.
+- The current webhook store plus per-event V2 receipt protects accepted canary
+  turns from replay, but it is not the durable inbox/outbox required for a
+  100% cutover.
+- Existing runtime publishing supplies reviewed FAQ and campaign/price data.
+  Treatment profiles remain a reviewed static, partial catalog until a future
+  admin publishing contract is implemented.
+- Existing promotion-card parity is not a canary release gate yet. Test-account
+  acceptance must focus on text treatment education, price ownership, clinic
+  facts, booking projection, safety, and handoff.
+- Disabling canary may let V1 advance the conversation. Re-enabling it discards
+  an older V2 blob and rebuilds from the newer legacy booking state rather than
+  reviving stale V2 fields.
+- A pending staff task does not globally freeze the customer. Deterministic
+  safety and privacy preflight wins first; an explicit topic pivot continues
+  through ordinary V2 routing, while a vague symptom continuation stays with
+  the existing medical handoff without a model call.
+- A fact-confirmation request creates a non-blocking staff task with only its
+  domain, reason, and safe fact keys. It does not pause the AI conversation or
+  silently promise follow-up without a workbench item.
 
 ## Decision
 

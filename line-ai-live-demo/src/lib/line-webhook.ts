@@ -12,6 +12,10 @@ import { appendRecentConversationTurns, createEmptyConversationContext, loadConv
 import { commitDialogueRouteSelection, hydrateDialogueState } from "@/lib/dialogue-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getHandoffPriority } from "@/lib/handoff-priority";
+import {
+  getRepeatedHandoffAcknowledgement,
+  isPendingMedicalContinuation,
+} from "@/lib/handoff-continuation";
 import { reportOperationalError } from "@/lib/monitoring";
 import { resolveNluCanaryDecision } from "@/lib/nlu-decision-adapter";
 import { requestNluFrame, selectNluPriorTurns } from "@/lib/nlu-shadow";
@@ -39,10 +43,16 @@ import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply, type RouterDecision } from "@/lib/router";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
+import {
+  routeConversationV2Canary,
+  type ConversationV2LiveRouteResult,
+} from "@/lib/conversation-v2/live-runtime";
 
-type WebhookProcessOptions = {
+export type WebhookProcessOptions = {
   beforeFinalStateCheck?: (sourceUserId: string) => Promise<void>;
   includePending: boolean;
+  routeConversationV2?: typeof routeConversationV2Canary;
+  routeLegacy?: typeof routeCustomerMessage;
 };
 
 type LineMessageEvent = {
@@ -106,6 +116,14 @@ type ClassifiedDecision = {
   aiTokensIn?: number;
   aiTokensOut?: number;
   conversationState: ConversationState;
+  conversationV2DataStatus?: "partial" | "preflight" | "ready" | "unavailable" | "unresolved";
+  conversationV2FactConfirmation?: {
+    domain: "clinic" | "price" | "treatment";
+    keys: string[];
+    reason: string;
+  };
+  conversationV2SnapshotId?: string;
+  conversationV2ToolRequestType?: "persist_booking_progress" | "queue_handoff" | "request_fact_confirmation";
   decisionType: string;
   matchedKey: string;
   matchedType: string;
@@ -126,9 +144,7 @@ export function isHighRiskHandoffReason(reason: string) {
   return HIGH_RISK_HANDOFF_REASONS.has(reason);
 }
 
-export function getRepeatedHandoffAcknowledgement() {
-  return "我們已收到您補充的訊息，真人客服會一併確認並接續協助。";
-}
+export { getRepeatedHandoffAcknowledgement, isPendingMedicalContinuation };
 
 export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
   return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
@@ -322,6 +338,14 @@ export type ProcessedWebhookResult = {
   };
   bookingTreatmentAction?: "add" | "replace" | "use_current";
   conversationStatus: string;
+  conversationV2DataStatus?: "partial" | "preflight" | "ready" | "unavailable" | "unresolved";
+  conversationV2FactConfirmation?: {
+    domain: "clinic" | "price" | "treatment";
+    keys: string[];
+    reason: string;
+  };
+  conversationV2SnapshotId?: string;
+  conversationV2ToolRequestType?: "persist_booking_progress" | "queue_handoff" | "request_fact_confirmation";
   handoffReason: null | string;
   decision: {
     decisionType: string;
@@ -557,21 +581,62 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     };
   }
 
-  let routedDecision = await routeCustomerMessage({
-    conversationContext: existingContext,
-    includePending,
-    message: event.message.text ?? "",
-    now: currentTime,
-    runtimeAudienceKey: sourceUserId,
-  });
-
-  let replyText = routedDecision.replyText;
+  const customerMessage = event.message.text ?? "";
+  let routedDecision: RouterDecision;
+  let conversationV2Route: Extract<ConversationV2LiveRouteResult, { kind: "routed" }> | undefined;
+  let usedConversationV2 = false;
   let aiModel: string | undefined;
   let aiTokensIn: number | undefined;
   let aiTokensOut: number | undefined;
   let aiReplySourceUrl: string | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
+
+  const v2Candidate = await (options.routeConversationV2 ?? routeConversationV2Canary)({
+    context: existingContext,
+    eventIdentity: event.message.id ?? event.webhookEventId ?? event.replyToken ?? "missing-event-identity",
+    message: customerMessage,
+    now: currentTime,
+    recentTurns: existingContext.recentTurns,
+    pendingHandoffReason: conversationState.status === "handoff_pending"
+      ? conversationState.handoffReason
+      : undefined,
+    sourceType: event.source?.type ?? "",
+    sourceUserId,
+  });
+  if (v2Candidate.kind === "routed") {
+    conversationV2Route = v2Candidate;
+    routedDecision = v2Candidate.decision;
+    usedConversationV2 = true;
+    aiModel = v2Candidate.aiModel;
+    aiTokensIn = v2Candidate.aiTokensIn;
+    aiTokensOut = v2Candidate.aiTokensOut;
+    if (routedDecision.matchedKey === "conversation_v2:duplicate_turn") {
+      return {
+        conversationState,
+        conversationV2DataStatus: v2Candidate.dataStatus,
+        decisionType: "duplicate_event",
+        matchedKey: routedDecision.matchedKey,
+        matchedType: "system_event",
+        nextContext: existingContext,
+        replyText: "",
+        shouldIntroduce: false,
+        suppressAiFooter: true,
+        usedAiHumanizer: false,
+        usedAiReplyGenerator: false,
+      };
+    }
+  } else {
+    routedDecision = await (options.routeLegacy ?? routeCustomerMessage)({
+      conversationContext: existingContext,
+      includePending,
+      message: customerMessage,
+      now: currentTime,
+      runtimeAudienceKey: sourceUserId,
+    });
+  }
+
+  let replyText = routedDecision.replyText;
 
   // A pending handoff is a queued staff task, not a global AI pause. Still,
   // an unresolved continuation may belong to that task (for example, "it is
@@ -581,7 +646,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     conversationState.status === "handoff_pending" &&
     shouldKeepPendingHandoffContext({
       handoffReason: conversationState.handoffReason,
-      message: event.message.text ?? "",
+      message: customerMessage,
       routedDecision,
     })
   ) {
@@ -594,7 +659,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
         lastSeenAt: currentIso,
       },
       [
-        createRecentConversationTurn("user", event.message.text ?? "", getEventTurnIdentity(event)),
+        createRecentConversationTurn("user", customerMessage, getEventTurnIdentity(event)),
         createRecentConversationTurn("assistant", handoffAcknowledgement, getEventTurnIdentity(event)),
       ],
     );
@@ -623,7 +688,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   // Canary is deliberately narrow: deterministic safety/booking/price/clinic
   // routes run first, and only an otherwise-unresolved fallback may be replaced.
   // With the default off + sampleRate 0 this makes no customer-visible change.
-  if (routedDecision.decisionType === "fallback_reply") {
+  if (!usedConversationV2 && routedDecision.decisionType === "fallback_reply") {
     const config = getRuntimeConfig();
     const sampleKey = `${sourceUserId}:${event.message.id ?? event.webhookEventId ?? event.message.text ?? ""}`;
     const gatePreview = resolveNluCanaryDecision(null, sampleKey, {
@@ -631,7 +696,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       sampleRate: config.openAiNluSampleRate,
     });
     if (gatePreview.gate.allowDecision) {
-      const nluResult = await requestNluFrame(event.message.text ?? "", {
+      const nluResult = await requestNluFrame(customerMessage, {
         recentTurns: existingContext.recentTurns,
       });
       const canary = resolveNluCanaryDecision(nluResult?.frame, sampleKey, {
@@ -639,10 +704,10 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
         sampleRate: config.openAiNluSampleRate,
       });
       if (canary.decision.kind === "semantic_consultation") {
-        routedDecision = await routeCustomerMessage({
+        routedDecision = await (options.routeLegacy ?? routeCustomerMessage)({
           conversationContext: existingContext,
           includePending,
-          message: event.message.text ?? "",
+          message: customerMessage,
           now: currentTime,
           runtimeAudienceKey: sourceUserId,
           semanticTreatmentConsultation: canary.decision.semanticTreatmentConsultation,
@@ -652,17 +717,20 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     }
   }
 
-  if (routedDecision.decisionType === "handoff_pending") {
-    const nextState = recordHandoffPending(conversationState, routedDecision.matchedKey, currentIso);
+  const routedHandoffReason = routedDecision.decisionType === "handoff_pending"
+    ? routedDecision.replyPlan?.handoffReason ?? routedDecision.matchedKey
+    : undefined;
+  if (routedHandoffReason) {
+    const nextState = recordHandoffPending(conversationState, routedHandoffReason, currentIso);
 
-    if (shouldSuppressHandoffReply(conversationState, routedDecision.matchedKey)) {
+    if (shouldSuppressHandoffReply(conversationState, routedHandoffReason)) {
       conversationState = nextState;
       if (sourceUserId) {
         await saveConversationContext(routedDecision.nextContext, existingContext);
         conversationState = await persistWebhookLifecycleState({
           expectedControlRevision: loadedState.controlRevision,
           expectedUpdatedAt: loadedState.updatedAt,
-          handoffTransitionReason: routedDecision.matchedKey,
+          handoffTransitionReason: routedHandoffReason,
           proposedState: conversationState,
           receivedAt: currentIso,
         });
@@ -685,11 +753,12 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   }
 
   if (
+    !usedConversationV2 &&
     routedDecision.decisionType === "fallback_reply" &&
-    shouldAllowAiFallbackReply(event.message.text ?? "") &&
-    shouldUseControlledIntentClassifier(event.message.text ?? "")
+    shouldAllowAiFallbackReply(customerMessage) &&
+    shouldUseControlledIntentClassifier(customerMessage)
   ) {
-    const controlledIntent = await classifyControlledIntent(event.message.text ?? "");
+    const controlledIntent = await classifyControlledIntent(customerMessage);
     const config = getRuntimeConfig();
     if (controlledIntent) {
       aiModel = controlledIntent.model;
@@ -703,7 +772,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     ) {
       const scheduleDecision = await resolveDoctorScheduleDecision({
         fallbackReply: routedDecision.replyText,
-        message: event.message.text ?? "",
+        message: customerMessage,
         today: currentTime,
       });
       routedDecision = applyControlledScheduleDecision(routedDecision, scheduleDecision);
@@ -715,10 +784,10 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       controlledIntent.treatmentKey &&
       controlledIntent.concern
     ) {
-      routedDecision = await routeCustomerMessage({
+      routedDecision = await (options.routeLegacy ?? routeCustomerMessage)({
         conversationContext: existingContext,
         includePending,
-        message: event.message.text ?? "",
+        message: customerMessage,
         now: currentTime,
         runtimeAudienceKey: sourceUserId,
         semanticTreatmentConsultation: {
@@ -745,7 +814,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   });
   const dialogueState = hydrateDialogueState(synchronizedContext, conversationState, { now: currentTime });
   const rendered = await renderReplyPlan({
-    customerMessage: event.message.text ?? "",
+    customerMessage,
     dialogueState,
     footer: AI_REPLY_FOOTER,
     // Generated messages own their disclosure because the outer payload builder
@@ -777,7 +846,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       lastIntent: synchronizedContext.lastIntent,
     },
     [
-      createRecentConversationTurn("user", event.message.text ?? "", getEventTurnIdentity(event)),
+      createRecentConversationTurn("user", customerMessage, getEventTurnIdentity(event)),
       createRecentConversationTurn("assistant", replyText, getEventTurnIdentity(event)),
     ],
   );
@@ -795,7 +864,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       expectedControlRevision: loadedState.controlRevision,
       expectedUpdatedAt: loadedState.updatedAt,
       handoffTransitionReason:
-        routedDecision.decisionType === "handoff_pending" ? routedDecision.matchedKey : undefined,
+        routedHandoffReason,
       proposedState: persistedConversationState,
       receivedAt: currentIso,
     });
@@ -829,6 +898,16 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     aiTokensIn,
     aiTokensOut,
     conversationState: persistedConversationState,
+    conversationV2DataStatus: conversationV2Route?.dataStatus,
+    conversationV2FactConfirmation: conversationV2Route?.toolRequest?.type === "request_fact_confirmation"
+      ? {
+          domain: conversationV2Route.toolRequest.domain,
+          keys: [...conversationV2Route.toolRequest.keys],
+          reason: conversationV2Route.toolRequest.reason,
+        }
+      : undefined,
+    conversationV2SnapshotId: conversationV2Route?.snapshotId,
+    conversationV2ToolRequestType: conversationV2Route?.toolRequest?.type,
     decisionType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_auto_reply" : routedDecision.decisionType,
     matchedKey: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "ai_controlled_fallback" : routedDecision.matchedKey,
     matchedType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
@@ -882,6 +961,10 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       },
       bookingTreatmentAction: decision.nextContext.bookingSession?.action,
       conversationStatus: decision.conversationState.status,
+      conversationV2DataStatus: decision.conversationV2DataStatus,
+      conversationV2FactConfirmation: decision.conversationV2FactConfirmation,
+      conversationV2SnapshotId: decision.conversationV2SnapshotId,
+      conversationV2ToolRequestType: decision.conversationV2ToolRequestType,
       handoffReason: decision.conversationState.handoffReason,
       decision: {
         decisionType: decision.decisionType,

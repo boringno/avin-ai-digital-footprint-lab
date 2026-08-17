@@ -379,7 +379,11 @@ export async function hydrateConversationV2ReplyPlan(
       rendererPlan: deterministicPlan({
         action: replyPlan.action,
         dialogueAct: replyPlan.dialogueAct,
-        matchedKey: `conversation_v2:booking:${input.nextState.bookingTask.status}`,
+        matchedKey: input.nextState.bookingTask.intent === "modify"
+          ? "booking_modify_request"
+          : input.nextState.bookingTask.intent === "cancel"
+            ? "booking_cancel_request"
+            : "booking_intake",
         replyText,
       }),
       snapshotId: input.snapshot.snapshotId,

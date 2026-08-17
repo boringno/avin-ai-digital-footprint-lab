@@ -32,6 +32,29 @@ expect(text.includes("客人要求真人協助"), "notification includes localiz
 expect(text.includes("/admin/workbench") && !text.includes("conversation_id"), "notification uses workbench landing path only");
 expect(!text.includes("abc-123") && !text.includes("LINE：") && !text.includes("客人訊息："), "notification excludes identifiers and customer message");
 expect(shouldCreateHandoffTask({ decision: { decisionType: "booking_intake_reply" } }), "booking intake creates a human follow-up task");
+const factConfirmationResult = {
+  bookingDraft: { pregnancyRiskFlag: false },
+  conversationV2FactConfirmation: {
+    domain: "price",
+    keys: ["onda_pro"],
+    reason: "ambiguous",
+  },
+  conversationV2ToolRequestType: "request_fact_confirmation",
+  decision: {
+    decisionType: "pricing_auto_reply",
+    matchedKey: "conversation_v2:price_gap",
+  },
+  handoffReason: null,
+} as const;
+expect(shouldCreateHandoffTask(factConfirmationResult), "V2 fact confirmation creates a non-blocking staff task");
+expect(
+  buildHandoffReason(factConfirmationResult as never) === "fact_confirmation:price:ambiguous:onda_pro",
+  "fact confirmation preserves its domain, reason, and safe keys for staff",
+);
+expect(
+  getHandoffNotificationReasonLabel("fact_confirmation:price:ambiguous:onda_pro") === "診所資料待確認",
+  "fact confirmation notification has a staff-readable label",
+);
 expect(getHandoffNotificationReasonLabel("booking_intake") === "新預約需求", "booking intake uses Chinese label");
 expect(!shouldCreateHandoffTask({ decision: { decisionType: "clinic_info_reply" } }), "clinic information does not create a task");
 expect(shouldRefreshHandoffTask({ conversationStatus: "handoff_pending" }), "a pending conversation refreshes an existing task after a new message");
@@ -44,6 +67,17 @@ expect(buildHandoffReason({
   decision: { matchedKey: "branch_list" },
   handoffReason: "human_request",
 } as never) === "human_request", "task recovery uses the canonical handoff reason instead of the current route");
+const medicalRecoveryWithFactGap = {
+  ...factConfirmationResult,
+  conversationStatus: "handoff_pending",
+  handoffReason: "post_procedure_issue",
+} as const;
+expect(
+  shouldRecoverMissingHandoffTask(medicalRecoveryWithFactGap) &&
+    shouldCreateHandoffTask(medicalRecoveryWithFactGap) &&
+    buildHandoffReason(medicalRecoveryWithFactGap as never) === "post_procedure_issue",
+  "missing-task recovery preserves a higher-priority medical handoff over a fact confirmation",
+);
 expect(isHandoffEscalation("human_request", "post_procedure_emergency"), "an emergency upgrades an existing ordinary handoff task");
 expect(!isHandoffEscalation("post_procedure_emergency", "human_request"), "an ordinary request cannot downgrade an emergency task");
 expect(

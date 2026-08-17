@@ -112,8 +112,10 @@ async function loadEntriesForRelease(input: { now: Date; releaseId: string; tena
     pricingCampaigns: activeEntries.filter((entry) => entry.content_type === "campaign").map(toPricingCampaign),
     releaseId: input.releaseId,
     sourceStatus: "available",
-    // Suppression is derived before the time-window filter. Otherwise an
-    // expired runtime override would disappear and revive an older seed row.
+    // Suppression belongs to the currently active release and is derived
+    // before the time-window filter. An expired/tombstoned replacement in that
+    // release cannot revive its seed row, while rollback or rollout exclusion
+    // still returns callers to the documented seed baseline.
     suppressedPricingCampaignIds: Array.from(new Set(
       releaseEntries
         .filter((entry) => entry.content_type === "campaign")
@@ -204,12 +206,14 @@ export function mergeRuntimePricingCampaigns(
   overlay: RuntimeContentOverlay,
 ) {
   if (overlay.sourceStatus === "unavailable") return [];
-  const suppressed = new Set(overlay.suppressedPricingCampaignIds);
+  // Once a release is selected for this audience it is the complete,
+  // immutable authority for customer-visible prices. Falling through to a
+  // seed row omitted from that snapshot can resurrect a withdrawn amount.
+  // Rollback, no active release, and rollout exclusion all return releaseId
+  // null and therefore deliberately restore the seed baseline.
+  const source = overlay.releaseId ? overlay.pricingCampaigns : seedCampaigns;
   const byId = new Map<string, PricingCampaign>();
-  for (const campaign of [
-    ...overlay.pricingCampaigns,
-    ...seedCampaigns.filter((campaign) => !suppressed.has(campaign.id)),
-  ]) {
+  for (const campaign of source) {
     if (!byId.has(campaign.id)) byId.set(campaign.id, campaign);
   }
   return [...byId.values()];

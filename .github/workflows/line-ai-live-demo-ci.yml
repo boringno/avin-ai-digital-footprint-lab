@@ -100,6 +100,8 @@ jobs:
           npm run validate:conversation-v2-runtime-shadow
           npm run validate:conversation-v2-golden-journeys
           npm run validate:conversation-v2-clinic-facts
+          npm run validate:conversation-v2-runtime-provider
+          npm run validate:conversation-v2-canary
           npm run validate:pricing-subject
           npm run validate:treatment-packs
           npm run validate:dialogue-state

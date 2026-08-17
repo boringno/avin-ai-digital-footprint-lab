@@ -57,14 +57,43 @@ async function main() {
     treatment_name: "肉毒",
   };
   cases.push({
-    name: "runtime-tombstone-prevents-seed-revival",
+    name: "active-release-omission-prevents-seed-revival",
     passed: mergeRuntimePricingCampaigns([seedCampaign], {
       faqEntries: [],
       pricingCampaigns: [],
       releaseId: "replacement-release",
       sourceStatus: "available",
-      suppressedPricingCampaignIds: ["replace-me"],
+      suppressedPricingCampaignIds: [],
     }).length === 0,
+  });
+  const replacementCampaign = {
+    ...seedCampaign,
+    campaign_name: "runtime",
+    id: "replace-me:runtime",
+    price_text: "7,777",
+  };
+  cases.push({
+    name: "active-release-uses-only-runtime-replacement",
+    passed:
+      mergeRuntimePricingCampaigns([seedCampaign], {
+        faqEntries: [],
+        pricingCampaigns: [replacementCampaign],
+        releaseId: "replacement-release",
+        sourceStatus: "available",
+        suppressedPricingCampaignIds: [],
+      })
+        .map((entry) => `${entry.id}:${entry.price_text}`)
+        .join(",") === "replace-me:runtime:7,777",
+  });
+  cases.push({
+    name: "no-active-release-restores-seed-baseline",
+    passed: mergeRuntimePricingCampaigns([seedCampaign], {
+      faqEntries: [],
+      pricingCampaigns: [],
+      releaseId: null,
+      sourceStatus: "available",
+      suppressedPricingCampaignIds: [],
+    }).map((entry) => entry.id).join(",") === "replace-me",
   });
   cases.push({
     name: "runtime-source-error-fails-price-closed",
