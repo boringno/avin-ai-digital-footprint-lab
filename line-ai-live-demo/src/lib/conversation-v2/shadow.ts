@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
+import type { ClinicOntology } from "@/lib/clinic-ontology";
 import type { NluFrame } from "@/lib/nlu-frame";
 
 import { adaptNluFrameToConversationV2Turn } from "./nlu-adapter";
@@ -37,6 +38,9 @@ export type ConversationV2ShadowInputRecord = {
   lineTimestamp: number;
   /** Internal conversation_messages row id; used only to attach the result. */
   messageId: string;
+  /** Recognition registry captured with this exact NLU frame. */
+  ontology?: ClinicOntology;
+  ontologySnapshotId?: string;
   sourceEventId?: string;
   text: string;
 };
@@ -63,6 +67,7 @@ export type ConversationV2ShadowTurnRecord = {
   duplicate: boolean;
   legacyActionFamily: ConversationV2ActionFamily;
   messageId: string;
+  ontologySnapshotId?: string;
   replyPlan: Record<string, unknown> | null;
   stateAfter: Record<string, unknown>;
   stateBefore: Record<string, unknown>;
@@ -381,6 +386,7 @@ export function replayConversationV2Shadow(input: {
       : undefined;
     const turn = adaptNluFrameToConversationV2Turn({
       frame: record.frame,
+      ...(record.ontology ? { ontology: record.ontology } : {}),
       receivedAt: new Date(record.lineTimestamp).toISOString(),
       ...(supplemental ? { supplemental } : {}),
       text: record.text,
@@ -438,6 +444,7 @@ export function replayConversationV2Shadow(input: {
       duplicate: false,
       legacyActionFamily: legacyFamily,
       messageId: record.messageId,
+      ...(record.ontologySnapshotId ? { ontologySnapshotId: record.ontologySnapshotId } : {}),
       replyPlan: summarizeReplyPlan(step.result.replyPlan),
       stateAfter: summarizeState(step.state),
       stateBefore: summarizeState(stateBefore),

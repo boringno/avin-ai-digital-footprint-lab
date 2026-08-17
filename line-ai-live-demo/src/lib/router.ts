@@ -29,7 +29,11 @@ import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { buildHumanHandoffReply, isGeneralMedicalOutOfScope, isPlasticSurgeryRequest, isPolicyOverrideAttempt, isPostProcedureEmergency, isPostProcedureIssue, isPriceCommitmentRequest, runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import { buildPromotionCarouselMessage, type PromotionCarouselCard } from "@/lib/promotion-carousel";
 import { loadSeedData, type FaqEntry, type PregnancyRule, type PricingCampaign } from "@/lib/seed-loader";
-import { loadRuntimeContentOverlay, type RuntimeContentOverlay } from "@/lib/runtime-content-release";
+import {
+  loadRuntimeContentOverlay,
+  mergeRuntimePricingCampaigns,
+  type RuntimeContentOverlay,
+} from "@/lib/runtime-content-release";
 import {
   isPriceInquiry,
   isPromotionBrowseIntent,
@@ -3119,8 +3123,9 @@ async function routeCustomerMessageLegacy({
   }
 
   const seedData = await loadSeedData();
-  // Runtime content is an additive, reviewed overlay. Any database error or a
-  // non-selected canary audience leaves the established seed baseline intact.
+  // Runtime content owns matching campaign ids for the selected audience.
+  // Source uncertainty fails price output closed so a withdrawn seed price
+  // cannot be revived by a transient database error.
   const runtimeOverlay = runtimeContentOverlay ?? await loadRuntimeContentOverlay({
     audienceKey: runtimeAudienceKey,
     now: currentTime,
@@ -3129,7 +3134,7 @@ async function routeCustomerMessageLegacy({
   const runtimeData = {
     ...seedData,
     faqEntries: [...runtimeOverlay.faqEntries, ...seedData.faqEntries],
-    pricingCampaigns: [...runtimeOverlay.pricingCampaigns, ...seedData.pricingCampaigns],
+    pricingCampaigns: mergeRuntimePricingCampaigns(seedData.pricingCampaigns, runtimeOverlay),
   };
   const matchedEntities = updateContextEntities(trimmedMessage, nextContext);
   const matchedBranch = matchedEntities.matchedBranch;

@@ -1,4 +1,6 @@
 export * from "./engine";
+export * from "./data-gap-policy";
+export * from "./hydrate-reply-plan";
 export * from "./nlu-adapter";
 export * from "./policy";
 export * from "./repository";

@@ -4,11 +4,18 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 
 import type { AdminContentItem, AdminContentVersion } from "@/lib/admin-content-data";
-import type { EditableContentType } from "@/lib/content-versioning";
+import {
+  readCampaignApplicabilityFields,
+  readCampaignBookingFields,
+  writeCampaignApplicabilityFields,
+  writeCampaignBookingFields,
+  type EditableContentType,
+} from "@/lib/content-versioning";
 
 type DraftForm = {
   aliases: string;
   answerText: string;
+  bookingTreatments: string;
   branchScope: string;
   campaignName: string;
   changeReason: string;
@@ -16,13 +23,18 @@ type DraftForm = {
   displayName: string;
   contentType: EditableContentType;
   contentPurpose: ContentPurpose;
+  dose: string;
   endAt: string;
   fallbackMessage: string;
   priceText: string;
+  packageKey: string;
   questionPattern: string;
   startAt: string;
+  sessionCount: string;
+  startsBookingIntake: boolean;
   topic: string;
   treatmentName: string;
+  variantKey: string;
 };
 
 type ContentPurpose =
@@ -62,6 +74,7 @@ function contentPurposeFor(type: EditableContentType, payload: Record<string, un
 const emptyDraft: DraftForm = {
   aliases: "",
   answerText: "",
+  bookingTreatments: "",
   branchScope: "全館",
   campaignName: "",
   changeReason: "",
@@ -69,13 +82,18 @@ const emptyDraft: DraftForm = {
   displayName: "",
   contentType: "faq",
   contentPurpose: "faq_general",
+  dose: "",
   endAt: "",
   fallbackMessage: "請由客服協助確認最新活動內容。",
   priceText: "",
+  packageKey: "",
   questionPattern: "",
   startAt: "",
+  sessionCount: "",
+  startsBookingIntake: false,
   topic: "",
   treatmentName: "",
+  variantKey: "",
 };
 
 const statusLabels: Record<AdminContentVersion["status"], string> = {
@@ -180,9 +198,12 @@ export function ContentClient({
 
   function editFromVersion(item: AdminContentItem, version: AdminContentVersion) {
     const payload = version.payload;
+    const campaignApplicability = readCampaignApplicabilityFields(payload);
+    const campaignBooking = readCampaignBookingFields(payload);
     setDraft({
       aliases: Array.isArray(payload.aliases) ? payload.aliases.filter((value): value is string => typeof value === "string").join("、") : "",
       answerText: stringValue(payload.answer_text),
+      bookingTreatments: campaignBooking.bookingTreatments.join("、"),
       branchScope: stringValue(payload.branch_scope) || "全館",
       campaignName: stringValue(payload.campaign_name),
       changeReason: `依版本 ${version.versionNo} 更新`,
@@ -190,13 +211,18 @@ export function ContentClient({
       displayName: item.displayName,
       contentType: item.contentType,
       contentPurpose: contentPurposeFor(item.contentType, payload),
+      dose: campaignApplicability.dose,
       endAt: toDateTimeLocal(version.endAt),
       fallbackMessage: stringValue(payload.fallback_message) || "請由客服協助確認最新活動內容。",
-      priceText: stringValue(payload.price_text),
+      priceText: stringValue(payload.customer_price_text) || stringValue(payload.price_text),
+      packageKey: campaignApplicability.packageKey,
       questionPattern: stringValue(payload.question_pattern),
       startAt: toDateTimeLocal(version.startAt),
+      sessionCount: campaignApplicability.sessionCount,
+      startsBookingIntake: campaignBooking.startsBookingIntake,
       topic: stringValue(payload.topic),
       treatmentName: stringValue(payload.treatment_name),
+      variantKey: campaignApplicability.variantKey,
     });
     setEditingVersionLabel(`${item.displayName}／版本 ${version.versionNo}`);
     setNotice(`已帶入版本 ${version.versionNo}。儲存後會建立新草稿，不會覆寫舊版本。`);
@@ -262,7 +288,7 @@ function DraftEditor({ busy, draft, editingVersionLabel, onCancelEdit, onChange,
     <div style={formGridStyle}>
       <label style={labelStyle}>內容用途<select disabled={busy} onChange={(event) => { const contentPurpose = event.target.value as ContentPurpose; const option = contentPurposeOptions.find((item) => item.value === contentPurpose); onChange({ contentPurpose, contentType: option?.type ?? "faq" }); }} style={inputStyle} value={draft.contentPurpose}>{contentPurposeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       <label style={labelStyle}>中文內容名稱<input disabled={busy} onChange={(event) => onChange({ displayName: event.target.value })} placeholder="例如：高雄館停車資訊" style={inputStyle} value={draft.displayName} /></label>
-      {isFaq ? <><label style={labelStyle}>問題分類<input disabled={busy} onChange={(event) => onChange({ topic: event.target.value })} placeholder="例如: 價格說明" style={inputStyle} value={draft.topic} /></label><label style={labelStyle}>客人常見問法<input disabled={busy} onChange={(event) => onChange({ questionPattern: event.target.value })} placeholder="例如: 肉毒價格怎麼算" style={inputStyle} value={draft.questionPattern} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>核准回覆內容<textarea disabled={busy} onChange={(event) => onChange({ answerText: event.target.value })} rows={5} style={inputStyle} value={draft.answerText} /></label></> : <><label style={labelStyle}>活動名稱<input disabled={busy} onChange={(event) => onChange({ campaignName: event.target.value })} style={inputStyle} value={draft.campaignName} /></label><label style={labelStyle}>適用療程<input disabled={busy} onChange={(event) => onChange({ treatmentName: event.target.value })} style={inputStyle} value={draft.treatmentName} /></label><label style={labelStyle}>活動價格說明<input disabled={busy} onChange={(event) => onChange({ priceText: event.target.value })} style={inputStyle} value={draft.priceText} /></label><label style={labelStyle}>適用館別<input disabled={busy} onChange={(event) => onChange({ branchScope: event.target.value })} style={inputStyle} value={draft.branchScope} /></label><label style={labelStyle}>辨識別名（用頓號分隔）<input disabled={busy} onChange={(event) => onChange({ aliases: event.target.value })} style={inputStyle} value={draft.aliases} /></label><label style={labelStyle}>開始時間<input disabled={busy} onChange={(event) => onChange({ startAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.startAt} /></label><label style={labelStyle}>結束時間<input disabled={busy} onChange={(event) => onChange({ endAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.endAt} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>無法直接套用時的保守說明<textarea disabled={busy} onChange={(event) => onChange({ fallbackMessage: event.target.value })} rows={3} style={inputStyle} value={draft.fallbackMessage} /></label></>}
+      {isFaq ? <><label style={labelStyle}>問題分類<input disabled={busy} onChange={(event) => onChange({ topic: event.target.value })} placeholder="例如: 價格說明" style={inputStyle} value={draft.topic} /></label><label style={labelStyle}>客人常見問法<input disabled={busy} onChange={(event) => onChange({ questionPattern: event.target.value })} placeholder="例如: 肉毒價格怎麼算" style={inputStyle} value={draft.questionPattern} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>核准回覆內容<textarea disabled={busy} onChange={(event) => onChange({ answerText: event.target.value })} rows={5} style={inputStyle} value={draft.answerText} /></label></> : <><label style={labelStyle}>活動名稱<input disabled={busy} onChange={(event) => onChange({ campaignName: event.target.value })} style={inputStyle} value={draft.campaignName} /></label><label style={labelStyle}>適用療程<input disabled={busy} onChange={(event) => onChange({ treatmentName: event.target.value })} style={inputStyle} value={draft.treatmentName} /></label><label style={labelStyle}>活動價格說明<input disabled={busy} onChange={(event) => onChange({ priceText: event.target.value })} style={inputStyle} value={draft.priceText} /></label><label style={labelStyle}>適用館別<input disabled={busy} onChange={(event) => onChange({ branchScope: event.target.value })} style={inputStyle} value={draft.branchScope} /></label><label style={labelStyle}>方案代碼（選填）<input disabled={busy} onChange={(event) => onChange({ packageKey: event.target.value })} placeholder="例如：six_minute" style={inputStyle} value={draft.packageKey} /></label><label style={labelStyle}>規格版本（選填）<input disabled={busy} onChange={(event) => onChange({ variantKey: event.target.value })} placeholder="例如：premium" style={inputStyle} value={draft.variantKey} /></label><label style={labelStyle}>劑量／發數（選填）<input disabled={busy} onChange={(event) => onChange({ dose: event.target.value })} placeholder="例如：200發" style={inputStyle} value={draft.dose} /></label><label style={labelStyle}>堂數（選填）<input disabled={busy} min="1" onChange={(event) => onChange({ sessionCount: event.target.value })} style={inputStyle} type="number" value={draft.sessionCount} /></label><label style={labelStyle}>辨識別名（用頓號分隔）<input disabled={busy} onChange={(event) => onChange({ aliases: event.target.value })} style={inputStyle} value={draft.aliases} /></label><label style={labelStyle}>預約療程組合（用頓號分隔）<input disabled={busy} onChange={(event) => onChange({ bookingTreatments: event.target.value })} placeholder="例如：ONDA PRO、肉毒" style={inputStyle} value={draft.bookingTreatments} /></label><label style={{ ...labelStyle, alignContent: "center", gridTemplateColumns: "auto 1fr" }}><input checked={draft.startsBookingIntake} disabled={busy} onChange={(event) => onChange({ startsBookingIntake: event.target.checked })} type="checkbox" />價格回覆後接續收集預約資料</label><label style={labelStyle}>開始時間<input disabled={busy} onChange={(event) => onChange({ startAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.startAt} /></label><label style={labelStyle}>結束時間<input disabled={busy} onChange={(event) => onChange({ endAt: event.target.value })} style={inputStyle} type="datetime-local" value={draft.endAt} /></label><label style={{ ...labelStyle, gridColumn: "1 / -1" }}>無法直接套用時的保守說明<textarea disabled={busy} onChange={(event) => onChange({ fallbackMessage: event.target.value })} rows={3} style={inputStyle} value={draft.fallbackMessage} /></label></>}
       <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>修改原因<input disabled={busy} onChange={(event) => onChange({ changeReason: event.target.value })} placeholder="例如: 更新 8 月活動內容" style={inputStyle} value={draft.changeReason} /></label>
     </div>
     <button disabled={busy} onClick={onSave} style={primaryButtonStyle} type="button">{busy ? "建立中..." : "建立草稿"}</button>
@@ -287,7 +313,7 @@ function VersionCard({ actionBusy, canEdit, canPublish, canReview, item, onActio
 function buildPayload(draft: DraftForm) {
   const contentType = contentPurposeOptions.find((option) => option.value === draft.contentPurpose)?.type ?? draft.contentType;
   if (contentType === "faq") return { answer_text: draft.answerText.trim(), content_purpose: draft.contentPurpose, question_pattern: draft.questionPattern.trim(), topic: draft.topic.trim() };
-  return { aliases: draft.aliases.split(/[、,，]/).map((value) => value.trim()).filter(Boolean), branch_scope: draft.branchScope.trim(), campaign_name: draft.campaignName.trim(), content_purpose: draft.contentPurpose, fallback_message: draft.fallbackMessage.trim(), price_text: draft.priceText.trim(), treatment_name: draft.treatmentName.trim() };
+  return { aliases: draft.aliases.split(/[、,，]/).map((value) => value.trim()).filter(Boolean), branch_scope: draft.branchScope.trim(), campaign_name: draft.campaignName.trim(), content_purpose: draft.contentPurpose, customer_price_text: draft.priceText.trim(), fallback_message: draft.fallbackMessage.trim(), price_text: draft.priceText.trim(), treatment_name: draft.treatmentName.trim(), ...writeCampaignApplicabilityFields({ dose: draft.dose, packageKey: draft.packageKey, sessionCount: draft.sessionCount, variantKey: draft.variantKey }), ...writeCampaignBookingFields({ bookingTreatments: draft.bookingTreatments, startsBookingIntake: draft.startsBookingIntake }) };
 }
 function stringValue(value: unknown) { return typeof value === "string" ? value : ""; }
 function toDateTimeLocal(value: string | null) { return value ? new Date(value).toISOString().slice(0, 16) : ""; }

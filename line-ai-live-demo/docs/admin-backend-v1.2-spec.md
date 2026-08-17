@@ -184,7 +184,7 @@
 | tenant_id | text | |
 | item_id | uuid fk→content_items | |
 | version_no | int not null | 每 item 遞增 |
-| payload_json | jsonb not null | 內容本體（依 content_type 各自 schema：faq={question_pattern,answer_text,topic}；campaign={treatment_name,campaign_name,price_text,branch_scope,aliases,asset_urls[],fallback_message}） |
+| payload_json | jsonb not null | 內容本體（依 content_type 各自 schema：faq={question_pattern,answer_text,topic}；campaign={treatment_name,campaign_name,price_text,customer_price_text,branch_scope,aliases,asset_urls[],fallback_message,booking_treatments,starts_booking_intake,dose,package_key,session_count,variant_key}） |
 | status | text default 'draft' check in ('draft','in_review','published','disabled','expired') | |
 | start_at / end_at | timestamptz | 活動必填；FAQ 可 null=永久 |
 | change_reason | text not null | 變更原因（必填） |

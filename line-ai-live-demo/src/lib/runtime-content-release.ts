@@ -20,6 +20,8 @@ export type RuntimeContentOverlay = {
   faqEntries: FaqEntry[];
   pricingCampaigns: PricingCampaign[];
   releaseId: string | null;
+  sourceStatus: "available" | "not_configured" | "unavailable";
+  suppressedPricingCampaignIds: string[];
 };
 
 export async function loadRuntimeContentOverlayForRelease(input: {
@@ -27,7 +29,7 @@ export async function loadRuntimeContentOverlayForRelease(input: {
   releaseId: string;
   tenantId?: string;
 }): Promise<RuntimeContentOverlay> {
-  if (!hasSupabaseServerConfig()) return emptyOverlay();
+  if (!hasSupabaseServerConfig()) return emptyOverlay("not_configured");
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const supabase = getLatencyCriticalSupabaseServerClient();
@@ -39,7 +41,7 @@ export async function loadRuntimeContentOverlayForRelease(input: {
     .in("status", ["draft", "ready", "active"])
     .maybeSingle<ReleaseRow>()
     .retry(false);
-  if (releaseError || !release) return emptyOverlay();
+  if (releaseError || !release) return emptyOverlay("unavailable");
 
   return loadEntriesForRelease({ now: input.now, releaseId: release.id, tenantId });
 }
@@ -61,7 +63,7 @@ export async function loadRuntimeContentOverlay(input: {
   now: Date;
   tenantId?: string;
 }): Promise<RuntimeContentOverlay> {
-  if (!hasSupabaseServerConfig()) return emptyOverlay();
+  if (!hasSupabaseServerConfig()) return emptyOverlay("not_configured");
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const supabase = getLatencyCriticalSupabaseServerClient();
@@ -71,7 +73,8 @@ export async function loadRuntimeContentOverlay(input: {
     .eq("tenant_id", tenantId)
     .maybeSingle<{ active_release_id: string | null }>()
     .retry(false);
-  if (settingsError || !settings?.active_release_id) return emptyOverlay();
+  if (settingsError) return emptyOverlay("unavailable");
+  if (!settings?.active_release_id) return emptyOverlay("available");
 
   const { data: release, error: releaseError } = await supabase
     .from("runtime_content_releases")
@@ -81,8 +84,11 @@ export async function loadRuntimeContentOverlay(input: {
     .eq("status", "active")
     .maybeSingle<ReleaseRow>()
     .retry(false);
-  if (releaseError || !release || !isReleaseAudienceIncluded(input.audienceKey, release.rollout_percentage)) {
-    return emptyOverlay();
+  if (releaseError || !release) {
+    return emptyOverlay("unavailable");
+  }
+  if (!isReleaseAudienceIncluded(input.audienceKey, release.rollout_percentage)) {
+    return emptyOverlay("available");
   }
 
   return loadEntriesForRelease({ now: input.now, releaseId: release.id, tenantId });
@@ -97,18 +103,36 @@ async function loadEntriesForRelease(input: { now: Date; releaseId: string; tena
     .eq("release_id", input.releaseId)
     .returns<ReleaseEntryRow[]>()
     .retry(false);
-  if (entriesError) return emptyOverlay();
+  if (entriesError) return emptyOverlay("unavailable", input.releaseId);
 
-  const activeEntries = (entries ?? []).filter((entry) => isEntryInWindow(entry, input.now));
+  const releaseEntries = entries ?? [];
+  const activeEntries = releaseEntries.filter((entry) => isEntryInWindow(entry, input.now));
   return {
     faqEntries: activeEntries.filter((entry) => entry.content_type === "faq").map(toFaqEntry),
     pricingCampaigns: activeEntries.filter((entry) => entry.content_type === "campaign").map(toPricingCampaign),
     releaseId: input.releaseId,
+    sourceStatus: "available",
+    // Suppression is derived before the time-window filter. Otherwise an
+    // expired runtime override would disappear and revive an older seed row.
+    suppressedPricingCampaignIds: Array.from(new Set(
+      releaseEntries
+        .filter((entry) => entry.content_type === "campaign")
+        .map((entry) => entry.content_key),
+    )),
   };
 }
 
-function emptyOverlay(): RuntimeContentOverlay {
-  return { faqEntries: [], pricingCampaigns: [], releaseId: null };
+function emptyOverlay(
+  sourceStatus: RuntimeContentOverlay["sourceStatus"],
+  releaseId: string | null = null,
+): RuntimeContentOverlay {
+  return {
+    faqEntries: [],
+    pricingCampaigns: [],
+    releaseId,
+    sourceStatus,
+    suppressedPricingCampaignIds: [],
+  };
 }
 
 function isEntryInWindow(entry: ReleaseEntryRow, now: Date) {
@@ -124,6 +148,19 @@ function aliases(payload: Record<string, unknown>) {
   return Array.isArray(payload.aliases) ? payload.aliases.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).join("|") : "";
 }
 
+function listText(payload: Record<string, unknown>, key: string) {
+  if (typeof payload[key] === "string") return payload[key].trim();
+  return Array.isArray(payload[key])
+    ? payload[key].filter((value): value is string => typeof value === "string" && Boolean(value.trim())).join("|")
+    : "";
+}
+
+function numberOrText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
 function toFaqEntry(entry: ReleaseEntryRow): FaqEntry {
   return {
     answer_text: text(entry.payload_json, "answer_text"),
@@ -136,20 +173,44 @@ function toFaqEntry(entry: ReleaseEntryRow): FaqEntry {
   };
 }
 
-function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
+export function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
   return {
     approval_status: "approved",
     asset_urls: "",
     branch_scope: text(entry.payload_json, "branch_scope"),
+    booking_treatments: listText(entry.payload_json, "booking_treatments"),
     campaign_aliases: aliases(entry.payload_json),
     campaign_name: text(entry.payload_json, "campaign_name"),
+    customer_price_approval_status: "approved",
+    customer_price_text: text(entry.payload_json, "customer_price_text"),
+    dose: text(entry.payload_json, "dose"),
     end_date: entry.end_at?.slice(0, 10) ?? "",
     fallback_message: text(entry.payload_json, "fallback_message"),
     id: entry.content_key,
     is_active: "true",
     notes: `runtime_release:${entry.content_key}`,
+    package_key: text(entry.payload_json, "package_key"),
     price_text: text(entry.payload_json, "price_text"),
+    session_count: numberOrText(entry.payload_json, "session_count"),
     start_date: entry.start_at?.slice(0, 10) ?? "",
+    starts_booking_intake: text(entry.payload_json, "starts_booking_intake"),
     treatment_name: text(entry.payload_json, "treatment_name"),
+    variant_key: text(entry.payload_json, "variant_key"),
   };
+}
+
+export function mergeRuntimePricingCampaigns(
+  seedCampaigns: readonly PricingCampaign[],
+  overlay: RuntimeContentOverlay,
+) {
+  if (overlay.sourceStatus === "unavailable") return [];
+  const suppressed = new Set(overlay.suppressedPricingCampaignIds);
+  const byId = new Map<string, PricingCampaign>();
+  for (const campaign of [
+    ...overlay.pricingCampaigns,
+    ...seedCampaigns.filter((campaign) => !suppressed.has(campaign.id)),
+  ]) {
+    if (!byId.has(campaign.id)) byId.set(campaign.id, campaign);
+  }
+  return [...byId.values()];
 }

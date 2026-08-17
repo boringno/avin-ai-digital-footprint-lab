@@ -30,6 +30,7 @@ export type ConversationV2ShadowEnvelope = {
     action: Record<string, unknown> | null;
     actionFamily: string | null;
     legacyActionFamily: string;
+    ontologySnapshotId?: string;
     replyPlan: Record<string, unknown> | null;
     stateAfter: Record<string, unknown>;
     stateBefore: Record<string, unknown>;
@@ -92,6 +93,9 @@ function buildEnvelope(input: {
           action: input.turn.action,
           actionFamily: input.turn.actionFamily,
           legacyActionFamily: input.turn.legacyActionFamily,
+          ...(input.turn.ontologySnapshotId
+            ? { ontologySnapshotId: input.turn.ontologySnapshotId }
+            : {}),
           replyPlan: input.turn.replyPlan,
           stateAfter: input.turn.stateAfter,
           stateBefore: input.turn.stateBefore,

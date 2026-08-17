@@ -27,6 +27,7 @@ export const DIALOGUE_ACTS = [
 
 export type DialogueAct = (typeof DIALOGUE_ACTS)[number];
 export type ReplyRenderMode = "deterministic" | "generated";
+export type ReplyKnowledgeSource = "legacy_catalog" | "turn_snapshot";
 
 export type ReplyPlanBookingTransition = {
   action?: "add" | "replace" | "use_current";
@@ -49,12 +50,14 @@ export type ReplyPlan = {
   matchedType: string;
   nextQuestion?: string;
   knownNeeds: string[];
+  knowledgeSource: ReplyKnowledgeSource;
   prohibitedClaims: string[];
   recommendationReasons: string[];
   renderMode: ReplyRenderMode;
   requiresHuman: boolean;
   richMessages: LineReplyMessage[];
   secondaryFallbackText?: string;
+  strategyInstructions?: string[];
   suppressAiFooter: boolean;
   treatmentKeys: string[];
 };
@@ -80,11 +83,13 @@ export type LegacyReplyPlanOptions = {
   handoffReason?: string;
   nextQuestion?: string;
   knownNeeds?: readonly string[];
+  knowledgeSource?: ReplyKnowledgeSource;
   prohibitedClaims?: readonly string[];
   recommendationReasons?: readonly string[];
   renderMode?: ReplyRenderMode;
   requiresHuman?: boolean;
   secondaryFallbackText?: string;
+  strategyInstructions?: readonly string[];
   treatmentKeys?: readonly string[];
 };
 
@@ -237,12 +242,14 @@ export function legacyDecisionToReplyPlan(
     matchedType: input.matchedType,
     nextQuestion: options.nextQuestion?.trim() || undefined,
     knownNeeds: normalizeStrings(options.knownNeeds),
+    knowledgeSource: options.knowledgeSource ?? "legacy_catalog",
     prohibitedClaims: normalizeStrings(options.prohibitedClaims ?? DEFAULT_PROHIBITED_CLAIMS),
     recommendationReasons: normalizeStrings(options.recommendationReasons),
     renderMode: hardDeterministic ? "deterministic" : options.renderMode ?? "generated",
     requiresHuman,
     richMessages,
     secondaryFallbackText: options.secondaryFallbackText?.trim() || undefined,
+    strategyInstructions: normalizeStrings(options.strategyInstructions),
     suppressAiFooter: input.suppressAiFooter === true,
     treatmentKeys: normalizeStrings(options.treatmentKeys),
   };
@@ -280,6 +287,13 @@ export function shouldUseDeterministicReply(plan: ReplyPlan) {
 }
 
 export function buildApprovedKnowledge(plan: ReplyPlan) {
+  if (plan.knowledgeSource === "turn_snapshot") {
+    return normalizeStrings([
+      ...plan.approvedKnowledge,
+      ...plan.recommendationReasons,
+      ...plan.exactPriceFacts,
+    ]).join("\n").trim();
+  }
   const treatmentKnowledge = plan.treatmentKeys
     .map((key) => resolveTreatmentKnowledgeByKey(key))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -346,6 +360,7 @@ export function buildReplyPlanGuidance(plan: ReplyPlan) {
     `本輪目標：${DIALOGUE_ACT_OBJECTIVES[plan.dialogueAct]}`,
     plan.knownNeeds.length > 0 ? `已知需求：${plan.knownNeeds.join("、")}` : "",
     plan.nextQuestion ? `本輪完成回答後可追問：${plan.nextQuestion}` : "",
+    ...(plan.strategyInstructions ?? []),
   ]).join("\n").trim();
 }
 

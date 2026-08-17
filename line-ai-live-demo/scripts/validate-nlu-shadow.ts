@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import { clinicOntology } from "@/lib/clinic-ontology";
 import {
   buildNluRequestInput,
   captureNluShadowObservation,
@@ -130,6 +131,35 @@ try {
 }
 if (!rejectedDecisionMode) throw new Error("unimplemented decision mode must be rejected");
 delete process.env.OPENAI_NLU_MODE;
+
+const futureOntology = {
+  ...clinicOntology,
+  treatments: [
+    ...clinicOntology.treatments,
+    { aliases: ["未來儀器"], category: "energy" as const, key: "future_device", name: "未來儀器" },
+  ],
+};
+let storedOntologyKey = "";
+let storedOntologySnapshotId = "";
+await captureNluShadowObservation(
+  {
+    decision,
+    message: "想了解未來儀器",
+    messageId: "future-message",
+    ontology: futureOntology,
+    ontologySnapshotId: "catalog-future-v1",
+  },
+  {
+    run: async () => ({ confidence: 0.9, deterministicDecision: decision, divergenceCategories: [], errorCode: null, frame: null, latencyMs: 1, model: "test", promptVersion: "test", tokensIn: 0, tokensOut: 0 }),
+    store: async (value) => {
+      storedOntologyKey = value.ontology?.treatments.at(-1)?.key ?? "";
+      storedOntologySnapshotId = value.ontologySnapshotId ?? "";
+    },
+  },
+);
+if (storedOntologyKey !== "future_device" || storedOntologySnapshotId !== "catalog-future-v1") {
+  throw new Error("shadow capture must bind the inference frame to its recognition snapshot");
+}
 
 let continuedAfterStoreFailure = false;
 let capturedPriorTurn = "";
