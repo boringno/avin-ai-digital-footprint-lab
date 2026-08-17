@@ -1,3 +1,4 @@
+import type { ClinicOntology } from "@/lib/clinic-ontology";
 import { parseNluFrame, type NluFrame } from "@/lib/nlu-frame";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
@@ -20,6 +21,12 @@ export type NluShadowObservation = {
   latencyMs: number;
   messageId: string;
   model: string;
+  /**
+   * The exact recognition registry used for this inference. It contains no
+   * prices or customer content and is compacted before persistence.
+   */
+  ontology?: ClinicOntology;
+  ontologySnapshotId?: string;
   promptVersion: string;
   tokensIn: number;
   tokensOut: number;
@@ -32,6 +39,8 @@ export type NluShadowTimelineRecord = {
   lineMessageId?: string;
   lineTimestamp: number;
   messageId: string;
+  ontology?: ClinicOntology;
+  ontologySnapshotId?: string;
   sourceEventId?: string;
   text: string;
 };
@@ -69,6 +78,24 @@ type NluShadowQueryResult<T> = {
   error: NluShadowQueryError | null;
 };
 
+type StoredOntologyRegistry = {
+  areas: Array<{ key: string; label: string }>;
+  concerns: Array<{ areaKeys: string[]; key: string }>;
+  schemaVersion: 1;
+  treatments: Array<{
+    category: ClinicOntology["treatments"][number]["category"];
+    key: string;
+    name: string;
+  }>;
+};
+
+type StoredNluFrameEnvelope = {
+  frame: unknown;
+  ontology: StoredOntologyRegistry;
+  ontologySnapshotId: string | null;
+  schemaVersion: 1;
+};
+
 export type NluShadowTimelineQueryBuilder = {
   eq(column: string, value: unknown): NluShadowTimelineQueryBuilder;
   in(column: string, values: readonly string[]): PromiseLike<NluShadowQueryResult<unknown[]>>;
@@ -84,6 +111,116 @@ export type NluShadowTimelineQueryClient = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && Boolean(value.trim());
+}
+
+function parseStringArray(value: unknown) {
+  return Array.isArray(value) && value.every(isNonEmptyString)
+    ? [...new Set(value.map((item) => item.trim()))]
+    : null;
+}
+
+function compactOntology(ontology: ClinicOntology): StoredOntologyRegistry {
+  return {
+    areas: ontology.areas.map(({ key, label }) => ({ key, label })),
+    concerns: ontology.concerns.map(({ areaKeys, key }) => ({ areaKeys: [...areaKeys], key })),
+    schemaVersion: 1,
+    treatments: ontology.treatments.map(({ category, key, name }) => ({ category, key, name })),
+  };
+}
+
+function parseStoredOntology(value: unknown): ClinicOntology | null {
+  if (!isRecord(value)
+    || value.schemaVersion !== 1
+    || !Array.isArray(value.areas)
+    || !Array.isArray(value.concerns)
+    || !Array.isArray(value.treatments)) {
+    return null;
+  }
+  const areas = value.areas.flatMap((item) => {
+    if (!isRecord(item) || !isNonEmptyString(item.key) || !isNonEmptyString(item.label)) return [];
+    return [{ key: item.key.trim(), keywords: [], label: item.label.trim() }];
+  });
+  const areaKeys = new Set(areas.map((item) => item.key));
+  const concerns = value.concerns.flatMap((item) => {
+    if (!isRecord(item) || !isNonEmptyString(item.key)) return [];
+    const parsedAreaKeys = parseStringArray(item.areaKeys);
+    if (!parsedAreaKeys || parsedAreaKeys.some((key) => !areaKeys.has(key))) return [];
+    return [{
+      areaKeys: parsedAreaKeys,
+      key: item.key.trim(),
+      keywords: [],
+      recommendedTreatmentKeys: [],
+      summary: "",
+    }];
+  });
+  const categories = new Set(["energy", "injectable", "laser", "skin_care", "surgery"]);
+  const treatments = value.treatments.flatMap((item) => {
+    if (!isRecord(item)
+      || !isNonEmptyString(item.key)
+      || !isNonEmptyString(item.name)
+      || !isNonEmptyString(item.category)
+      || !categories.has(item.category)) {
+      return [];
+    }
+    return [{
+      aliases: [],
+      category: item.category as ClinicOntology["treatments"][number]["category"],
+      key: item.key.trim(),
+      name: item.name.trim(),
+    }];
+  });
+  if (areas.length !== value.areas.length
+    || concerns.length !== value.concerns.length
+    || treatments.length !== value.treatments.length
+    || new Set(areas.map((item) => item.key)).size !== areas.length
+    || new Set(concerns.map((item) => item.key)).size !== concerns.length
+    || new Set(treatments.map((item) => item.key)).size !== treatments.length) {
+    return null;
+  }
+  return {
+    areas: areas as ClinicOntology["areas"],
+    concerns: concerns as ClinicOntology["concerns"],
+    treatments,
+  };
+}
+
+export function encodeNluShadowFrameForStorage(input: NluShadowObservation): unknown {
+  if (!input.ontology) return input.frame;
+  return {
+    frame: input.frame,
+    ontology: compactOntology(input.ontology),
+    ontologySnapshotId: isNonEmptyString(input.ontologySnapshotId)
+      ? input.ontologySnapshotId.trim()
+      : null,
+    schemaVersion: 1,
+  } satisfies StoredNluFrameEnvelope;
+}
+
+function decodeNluShadowFrameFromStorage(value: unknown): {
+  frame: NluFrame;
+  ontology?: ClinicOntology;
+  ontologySnapshotId?: string;
+} | null {
+  if (!isRecord(value) || !("frame" in value) || !("ontology" in value)) {
+    const frame = parseNluFrame(value);
+    return frame ? { frame } : null;
+  }
+  if (value.schemaVersion !== 1) return null;
+  const ontology = parseStoredOntology(value.ontology);
+  if (!ontology) return null;
+  const frame = parseNluFrame(value.frame, ontology);
+  if (!frame) return null;
+  return {
+    frame,
+    ontology,
+    ...(isNonEmptyString(value.ontologySnapshotId)
+      ? { ontologySnapshotId: value.ontologySnapshotId.trim() }
+      : {}),
+  };
 }
 
 function parseCustomerMessageRow(value: unknown): CustomerMessageRow | null {
@@ -161,17 +298,21 @@ export function buildNluShadowConversationTimeline(input: {
   );
   const records = messages.flatMap((message) => {
     const observation = observations.get(message.id);
-    const frame = parseNluFrame(observation?.nlu_frame);
-    if (!observation || !frame) return [];
+    const storedFrame = decodeNluShadowFrameFromStorage(observation?.nlu_frame);
+    if (!observation || !storedFrame) return [];
     return [{
       divergenceCategories: Array.isArray(observation.divergence_categories)
         ? observation.divergence_categories.filter((value): value is string => typeof value === "string")
         : [],
-      frame,
+      frame: storedFrame.frame,
       legacyDecision: parseDecision(observation.deterministic_decision),
       ...(message.line_message_id ? { lineMessageId: message.line_message_id } : {}),
       lineTimestamp: lineTimestamp(message),
       messageId: message.id,
+      ...(storedFrame.ontology ? { ontology: storedFrame.ontology } : {}),
+      ...(storedFrame.ontologySnapshotId
+        ? { ontologySnapshotId: storedFrame.ontologySnapshotId }
+        : {}),
       ...(message.source_event_id ? { sourceEventId: message.source_event_id } : {}),
       text: message.content,
     }];
@@ -279,7 +420,7 @@ export async function storeNluShadowObservation(input: NluShadowObservation) {
       latency_ms: input.latencyMs,
       message_id: input.messageId,
       model: input.model,
-      nlu_frame: input.frame,
+      nlu_frame: encodeNluShadowFrameForStorage(input),
       prompt_version: input.promptVersion,
       tenant_id: TENANT_ID,
       tokens_in: input.tokensIn,

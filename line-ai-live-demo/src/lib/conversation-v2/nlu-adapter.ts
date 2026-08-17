@@ -2,7 +2,7 @@ import {
   CONTROLLED_INTENTS,
   type ControlledIntent,
 } from "@/lib/ai-intent-classifier";
-import { clinicOntology } from "@/lib/clinic-ontology";
+import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
 import {
   parseNluFrame,
   type NluFrame,
@@ -41,14 +41,6 @@ const BOOKING_FIELD_KEYS = new Set([
 const OPTION_ENTITIES = new Set(["area", "concern", "treatment", "answer"]);
 const CLARIFICATION_SLOTS = new Set(["area", "concern", "treatment"]);
 const INTENT_KEYS = new Set<string>(CONTROLLED_INTENTS);
-const TREATMENT_KEYS = new Set(clinicOntology.treatments.map((item) => item.key));
-const CONCERN_KEYS = new Set(clinicOntology.concerns.map((item) => item.key));
-const AREA_KEYS = new Set<string>(clinicOntology.areas.map((item) => item.key));
-const TREATMENT_LABELS = new Map(clinicOntology.treatments.map((item) => [item.key, item.name]));
-const AREA_LABELS = new Map<string, string>(
-  clinicOntology.areas.map((item) => [item.key, item.label]),
-);
-const CONCERNS_BY_KEY = new Map(clinicOntology.concerns.map((item) => [item.key, item]));
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
 export const CONVERSATION_V2_NLU_MIN_CONFIDENCE = 0.65;
@@ -69,6 +61,7 @@ export type ConversationV2NluSupplement = {
 
 export type ConversationV2NluAdapterInput = {
   frame: NluFrame | null | undefined;
+  ontology?: ClinicOntology;
   receivedAt: string;
   supplemental?: ConversationV2NluSupplement;
   text: string;
@@ -99,6 +92,26 @@ type EntityAdaptation = {
   valid: boolean;
 };
 
+type EntityRegistry = {
+  areaKeys: Set<string>;
+  areaLabels: Map<string, string>;
+  concernKeys: Set<string>;
+  concernsByKey: Map<string, ClinicOntology["concerns"][number]>;
+  treatmentKeys: Set<string>;
+  treatmentLabels: Map<string, string>;
+};
+
+function createEntityRegistry(ontology: ClinicOntology): EntityRegistry {
+  return {
+    areaKeys: new Set(ontology.areas.map((item) => item.key)),
+    areaLabels: new Map(ontology.areas.map((item) => [item.key, item.label])),
+    concernKeys: new Set(ontology.concerns.map((item) => item.key)),
+    concernsByKey: new Map(ontology.concerns.map((item) => [item.key, item])),
+    treatmentKeys: new Set(ontology.treatments.map((item) => item.key)),
+    treatmentLabels: new Map(ontology.treatments.map((item) => [item.key, item.name])),
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -126,7 +139,7 @@ function cleanOptionalStringField(
   return true;
 }
 
-function normalizeBookingFields(value: unknown) {
+function normalizeBookingFields(value: unknown, registry: EntityRegistry) {
   if (value === undefined) {
     return { valid: true, value: undefined as Partial<BookingDraft> | undefined };
   }
@@ -170,7 +183,7 @@ function normalizeBookingFields(value: unknown) {
     if (
       !Array.isArray(value.treatmentKeys) ||
       !value.treatmentKeys.every(
-        (item) => typeof item === "string" && TREATMENT_KEYS.has(item),
+        (item) => typeof item === "string" && registry.treatmentKeys.has(item),
       )
     ) {
       return { valid: false, value: undefined };
@@ -181,7 +194,7 @@ function normalizeBookingFields(value: unknown) {
   return { valid: true, value: fields };
 }
 
-function normalizeBooking(value: unknown) {
+function normalizeBooking(value: unknown, registry: EntityRegistry) {
   if (value === undefined) {
     return { valid: true, value: undefined as BookingUnderstanding | undefined };
   }
@@ -194,7 +207,7 @@ function normalizeBooking(value: unknown) {
     return { valid: false, value: undefined };
   }
 
-  const fields = normalizeBookingFields(value.fields);
+  const fields = normalizeBookingFields(value.fields, registry);
   if (!fields.valid) return { valid: false, value: undefined };
   return {
     valid: true,
@@ -331,13 +344,13 @@ function normalizeHardDecision(value: unknown) {
   };
 }
 
-function normalizeSupplement(value: unknown): NormalizedSupplement {
+function normalizeSupplement(value: unknown, registry: EntityRegistry): NormalizedSupplement {
   if (value === undefined) return { valid: true };
   if (!isRecord(value)) return { valid: false };
   if (Object.keys(value).some((key) => !["booking", "clarification", "hardDecision", "selection"].includes(key))) {
     return { valid: false };
   }
-  const booking = normalizeBooking(value.booking);
+  const booking = normalizeBooking(value.booking, registry);
   const clarification = normalizeClarification(value.clarification);
   const hardDecision = normalizeHardDecision(value.hardDecision);
   const selection = normalizeSelection(value.selection);
@@ -386,16 +399,20 @@ function hasAnySafetySignal(safety: NluSafetyFrame) {
   return Object.values(safety).some(Boolean);
 }
 
-function validNegationKey(type: NluFrame["negated"][number]["type"], key: string) {
+function validNegationKey(
+  registry: EntityRegistry,
+  type: NluFrame["negated"][number]["type"],
+  key: string,
+) {
   switch (type) {
     case "area":
-      return AREA_KEYS.has(key);
+      return registry.areaKeys.has(key);
     case "concern":
-      return CONCERN_KEYS.has(key);
+      return registry.concernKeys.has(key);
     case "intent":
       return INTENT_KEYS.has(key);
     case "treatment":
-      return TREATMENT_KEYS.has(key);
+      return registry.treatmentKeys.has(key);
   }
 }
 
@@ -409,8 +426,9 @@ function addMention(
   }
 }
 
-function adaptEntities(frame: NluFrame): EntityAdaptation {
-  const validNegations = frame.negated.every((item) => validNegationKey(item.type, item.key));
+function adaptEntities(frame: NluFrame, registry: EntityRegistry): EntityAdaptation {
+  const validNegations = frame.negated.every((item) =>
+    validNegationKey(registry, item.type, item.key));
   const negatedTreatments = new Set(
     frame.negated.filter((item) => item.type === "treatment").map((item) => item.key),
   );
@@ -426,52 +444,52 @@ function adaptEntities(frame: NluFrame): EntityAdaptation {
   let valid = validNegations;
 
   for (const treatmentKey of frame.treatments) {
-    if (!TREATMENT_KEYS.has(treatmentKey)) {
+    if (!registry.treatmentKeys.has(treatmentKey)) {
       valid = false;
       continue;
     }
     addMention(treatments, {
       confidence: frame.confidence,
       key: treatmentKey,
-      label: TREATMENT_LABELS.get(treatmentKey),
+      label: registry.treatmentLabels.get(treatmentKey),
       polarity: negatedTreatments.has(treatmentKey) ? "negated" : "affirmed",
       resolution: "resolved",
     });
   }
   for (const treatmentKey of negatedTreatments) {
-    if (!TREATMENT_KEYS.has(treatmentKey)) continue;
+    if (!registry.treatmentKeys.has(treatmentKey)) continue;
     addMention(treatments, {
       confidence: frame.confidence,
       key: treatmentKey,
-      label: TREATMENT_LABELS.get(treatmentKey),
+      label: registry.treatmentLabels.get(treatmentKey),
       polarity: "negated",
       resolution: "resolved",
     });
   }
 
   for (const areaKey of frame.areas) {
-    if (!AREA_KEYS.has(areaKey)) {
+    if (!registry.areaKeys.has(areaKey)) {
       valid = false;
       continue;
     }
     addMention(areas, {
       confidence: frame.confidence,
       key: areaKey,
-      label: AREA_LABELS.get(areaKey),
+      label: registry.areaLabels.get(areaKey),
       polarity: negatedAreas.has(areaKey) ? "negated" : "affirmed",
       resolution: "resolved",
     });
   }
 
   for (const concernFrame of frame.concerns) {
-    const concern = CONCERNS_BY_KEY.get(concernFrame.key);
+    const concern = registry.concernsByKey.get(concernFrame.key);
     if (!concern) {
       valid = false;
       continue;
     }
     if (
       concernFrame.area !== null &&
-      (!AREA_KEYS.has(concernFrame.area) ||
+      (!registry.areaKeys.has(concernFrame.area) ||
         !concern.areaKeys.some((areaKey) => areaKey === concernFrame.area))
     ) {
       valid = false;
@@ -488,14 +506,14 @@ function adaptEntities(frame: NluFrame): EntityAdaptation {
       addMention(areas, {
         confidence: frame.confidence,
         key: concernFrame.area,
-        label: AREA_LABELS.get(concernFrame.area),
+        label: registry.areaLabels.get(concernFrame.area),
         polarity: negatedAreas.has(concernFrame.area) ? "negated" : "affirmed",
         resolution: "resolved",
       });
     }
   }
   for (const concernKey of negatedConcerns) {
-    if (!CONCERN_KEYS.has(concernKey)) continue;
+    if (!registry.concernKeys.has(concernKey)) continue;
     addMention(concerns, {
       confidence: frame.confidence,
       key: concernKey,
@@ -504,11 +522,11 @@ function adaptEntities(frame: NluFrame): EntityAdaptation {
     });
   }
   for (const areaKey of negatedAreas) {
-    if (!AREA_KEYS.has(areaKey)) continue;
+    if (!registry.areaKeys.has(areaKey)) continue;
     addMention(areas, {
       confidence: frame.confidence,
       key: areaKey,
-      label: AREA_LABELS.get(areaKey),
+      label: registry.areaLabels.get(areaKey),
       polarity: "negated",
       resolution: "resolved",
     });
@@ -756,9 +774,11 @@ export function adaptNluFrameToConversationV2Turn(
   input: ConversationV2NluAdapterInput,
 ): AdaptedConversationV2Turn {
   assertEnvelope(input);
+  const ontology = input.ontology ?? clinicOntology;
+  const registry = createEntityRegistry(ontology);
   const safetySignals = extractSafetySignals(input.frame);
-  const parsedFrame = parseNluFrame(input.frame);
-  const supplemental = normalizeSupplement(input.supplemental);
+  const parsedFrame = parseNluFrame(input.frame, ontology);
+  const supplemental = normalizeSupplement(input.supplemental, registry);
 
   if (!parsedFrame) {
     const deterministicSpeechAct = supplemental.valid
@@ -791,7 +811,7 @@ export function adaptNluFrameToConversationV2Turn(
     };
   }
 
-  const entities = adaptEntities(parsedFrame);
+  const entities = adaptEntities(parsedFrame, registry);
   const resolution = resolveSpeechAct({
     entities,
     frame: parsedFrame,

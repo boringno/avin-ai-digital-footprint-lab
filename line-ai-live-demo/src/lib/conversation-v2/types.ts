@@ -4,6 +4,10 @@ import type {
   DialogueSpeechAct,
   QuestionAspect,
 } from "../dialogue-semantics";
+import type {
+  PriceApplicabilityDimensions,
+  PriceQuery,
+} from "../clinic-facts";
 
 export const CONVERSATION_V2_SCHEMA_VERSION = 2 as const;
 
@@ -198,6 +202,8 @@ export type TurnUnderstanding = {
   concerns: EntityMention[];
   confidence: number;
   dialogueReference: DialogueReference;
+  /** Structured price qualifiers extracted by NLU or a deterministic tool. */
+  priceApplicability?: PriceApplicabilityDimensions;
   questionAspect: QuestionAspect;
   receivedAt: string;
   selection?: SelectionUnderstanding;
@@ -258,6 +264,7 @@ export type DialoguePolicyAction =
       type: "answer_clinic_info";
     })
   | (PolicyActionBase & {
+      priceApplicability?: PriceApplicabilityDimensions;
       priceKind: "campaign" | "regular" | "unspecified";
       treatmentKeys: string[];
       type: "answer_price";
@@ -318,10 +325,7 @@ export type DeterministicReplyPlan = ReplyPlanBase & {
     | "handoff";
   mode: "deterministic";
   nextQuestion?: string;
-  pricingQuery?: {
-    kind: "campaign" | "regular" | "unspecified";
-    treatmentKeys: string[];
-  };
+  pricingQuery?: PriceQuery;
   templateKey: string;
   templateVariables: Record<string, string | string[]>;
 };

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { clinicOntology } from "../src/lib/clinic-ontology";
 import type { NluFrame } from "../src/lib/nlu-frame";
 import {
   adaptNluFrameToSemanticConsultation,
@@ -46,6 +47,40 @@ function validateSingleClearCandidate() {
     "ND1: adapter output must use ontology keys",
   );
   assert.equal(result.confidence, 0.97, "ND1: accepted confidence must remain available for audit");
+}
+
+function validateInjectedRecognitionSnapshot() {
+  const ontology = {
+    ...clinicOntology,
+    concerns: [
+      ...clinicOntology.concerns,
+      {
+        areaKeys: ["face" as const],
+        key: "future_concern",
+        keywords: ["未來困擾"],
+        recommendedTreatmentKeys: ["future_device"],
+        summary: "fixture",
+      },
+    ],
+    treatments: [
+      ...clinicOntology.treatments,
+      { aliases: ["未來儀器"], category: "energy" as const, key: "future_device", name: "未來儀器" },
+    ],
+  };
+  const dynamicFrame = frame({
+    concerns: [{ area: "face", key: "future_concern" }],
+    treatments: ["future_device"],
+  });
+  assert.equal(
+    adaptNluFrameToSemanticConsultation(dynamicFrame).kind,
+    "abstain",
+    "a future key must not be accepted without its pinned recognition snapshot",
+  );
+  assert.equal(
+    adaptNluFrameToSemanticConsultation(dynamicFrame, { ontology }).kind,
+    "semantic_consultation",
+    "the decision adapter must use the same injected recognition snapshot as NLU",
+  );
 }
 
 function validateFailClosedFrames() {
@@ -137,6 +172,7 @@ function validateRuntimeDecisionFlagDefaultsOff() {
 }
 
 validateSingleClearCandidate();
+validateInjectedRecognitionSnapshot();
 validateFailClosedFrames();
 validateStableGate();
 validateCombinedCanaryResolution();

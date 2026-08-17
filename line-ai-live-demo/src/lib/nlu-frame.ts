@@ -1,5 +1,5 @@
 import { CONTROLLED_INTENTS, type ControlledIntent } from "@/lib/ai-intent-classifier";
-import { clinicOntology } from "@/lib/clinic-ontology";
+import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
 import {
   CONVERSATION_MOVES,
   DEFAULT_NLU_DIALOGUE_FRAME,
@@ -121,16 +121,19 @@ function inferLegacyDialogueFrame(input: {
   return { ...DEFAULT_NLU_DIALOGUE_FRAME };
 }
 
-export function parseNluFrame(value: unknown): NluFrame | null {
+export function parseNluFrame(
+  value: unknown,
+  ontology: ClinicOntology = clinicOntology,
+): NluFrame | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const confidence = record.confidence;
   if (typeof confidence !== "number" || confidence < 0 || confidence > 1) return null;
 
   const intentKeys = new Set<string>(CONTROLLED_INTENTS);
-  const treatmentKeys = new Set(clinicOntology.treatments.map((item) => item.key));
-  const concernKeys = new Set(clinicOntology.concerns.map((item) => item.key));
-  const areaKeys = new Set<string>(clinicOntology.areas.map((item) => item.key));
+  const treatmentKeys = new Set(ontology.treatments.map((item) => item.key));
+  const concernKeys = new Set(ontology.concerns.map((item) => item.key));
+  const areaKeys = new Set<string>(ontology.areas.map((item) => item.key));
   const intents = uniqueStrings(record.intents, intentKeys) as ControlledIntent[] | null;
   const treatments = uniqueStrings(record.treatments, treatmentKeys);
   const areas = record.areas === undefined &&
@@ -194,11 +197,11 @@ export function parseNluFrame(value: unknown): NluFrame | null {
   };
 }
 
-export function buildNluInstructions() {
-  const ontology = {
-    areas: clinicOntology.areas.map(({ key, keywords, label }) => ({ key, keywords, label })),
-    concerns: clinicOntology.concerns.map(({ areaKeys, key, keywords }) => ({ areaKeys, key, keywords })),
-    treatments: clinicOntology.treatments.map(({ aliases, key, name }) => ({ aliases, key, name })),
+export function buildNluInstructions(sourceOntology: ClinicOntology = clinicOntology) {
+  const promptOntology = {
+    areas: sourceOntology.areas.map(({ key, keywords, label }) => ({ key, keywords, label })),
+    concerns: sourceOntology.concerns.map(({ areaKeys, key, keywords }) => ({ areaKeys, key, keywords })),
+    treatments: sourceOntology.treatments.map(({ aliases, key, name }) => ({ aliases, key, name })),
   };
 
   return [
@@ -213,16 +216,16 @@ export function buildNluInstructions() {
     "『只做 A』用 prefer_single；『不要 B』用 reject 並把 B 放入 negated。不要因疑問句中的『不是』誤判為拒絕。",
     "dialogue.focus 準確標記本輪真正問的面向；price_regular／price_campaign 只分類價格類型，不提供數字。",
     `intents 只能使用：${CONTROLLED_INTENTS.join(", ")}。`,
-    `ontology=${JSON.stringify(ontology)}`,
+    `ontology=${JSON.stringify(promptOntology)}`,
     `只輸出 schemaVersion=${NLU_FRAME_SCHEMA_VERSION} 的 JSON；不得省略 dialogue、safety 或任何欄位。`,
     '{"schemaVersion":2,"intents":[],"treatments":[],"areas":[],"concerns":[],"negated":[],"dialogue":{"speechAct":"unknown","focus":"none","move":"none","reference":"none"},"safety":{"pregnancyNursing":false,"postTreatmentRisk":false,"complaint":false,"humanRequest":false},"confidence":0}',
   ].join("\n");
 }
 
-export function buildNluResponseFormat() {
-  const treatmentKeys = clinicOntology.treatments.map((item) => item.key);
-  const concernKeys = clinicOntology.concerns.map((item) => item.key);
-  const areaKeys = clinicOntology.areas.map((item) => item.key);
+export function buildNluResponseFormat(sourceOntology: ClinicOntology = clinicOntology) {
+  const treatmentKeys = sourceOntology.treatments.map((item) => item.key);
+  const concernKeys = sourceOntology.concerns.map((item) => item.key);
+  const areaKeys = sourceOntology.areas.map((item) => item.key);
 
   return {
     format: {

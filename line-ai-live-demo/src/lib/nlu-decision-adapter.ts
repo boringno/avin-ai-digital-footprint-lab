@@ -1,4 +1,4 @@
-import { clinicOntology } from "@/lib/clinic-ontology";
+import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
 import type { NluFrame } from "@/lib/nlu-frame";
 
 export type NluDecisionMode = "canary" | "off" | "shadow";
@@ -56,6 +56,7 @@ export type NluDecisionAdapterResult =
 
 export type NluDecisionAdapterOptions = {
   minimumConfidence?: number;
+  ontology?: ClinicOntology;
 };
 
 export const DEFAULT_NLU_DECISION_MIN_CONFIDENCE = 0.9;
@@ -128,16 +129,17 @@ export function adaptNluFrameToSemanticConsultation(
   if (frame.treatments.length !== 1) return { kind: "abstain", reason: "ambiguous_treatment" };
   if (frame.concerns.length !== 1) return { kind: "abstain", reason: "ambiguous_concern" };
 
+  const ontology = options.ontology ?? clinicOntology;
   const treatmentKey = frame.treatments[0];
   const concernFrame = frame.concerns[0];
-  const treatment = clinicOntology.treatments.find((candidate) => candidate.key === treatmentKey);
+  const treatment = ontology.treatments.find((candidate) => candidate.key === treatmentKey);
   if (!treatment) return { kind: "abstain", reason: "unknown_treatment" };
 
-  const concern = clinicOntology.concerns.find((candidate) => candidate.key === concernFrame.key);
+  const concern = ontology.concerns.find((candidate) => candidate.key === concernFrame.key);
   if (!concern) return { kind: "abstain", reason: "unknown_concern" };
 
   if (concernFrame.area !== null) {
-    const areaExists = clinicOntology.areas.some((candidate) => candidate.key === concernFrame.area);
+    const areaExists = ontology.areas.some((candidate) => candidate.key === concernFrame.area);
     if (!areaExists) return { kind: "abstain", reason: "unknown_area" };
     if (!concern.areaKeys.some((areaKey) => areaKey === concernFrame.area)) {
       return { kind: "abstain", reason: "concern_area_mismatch" };

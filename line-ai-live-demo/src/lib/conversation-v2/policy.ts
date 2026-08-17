@@ -533,6 +533,9 @@ function deterministicPlan(
         dialogueAct: "answer_price",
         mode: "deterministic",
         pricingQuery: {
+          ...(action.priceApplicability
+            ? { applicability: { ...action.priceApplicability } }
+            : {}),
           kind: action.priceKind,
           treatmentKeys: [...action.treatmentKeys],
         },
@@ -683,6 +686,25 @@ function priceKindForTurn(turn: TurnUnderstanding) {
   return "unspecified" as const;
 }
 
+function priceApplicabilityForTurn(
+  state: ConversationV2State,
+  turn: TurnUnderstanding,
+) {
+  const branch =
+    turn.priceApplicability?.branch?.trim() ||
+    turn.booking?.fields?.branch?.trim() ||
+    state.bookingTask.draft.branch?.trim();
+  const applicability = {
+    ...turn.priceApplicability,
+    ...(branch ? { branch } : {}),
+  };
+  return Object.values(applicability).some(
+    (value) => value !== undefined && value !== "",
+  )
+    ? applicability
+    : undefined;
+}
+
 function clinicTopicForTurn(turn: TurnUnderstanding) {
   const topics = {
     branch_address: "address",
@@ -789,6 +811,7 @@ export function evaluateDialoguePolicy(
         }
       : {
           at: turn.receivedAt,
+          priceApplicability: priceApplicabilityForTurn(state, turn),
           priceKind: priceKindForTurn(turn),
           treatmentKeys,
           turnId: turn.turnId,

@@ -39,15 +39,23 @@ export type PricingCampaign = {
   booking_treatments?: string;
   campaign_aliases: string;
   campaign_name: string;
+  /** Separately reviewed customer-visible price; activity dates live elsewhere. */
+  customer_price_approval_status?: string;
+  customer_price_text?: string;
+  /** Applicability dimensions are part of the price identity. */
+  dose?: string;
   end_date: string;
   fallback_message: string;
   id: string;
   is_active: string;
   notes: string;
+  package_key?: string;
   price_text: string;
+  session_count?: number | string;
   start_date: string;
   starts_booking_intake?: string;
   treatment_name: string;
+  variant_key?: string;
 };
 
 export type PregnancyRule = {

@@ -20,7 +20,10 @@ The runtime gates remain:
 - `CONVERSATION_V2_MODE=shadow`
 
 All three default to disabled or zero. Enabling them is a separately approved
-Production operation; merging the code alone changes no customer behavior.
+Production operation; merging the code alone does not route customers through
+V2. Runtime price merging is an independent legacy hardening: a known content
+source error or an explicit runtime replacement now fails price output closed
+instead of reviving an older seed price.
 
 ### Semantic-contract milestone (2026-08-14)
 
@@ -44,6 +47,45 @@ Production shadow must use a whole-conversation test-account/customer
 allowlist. The current sampling gate is not approval to enable partial random
 multi-turn shadow traffic; an allowlist gate must be added and separately
 approved before Production activation.
+
+### Turn-scoped clinic-facts milestone (2026-08-14)
+
+V2 now has a provider contract for a versioned, turn-scoped clinic-facts
+snapshot. The same snapshot can supply the NLU ontology and the policy's
+treatment, price, and clinic-fact resolution, so a content update cannot make
+the model recognize one catalog while the decision layer uses another.
+
+The initial provider is an injectable bridge over the existing config shapes
+and caller-supplied approved price records; it does not fetch runtime content by
+itself. Treatment and price catalogs default to `partial`: a missing item means
+`unknown`, never `not_offered`. V2 may say a treatment is unavailable only when
+the snapshot carries explicit negative evidence. Likewise, a customer-visible
+price exists only for an approved campaign that is current at the turn time and
+has one unambiguous matching answer. Draft, missing, expired, future,
+ambiguous, or unavailable price data produces no amount and requests internal
+fact confirmation without pausing the conversation.
+
+The contract supports snapshot replacement and rollback without editing the
+router or dialogue policy. A future database/content-admin provider must retain
+the same semantics, approval states, provenance, and per-turn snapshot pinning.
+Snapshots are deep immutable, and every offered/stale/not-offered inventory key
+must exist in that snapshot's recognition ontology. Recognition-only entries
+are allowed and resolve to `unknown`, so adding a competitor or future treatment
+name never falsely claims that the clinic offers it. When a dynamic ontology is
+used, a compact recognition registry and snapshot id are stored with the NLU
+frame in the existing JSON column; replay therefore does not drop newly added
+treatment keys or reinterpret them through an older compiled catalog.
+
+Price identity includes treatment set plus applicable branch, package, variant,
+dose, and session count. Missing or mismatched qualifiers fail closed instead
+of borrowing another branch's or package's amount. V2 never quotes the legacy
+free-text `price_text`: it requires a separately approved
+`customer_price_text`, while campaign name and start/end dates remain internal.
+The runtime merge now preserves combination ownership and suppresses matching
+seed ids before filtering an expired replacement, so an updated or withdrawn
+price cannot revive an older seed value. Loading that merged catalog into the
+V2 provider and enabling a customer-visible V2 canary are still separate
+milestones; V2 remains default-off.
 
 ## Decision
 

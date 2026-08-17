@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from "@/lib/live-demo-config";
+import type { ClinicOntology } from "@/lib/clinic-ontology";
 import { buildNluInstructions, buildNluResponseFormat, parseNluFrame } from "@/lib/nlu-frame";
 import type { NluShadowObservation } from "@/lib/nlu-shadow-store";
 import { storeNluShadowObservation } from "@/lib/nlu-shadow-store";
@@ -48,7 +49,10 @@ export function buildNluRequestInput(message: string, recentTurns: readonly NluR
 
 export async function requestNluFrame(
   message: string,
-  context: { recentTurns?: readonly NluRecentTurn[] } = {},
+  context: {
+    ontology?: ClinicOntology;
+    recentTurns?: readonly NluRecentTurn[];
+  } = {},
 ) {
   const config = getRuntimeConfig();
   if (!config.openAiApiKey) return null;
@@ -62,18 +66,18 @@ export async function requestNluFrame(
       headers: { Authorization: `Bearer ${config.openAiApiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         input: buildNluRequestInput(message, context.recentTurns),
-        instructions: buildNluInstructions(),
+        instructions: buildNluInstructions(context.ontology),
         max_output_tokens: 320,
         model: config.openAiModel,
         reasoning: { effort: "none" },
-        text: buildNluResponseFormat(),
+        text: buildNluResponseFormat(context.ontology),
       }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`OpenAI NLU shadow error ${response.status}`);
     const payload = await response.json() as OpenAiResponsesPayload;
     const outputText = extractOpenAiResponseText(payload);
-    const frame = outputText ? parseNluFrame(JSON.parse(outputText)) : null;
+    const frame = outputText ? parseNluFrame(JSON.parse(outputText), context.ontology) : null;
     return {
       errorCode: frame ? null : "invalid_frame",
       frame,
@@ -93,7 +97,10 @@ export async function requestNluFrame(
 export async function runNluShadow(
   message: string,
   decision: DecisionSnapshot,
-  context: { recentTurns?: readonly NluRecentTurn[] } = {},
+  context: {
+    ontology?: ClinicOntology;
+    recentTurns?: readonly NluRecentTurn[];
+  } = {},
 ) {
   const config = getRuntimeConfig();
   if (config.openAiNluMode !== "shadow") return null;
@@ -117,6 +124,8 @@ export async function captureNluShadowObservation(
     decision: DecisionSnapshot;
     message: string;
     messageId: string;
+    ontology?: ClinicOntology;
+    ontologySnapshotId?: string;
     recentTurns?: readonly NluRecentTurn[];
   },
   dependencies: {
@@ -126,10 +135,16 @@ export async function captureNluShadowObservation(
 ) {
   try {
     const observation = await (dependencies.run ?? runNluShadow)(input.message, input.decision, {
+      ontology: input.ontology,
       recentTurns: input.recentTurns,
     });
     if (observation) {
-      const storedObservation = { ...observation, messageId: input.messageId };
+      const storedObservation = {
+        ...observation,
+        messageId: input.messageId,
+        ...(input.ontology ? { ontology: input.ontology } : {}),
+        ...(input.ontologySnapshotId ? { ontologySnapshotId: input.ontologySnapshotId } : {}),
+      };
       await (dependencies.store ?? storeNluShadowObservation)(storedObservation);
       return storedObservation;
     }

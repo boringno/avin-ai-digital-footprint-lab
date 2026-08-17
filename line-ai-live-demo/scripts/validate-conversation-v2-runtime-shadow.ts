@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { runAdminSyncInTwoPhases } from "../src/lib/admin-webhook-sync";
+import { clinicOntology } from "../src/lib/clinic-ontology";
 import { captureConversationV2ShadowRecord } from "../src/lib/conversation-v2/runtime-shadow";
 import {
   replayConversationV2Shadow,
@@ -10,6 +11,7 @@ import { getRuntimeConfig } from "../src/lib/live-demo-config";
 import type { NluFrame } from "../src/lib/nlu-frame";
 import {
   buildNluShadowConversationTimeline,
+  encodeNluShadowFrameForStorage,
   loadNluShadowConversationTimeline,
   type NluShadowObservation,
   type NluShadowTimelineQueryBuilder,
@@ -283,6 +285,68 @@ const timeline = buildNluShadowConversationTimeline({
 assert.equal(timeline.totalCustomerMessages, 2, "episode filtering must exclude old dialogue state");
 assert.equal(timeline.records.length, 1, "missing frames must reduce coverage instead of inventing understanding");
 assert.equal(timeline.records[0]?.lineTimestamp, 1234, "LINE event time must outrank server insertion time");
+
+const futureOntology = {
+  ...clinicOntology,
+  treatments: [
+    ...clinicOntology.treatments,
+    {
+      aliases: ["未來儀器"],
+      category: "energy" as const,
+      key: "future_device",
+      name: "未來儀器",
+    },
+  ],
+};
+const futureFrame = frame({ treatments: ["future_device"] });
+const encodedFutureFrame = encodeNluShadowFrameForStorage({
+  confidence: futureFrame.confidence,
+  deterministicDecision: onda.legacyDecision,
+  divergenceCategories: [],
+  errorCode: null,
+  frame: futureFrame,
+  latencyMs: 1,
+  messageId: "db-future",
+  model: "fixture",
+  ontology: futureOntology,
+  ontologySnapshotId: "catalog-future-v1",
+  promptVersion: "fixture",
+  tokensIn: 0,
+  tokensOut: 0,
+});
+assert.ok(
+  !JSON.stringify(encodedFutureFrame).includes("想了解未來儀器"),
+  "stored ontology envelopes must never include customer message text",
+);
+const futureTimeline = buildNluShadowConversationTimeline({
+  messageRows: [{
+    content: "想了解未來儀器",
+    created_at: "2026-08-14T01:02:00.000Z",
+    id: "db-future",
+    line_message_id: "line-db-future",
+    payload_json: { event_timestamp: 3456 },
+    source_event_id: "event-db-future",
+  }],
+  observationRows: [{
+    deterministic_decision: onda.legacyDecision,
+    message_id: "db-future",
+    nlu_frame: encodedFutureFrame,
+  }],
+});
+assert.equal(futureTimeline.records.length, 1, "a future treatment frame must survive storage and replay parsing");
+assert.equal(futureTimeline.records[0]?.ontologySnapshotId, "catalog-future-v1");
+const futureReplay = replayConversationV2Shadow({
+  episodeId: "shadow:future",
+  records: futureTimeline.records,
+  tenantId: "tenant_001",
+  userId: "line-user-1",
+});
+assert.equal(futureReplay.turns[0]?.ontologySnapshotId, "catalog-future-v1");
+assert.deepEqual(
+  (futureReplay.turns[0]?.action as { treatmentKeys?: string[] })?.treatmentKeys,
+  ["future_device"],
+  "replay must adapt a stored frame with the ontology snapshot used at inference time",
+);
 
 function timelineQueryClient(input: {
   audit: {

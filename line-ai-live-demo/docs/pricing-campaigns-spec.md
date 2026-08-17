@@ -24,7 +24,13 @@
 | `asset_urls` | 否 | 活動圖網址，可放一張或多張，用 `|` 串接 |
 | `campaign_aliases` | 否 | 活動別名，可填客人常用問法，例如 `onda體驗價|七月活動|暑期優惠` |
 | `campaign_name` | 是 | 活動名稱，例如 `2026 七月體驗活動` |
-| `price_text` | 是 | 對客人顯示的價格文字，例如 `體驗價 16888` |
+| `price_text` | 是 | 舊流程相容欄位；不得視為 V2 客顯價格的核准依據 |
+| `customer_price_approval_status` | 是 | 客顯價格的獨立審核狀態；只有 `approved` / `stable` 可用 |
+| `customer_price_text` | 是 | 僅放客人可見價格，例如 `體驗價 16888`；禁止放活動日期或期限 |
+| `dose` | 否 | 價格限定的劑量／發數；有填時，客人未確認相同規格前不得直接報價 |
+| `package_key` | 否 | 價格限定的方案代碼；不同方案不可共用價格 |
+| `session_count` | 否 | 價格限定的堂數；單堂與多堂價格分開 |
+| `variant_key` | 否 | 價格限定的產品或規格版本 |
 | `start_date` | 是 | 活動開始日，格式 `YYYY-MM-DD` |
 | `end_date` | 是 | 活動結束日，格式 `YYYY-MM-DD` |
 | `is_active` | 是 | `true` 或 `false` |
@@ -40,10 +46,11 @@
 2. `approval_status = approved`
 3. `treatment_name` 不為空
 4. `campaign_name` 不為空
-5. `price_text` 不為空
-6. `start_date` 格式正確
-7. `end_date` 格式正確
-8. 今天日期介於 `start_date 00:00:00` 到 `end_date 23:59:59`
+5. `customer_price_approval_status = approved`（V2）
+6. `customer_price_text` 不為空且不含活動日期／期限（V2）
+7. `start_date` 格式正確
+8. `end_date` 格式正確
+9. 今天日期介於 `start_date 00:00:00` 到 `end_date 23:59:59`
 
 只要其中一條不成立，AI 就不會使用這筆活動。
 
@@ -93,9 +100,9 @@
 ## 範例
 
 ```csv
-id,treatment_name,branch_scope,asset_urls,campaign_aliases,campaign_name,price_text,start_date,end_date,is_active,approval_status,fallback_message,notes
-sf-2026-07-onda-01,ONDA PRO,all,https://line-ai-live-demo.vercel.app/demo/promotions/tenthermage-2026-07-09-to-07-15.jpg,onda體驗價|onda活動|七月onda優惠,2026 七月體驗活動,體驗價 16888,2026-07-01,2026-07-31,true,approved,目前活動內容可能依日期或館別調整，若您想確認實際可約時段與適用條件，我可以再幫您整理給真人客服確認。,July campaign
-sf-2026-07-pico-01,探索皮秒,台中|高雄,https://line-ai-live-demo.vercel.app/demo/promotions/multi-treatment-2026-07-09-to-07-15.jpg,皮秒活動|皮秒體驗價|暑期皮秒方案,2026 七月新客活動,新客體驗價 3888,2026-07-01,2026-07-15,true,approved,目前活動內容可能依日期或館別調整，若您想確認實際可約時段與適用條件，我可以再幫您整理給真人客服確認。,July campaign
+id,treatment_name,branch_scope,asset_urls,campaign_aliases,campaign_name,price_text,customer_price_approval_status,customer_price_text,start_date,end_date,is_active,approval_status,fallback_message,notes,dose,package_key,session_count,variant_key
+sf-2026-07-onda-01,ONDA PRO,all,https://line-ai-live-demo.vercel.app/demo/promotions/tenthermage-2026-07-09-to-07-15.jpg,onda體驗價|onda活動|七月onda優惠,2026 七月體驗活動,體驗價 16888,approved,體驗價 16888,2026-07-01,2026-07-31,true,approved,目前活動內容可能依日期或館別調整，若您想確認實際可約時段與適用條件，我可以再幫您整理給真人客服確認。,July campaign
+sf-2026-07-pico-01,探索皮秒,台中|高雄,https://line-ai-live-demo.vercel.app/demo/promotions/multi-treatment-2026-07-09-to-07-15.jpg,皮秒活動|皮秒體驗價|暑期皮秒方案,2026 七月新客活動,新客體驗價 3888,approved,新客體驗價 3888,2026-07-01,2026-07-15,true,approved,目前活動內容可能依日期或館別調整，若您想確認實際可約時段與適用條件，我可以再幫您整理給真人客服確認。,July campaign
 ```
 
 ## 維運流程
