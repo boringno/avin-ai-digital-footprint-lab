@@ -34,7 +34,18 @@ type BookingLeadRow = {
 };
 
 export function buildHandoffReason(result: ProcessedWebhookResult) {
-  const baseReason = result.handoffReason?.trim() || result.decision.matchedKey || "unknown";
+  const confirmation = result.conversationV2FactConfirmation;
+  const factReason = confirmation
+    ? `fact_confirmation:${confirmation.domain}:${confirmation.reason}:${confirmation.keys
+      .map((key) => key.trim())
+      .filter(Boolean)
+      .slice(0, 8)
+      .join(",")}`.slice(0, 240)
+    : "";
+  const canonicalReason = result.handoffReason?.trim() || "";
+  const baseReason = factReason && canonicalReason
+    ? selectHigherPriorityHandoffReason(canonicalReason, factReason)
+    : factReason || canonicalReason || result.decision.matchedKey || "unknown";
   return result.bookingDraft.pregnancyRiskFlag && !baseReason.endsWith(PREGNANCY_RISK_REASON_SUFFIX)
     ? `${baseReason}${PREGNANCY_RISK_REASON_SUFFIX}`
     : baseReason;
@@ -283,6 +294,7 @@ async function insertCustomerMessage(conversationId: string, result: ProcessedWe
       message_type: normalizeMessageType(result.eventType === "message" ? "text" : result.eventType),
       payload_json: {
         conversation_status: result.conversationStatus,
+        conversation_v2_fact_confirmation: result.conversationV2FactConfirmation ?? null,
         decision_type: result.decision.decisionType,
         dialogue_episode_key: result.dialogueEpisodeKey ?? null,
         event_timestamp: result.eventTimestamp ?? null,
@@ -515,8 +527,12 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   });
 }
 
-export function shouldCreateHandoffTask(result: { decision: Pick<ProcessedWebhookResult["decision"], "decisionType"> }) {
-  return ["handoff_pending", "booking_intake_reply"].includes(result.decision.decisionType);
+export function shouldCreateHandoffTask(result: {
+  conversationV2ToolRequestType?: ProcessedWebhookResult["conversationV2ToolRequestType"];
+  decision: Pick<ProcessedWebhookResult["decision"], "decisionType">;
+}) {
+  return result.conversationV2ToolRequestType === "request_fact_confirmation" ||
+    ["handoff_pending", "booking_intake_reply"].includes(result.decision.decisionType);
 }
 
 export function shouldStoreAiMessage(replyResult: undefined | Pick<ReplySendResult, "suppressedReason">) {
@@ -551,12 +567,13 @@ async function maybeUpsertBookingLead(conversationId: string, result: ProcessedW
   }
 
   const bookingFields = resolveBookingLeadFields(existing, result);
+  const contactFields = resolveBookingLeadContactFields(existing, result);
   const payload = {
     booking_status: existing?.booking_status ?? "new",
     conversation_id: conversationId,
-    customer_name: emptyToNull(result.bookingDraft.name) ?? existing?.customer_name ?? null,
+    customer_name: contactFields.customerName,
     interested_treatments: bookingFields.interestedTreatments,
-    phone: emptyToNull(result.bookingDraft.phone) ?? existing?.phone ?? null,
+    phone: contactFields.phone,
     preferred_branch: bookingFields.preferredBranch,
     preferred_time_slots: bookingFields.preferredTimeSlots,
     notes: buildBookingLeadNotes(existing?.notes, result.bookingDraft.pregnancyRiskFlag === true),
@@ -570,6 +587,21 @@ async function maybeUpsertBookingLead(conversationId: string, result: ProcessedW
   if (error) {
     throw new Error(`Failed to upsert booking lead: ${error.message}`);
   }
+}
+
+export function resolveBookingLeadContactFields(
+  existing: Pick<BookingLeadRow, "customer_name" | "phone"> | null,
+  result: Pick<ProcessedWebhookResult, "bookingDraft" | "bookingTreatmentAction">,
+) {
+  const replacesActiveDraft = result.bookingTreatmentAction === "replace";
+  return {
+    customerName: replacesActiveDraft
+      ? emptyToNull(result.bookingDraft.name)
+      : emptyToNull(result.bookingDraft.name) ?? existing?.customer_name ?? null,
+    phone: replacesActiveDraft
+      ? emptyToNull(result.bookingDraft.phone)
+      : emptyToNull(result.bookingDraft.phone) ?? existing?.phone ?? null,
+  };
 }
 
 export function resolveBookingLeadFields(

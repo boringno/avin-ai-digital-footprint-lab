@@ -1,4 +1,7 @@
-import { resolveBookingLeadFields } from "../src/lib/admin-webhook-sync";
+import {
+  resolveBookingLeadContactFields,
+  resolveBookingLeadFields,
+} from "../src/lib/admin-webhook-sync";
 import { resolveBookingLeadSheetFields } from "../src/lib/google-sheets-log";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -23,6 +26,19 @@ const replacement = resolveBookingLeadFields(existing, {
 assert(JSON.stringify(replacement.interestedTreatments) === JSON.stringify(["肉毒"]), "BL1: a new booking must replace old treatment ownership");
 assert(replacement.preferredBranch === null, "BL1: a new booking must not inherit the previous branch");
 assert(replacement.preferredTimeSlots.length === 0, "BL1: a new booking must not inherit previous time slots");
+const replacementContact = resolveBookingLeadContactFields({
+  customer_name: "舊姓名",
+  phone: "0911111111",
+}, {
+  bookingDraft: {
+    requestedTimeSlots: [],
+    timeSlots: [],
+    treatment: "肉毒",
+  },
+  bookingTreatmentAction: "replace",
+});
+assert(replacementContact.customerName === null, "BL1: a new booking must not inherit the previous customer name");
+assert(replacementContact.phone === null, "BL1: a new booking must not inherit the previous phone");
 
 const addition = resolveBookingLeadFields(existing, {
   bookingDraft: {
@@ -65,4 +81,4 @@ const sheetAddition = resolveBookingLeadSheetFields({
 assert(sheetAddition.treatment === "ONDA PRO＋肉毒", "BL4: Sheets addition must retain both treatments");
 assert(sheetAddition.branch === "高雄館" && sheetAddition.timeSlots === "8月18號下午", "BL4: Sheets addition must retain schedule fields");
 
-console.log("booking lead ownership validation passed (10 checks)");
+console.log("booking lead ownership validation passed (12 checks)");

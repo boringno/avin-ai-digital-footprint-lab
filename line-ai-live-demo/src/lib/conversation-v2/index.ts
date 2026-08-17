@@ -1,4 +1,7 @@
 export * from "./engine";
+export * from "./canary-gate";
+export * from "./booking-adapter";
+export * from "./live-runtime";
 export * from "./data-gap-policy";
 export * from "./hydrate-reply-plan";
 export * from "./nlu-adapter";

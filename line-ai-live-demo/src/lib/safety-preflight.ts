@@ -116,7 +116,6 @@ const GENERAL_MEDICAL_OUT_OF_SCOPE_TERMS = [
   "要看哪科",
   "醫療診斷",
 ];
-const CUSTOMER_ACCOUNT_TERMS = ["會員", "紀錄", "姓名", "電話", "帳號", "查詢個資", "我的資料"];
 const PRICE_COMMITMENT_TERMS = ["固定價", "保證最低價", "最低價", "一定多少錢", "保證多少錢", "先報死價", "直接報價"];
 
 function includesAnyTerm(message: string, terms: readonly string[]) {
@@ -150,8 +149,16 @@ export function isPostProcedureEmergency(message: string) {
   return includesAnyTerm(message, POST_PROCEDURE_EMERGENCY_TERMS);
 }
 
+export function hasPostProcedureContext(message: string) {
+  return includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS);
+}
+
+export function hasPostProcedureAbnormality(message: string) {
+  return includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS);
+}
+
 export function isPostProcedureIssue(message: string) {
-  return includesAnyTerm(message, POST_PROCEDURE_CONTEXT_TERMS) && includesAnyTerm(message, POST_PROCEDURE_ABNORMALITY_TERMS);
+  return hasPostProcedureContext(message) && hasPostProcedureAbnormality(message);
 }
 
 export function isPlasticSurgeryRequest(message: string) {
@@ -168,6 +175,19 @@ export function isGeneralMedicalOutOfScope(message: string) {
 
 export function isPriceCommitmentRequest(message: string) {
   return includesAnyTerm(message, PRICE_COMMITMENT_TERMS);
+}
+
+function isCustomerAccountLookupRequest(message: string) {
+  const normalized = message.replace(/\s+/gu, "");
+  if (/(?:會員|帳號|我的資料|個資|既有紀錄|預約紀錄|療程紀錄)/u.test(normalized)) {
+    return /(?:查|查詢|查看|確認|核對|調閱|紀錄|記錄|資料|是什麼|有哪些)/u.test(normalized);
+  }
+  return (
+    /(?:查|查詢|查看|確認|核對|調閱).{0,16}(?:姓名|電話|手機|號碼|資料|紀錄|記錄)/u.test(normalized) ||
+    /(?:姓名|電話|手機|號碼).{0,16}(?:是誰|哪位|哪個人|哪個客人|對應|資料|紀錄|記錄|是什麼|哪一個)/u.test(normalized) ||
+    /(?:誰|哪位|哪個人|哪個客人).{0,16}(?:姓名|電話|手機|號碼|資料|紀錄|記錄)/u.test(normalized) ||
+    /之前.{0,16}(?:留|提供|填).{0,8}(?:姓名|電話|手機|號碼)/u.test(normalized)
+  );
 }
 
 export function runImmediateSafetyPreflight(input: {
@@ -248,7 +268,7 @@ export function runImmediateSafetyPreflight(input: {
       replyText: "這屬於一般醫療問題，不在微整衛教範圍內；請直接諮詢合適科別的醫師，AI 不會自行判斷。",
     };
   }
-  if (!skipCustomerAccountLookup && includesAnyTerm(message, CUSTOMER_ACCOUNT_TERMS)) {
+  if (!skipCustomerAccountLookup && isCustomerAccountLookupRequest(message)) {
     return {
       decisionType: "handoff_pending",
       matchedKey: "customer_account_lookup",

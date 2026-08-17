@@ -14,7 +14,11 @@ function normalizeBookingSpeech(message: string) {
 function isExplicitCancelRequest(text: string) {
   if (
     /(?:不想|不要|不用)(?:再)?取消/u.test(text) ||
-    (/(?:可以|能|可不可以|能不能|是否|有辦法).{0,8}取消/u.test(text) && /(?:嗎|呢)$/u.test(text))
+    (
+      /(?:可以|能|可不可以|能不能|是否|有辦法).{0,8}取消/u.test(text) &&
+      /(?:嗎|呢)$/u.test(text) &&
+      !/(?:幫我|請幫我|麻煩|替我).{0,8}取消/u.test(text)
+    )
   ) {
     return false;
   }
@@ -37,6 +41,9 @@ function isExplicitModifyRequest(text: string) {
 }
 
 function isExplicitCreateRequest(text: string) {
+  if (/(?:取消|撤掉|取消掉|改約|改預約|修改預約|更改預約|改時間|改日期|改期|換時間|換日期|改館別|換館別)/u.test(text)) {
+    return false;
+  }
   if (/(?:不想|不要|不用|不需要).{0,8}(?:預約|約診|想約|取消|修改|改約)/u.test(text)) {
     return false;
   }
@@ -55,6 +62,7 @@ function isExplicitCreateRequest(text: string) {
 
   return (
     /(?:我想要?|我要|我希望|想|幫我|請幫我|麻煩(?:幫我)?|替我).{0,10}(?:預約|約診|想約|要約|安排.{0,12}(?:療程|諮詢|時間)|約(?:[a-z0-9\u4e00-\u9fff]+))/u.test(text) ||
+    /(?:幫我|請幫我|麻煩(?:幫我)?|替我).{0,8}排(?:週|星期|平日|假日|上午|下午|晚上|白天|\d)/u.test(text) ||
     /^(?:幫我|請幫我|麻煩)?(?:預約|想約|要約|安排(?:療程|諮詢|時間)).+/u.test(text) ||
     /^(?:我)?(?:想約|要約).+/u.test(text) ||
     /^(?:預約|想約|預約諮詢|安排諮詢)$/u.test(text) ||
@@ -81,6 +89,27 @@ function isBookingInquiry(text: string, originalMessage: string) {
   return asksPolicy || (asksQuestion && BOOKING_CONTEXT_TERMS.test(text));
 }
 
+function isBookingMutationInquiry(text: string, originalMessage: string) {
+  const asksQuestion = /[?？]/u.test(originalMessage) || /(?:嗎|呢)$/u.test(text);
+  const mutation = /(?:取消|撤掉|取消掉|改約|改預約|修改預約|更改預約|改時間|改日期|改期|換時間|換日期|改館別|換館別)/u;
+  if (!mutation.test(text)) return false;
+
+  if (/(?:想問|想知道|想了解|要了解|請問|詢問).{0,18}(?:怎麼|如何)?(?:取消|撤掉|修改|更改|改約|改預約)/u.test(text)) {
+    return true;
+  }
+
+  // Polite imperatives remain actions: "可以幫我取消預約嗎" is a request,
+  // not a question about cancellation policy.
+  if (new RegExp(`${EXPLICIT_REQUEST_PREFIX.source}.{0,12}${mutation.source}`, "u").test(text)) {
+    return false;
+  }
+  return (
+    /^(?:怎麼|如何).{0,12}(?:取消|修改|更改|改約|改預約)/u.test(text) ||
+    /(?:取消|修改|更改|改約|改預約).{0,16}(?:怎麼做|如何做|流程|方式|規定|需要提供|要提供|會收費|費用|收費)/u.test(text) ||
+    (asksQuestion && /(?:取消|修改|更改|改約|改預約).{0,16}(?:需要|要|會|可以|能|是否)/u.test(text))
+  );
+}
+
 /**
  * Classify what the customer is doing with booking language, independently of
  * the current booking state.  In particular, asking about the appointment
@@ -90,6 +119,7 @@ export function classifyBookingSpeechAct(message: string): BookingSpeechAct {
   const text = normalizeBookingSpeech(message);
   if (!text) return "none";
 
+  if (isBookingMutationInquiry(text, message)) return "inquiry";
   // Explicit first-person or imperative actions are allowed to remain actions
   // even when phrased politely as a question (for example, "可以幫我預約嗎").
   if (isExplicitCancelRequest(text)) return "cancel";

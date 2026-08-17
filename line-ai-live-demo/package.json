@@ -70,6 +70,8 @@
     "validate:conversation-v2-runtime-shadow": "tsx scripts/validate-conversation-v2-runtime-shadow.ts",
     "validate:conversation-v2-golden-journeys": "tsx scripts/validate-conversation-v2-golden-journeys.ts",
     "validate:conversation-v2-clinic-facts": "tsx scripts/validate-conversation-v2-clinic-facts.ts",
+    "validate:conversation-v2-runtime-provider": "tsx scripts/validate-conversation-v2-runtime-provider.ts",
+    "validate:conversation-v2-canary": "tsx scripts/validate-conversation-v2-canary.ts",
     "validate:pricing-subject": "tsx scripts/validate-pricing-subject.ts",
     "validate:treatment-packs": "tsx scripts/validate-treatment-packs.ts",
     "validate:dialogue-state": "tsx scripts/validate-dialogue-state.ts",

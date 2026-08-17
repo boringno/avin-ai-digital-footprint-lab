@@ -130,6 +130,9 @@ export async function notifyAdminHandoffCreated(
 }
 
 export function getHandoffNotificationReasonLabel(reason: string) {
+  if (reason.startsWith("fact_confirmation:")) {
+    return "診所資料待確認";
+  }
   if (reason.startsWith("treatment_brand_missing:")) {
     return "需人工確認療程品牌問題";
   }

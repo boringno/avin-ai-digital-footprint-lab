@@ -13,7 +13,8 @@ export type RuntimeConfig = {
   anthropicMaxTokens: number;
   anthropicModel: string;
   claudeApiEnabled: boolean;
-  conversationV2Mode: "off" | "shadow";
+  conversationV2CanaryUserIds: string[];
+  conversationV2Mode: "canary" | "off" | "shadow";
   cronSecret: string;
   debugToken: string;
   handoffDigestFrom: string;
@@ -76,10 +77,19 @@ function parseNluDecisionMode(value: string | undefined): "canary" | "off" {
   throw new Error(`Unsupported OPENAI_NLU_DECISION_MODE: ${normalized}`);
 }
 
-function parseConversationV2Mode(value: string | undefined): "off" | "shadow" {
+function parseConversationV2Mode(value: string | undefined): "canary" | "off" | "shadow" {
   const normalized = (value ?? "off").trim().toLowerCase();
-  if (normalized === "off" || normalized === "shadow") return normalized;
+  if (normalized === "off" || normalized === "shadow" || normalized === "canary") return normalized;
   throw new Error(`Unsupported CONVERSATION_V2_MODE: ${normalized}`);
+}
+
+function parseIdentifierList(value: string | undefined) {
+  return Array.from(new Set(
+    (value ?? "")
+      .split(/[,;\n\r]+/u)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ));
 }
 
 function parseInteger(value: string | undefined, fallback: number) {
@@ -137,6 +147,12 @@ export function getRuntimeConfig(): RuntimeConfig {
     && openAiNluDecisionMode === "canary") {
     throw new Error("OPENAI_NLU_MODE=shadow cannot run with OPENAI_NLU_DECISION_MODE=canary; one message must make at most one NLU request");
   }
+  if (
+    conversationV2Mode === "canary" &&
+    (openAiNluMode !== "off" || openAiNluDecisionMode !== "off")
+  ) {
+    throw new Error("CONVERSATION_V2_MODE=canary requires the legacy NLU shadow and decision modes to remain off; one message must make at most one NLU request");
+  }
 
   return {
     adminNotifyTarget: process.env.ADMIN_NOTIFY_TARGET ?? "",
@@ -150,6 +166,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     anthropicMaxTokens: parseInteger(process.env.CLAUDE_MAX_TOKENS, 300),
     anthropicModel: process.env.CLAUDE_MODEL ?? "claude-haiku-4-5",
     claudeApiEnabled: parseBoolean(process.env.CLAUDE_API_ENABLED, false),
+    conversationV2CanaryUserIds: parseIdentifierList(process.env.CONVERSATION_V2_CANARY_USER_IDS),
     conversationV2Mode,
     cronSecret: process.env.CRON_SECRET ?? "",
     debugToken: process.env.LIVE_DEMO_DEBUG_TOKEN ?? "",
