@@ -95,6 +95,8 @@ jobs:
           npm run validate:booking-lead-ownership
           npm run validate:conversation-sessions
           npm run validate:conversation-v2
+          npm run validate:conversation-v2-customer-experience
+          npm run validate:conversation-v2-journey
           npm run validate:conversation-v2-nlu-adapter
           npm run validate:conversation-v2-repository
           npm run validate:conversation-v2-runtime-shadow

@@ -18,6 +18,7 @@ export type TreatmentClinicAvailability = {
 export type TreatmentKnowledge = {
   aliases: string[];
   approvalStatus: TreatmentKnowledgeApprovalStatus;
+  approvedConcernReplies: Record<string, string[]>;
   approvedIntroReplies: string[];
   approvedPriceIds: string[];
   areas: TreatmentAreaKey[];
@@ -134,6 +135,17 @@ function getApprovedPriceIds(treatment: TreatmentConfig) {
   ]);
 }
 
+function getApprovedConcernReplies(treatment: TreatmentConfig) {
+  return Object.fromEntries(
+    (treatment.consultationGuide?.concernReplies ?? [])
+      .map((item) => [
+        item.concernKey.trim(),
+        normalizeStrings([item.reply, item.followupPrompt]),
+      ] as const)
+      .filter(([key, replies]) => Boolean(key && replies.length > 0)),
+  );
+}
+
 function getClinicAvailability(treatment: TreatmentConfig, config: ClinicConfig): TreatmentClinicAvailability {
   const activeBranchNames = config.branches.filter((branch) => branch.isActive).map((branch) => branch.name);
   const selectedBranchNames = normalizeStrings(treatment.availableBranchNames);
@@ -189,6 +201,11 @@ export function adaptTreatmentConfigToKnowledge(
     approvalStatus:
       overrides.approvalStatus ??
       (approvedIntroReplies.length > 0 && mechanismInPlainLanguage ? "approved" : "needs_review"),
+    approvedConcernReplies: Object.fromEntries(
+      Object.entries(overrides.approvedConcernReplies ?? getApprovedConcernReplies(treatment))
+        .map(([key, replies]) => [key.trim(), normalizeStrings(replies)] as const)
+        .filter(([key, replies]) => Boolean(key && replies.length > 0)),
+    ),
     approvedIntroReplies,
     approvedPriceIds: normalizeStrings(overrides.approvedPriceIds ?? getApprovedPriceIds(treatment)),
     areas: Array.from(new Set(overrides.areas ?? getTreatmentAreas(suitableConcerns, config))),

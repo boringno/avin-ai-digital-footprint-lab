@@ -19,6 +19,10 @@ export type TreatmentBranchAvailability =
 
 export type OfferedTreatmentFact = {
   branchAvailability: TreatmentBranchAvailability;
+  // Customer-visible approved copy. `facts` carries internal field labels such as
+  // "療程名稱：X" and is only ever a knowledge base for the model; this list is the
+  // only treatment copy that may reach the customer directly.
+  customerIntroReplies: string[];
   facts: string[];
   factIds: string[];
   key: string;
@@ -121,6 +125,14 @@ export type UnavailablePriceFact = {
 export type PriceFactResolution = ApprovedCurrentPriceFact | UnavailablePriceFact;
 
 export type TreatmentKnowledgeResolution = {
+  // Customer-visible approved replies selected for the concerns in this turn.
+  // These are distinct from the generic treatment introduction so a follow-up can
+  // advance the consultation instead of replaying the first paragraph.
+  customerConcernReplies: string[];
+  // Customer-visible approved copy for the resolved treatments. Never contains the
+  // internal field labels that `facts` carries, so a deterministic fallback can be
+  // built from this list without leaking "療程名稱：" style text to the customer.
+  customerIntroReplies: string[];
   factIds: string[];
   facts: string[];
   gaps: Array<Exclude<TreatmentFactResolution, OfferedTreatmentFact>>;

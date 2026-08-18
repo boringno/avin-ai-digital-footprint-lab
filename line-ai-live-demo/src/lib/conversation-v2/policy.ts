@@ -1,3 +1,6 @@
+import { findAllTreatmentsByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
+import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+
 import {
   isPureAwaitingSelectionAnswer,
   resolveAwaitingSelection,
@@ -18,6 +21,30 @@ import type {
 
 function keys(items: readonly { key: string }[]) {
   return Array.from(new Set(items.map((item) => item.key.trim()).filter(Boolean)));
+}
+
+/**
+ * True when the sentence gestures at a treatment without committing to it
+ * ("我好像想問那個肉毒多少").
+ *
+ * A bare hedge that names nothing ("那個多少錢") is ordinary anaphora and must still
+ * inherit whatever the customer is already discussing. It is only when they gesture at
+ * a *different* treatment that inheriting the active subject answers the wrong
+ * question -- quoting ONDA's price to someone asking about botox.
+ */
+function hasHedgedTreatmentMention(text: string) {
+  return Boolean(findTreatmentByMessage(text)) && isHedgedTreatmentReference(text);
+}
+
+function explicitPriceTreatmentKey(text: string) {
+  if (!isPriceInquiry(text) || isHedgedTreatmentReference(text)) {
+    return undefined;
+  }
+  // First match is arbitrary once a sentence names more than one treatment
+  // ("不要肉毒，ONDA 價格呢？"), and guessing there can quote the price of the very
+  // treatment the customer just declined. Defer to the model's entities instead.
+  const named = findAllTreatmentsByMessage(text);
+  return named.length === 1 ? named[0]?.key : undefined;
 }
 
 function affirmedMentions<T extends { polarity: "affirmed" | "negated" }>(
@@ -259,7 +286,32 @@ function knowledgeModeForTurn(
     : "replace_active_subject" as const;
 }
 
-function makeAwaiting(turn: TurnUnderstanding): AwaitingState | undefined {
+/**
+ * A treatment subject we can act on without asking the customer again.
+ *
+ * NLU confidence is not the only evidence available: the turn text itself may name a
+ * treatment ("ONDA 有沒有活動價格"), and an active focus carries the treatment the
+ * customer is already discussing. Either beats a low-confidence signal, otherwise we
+ * ask "which treatment?" about a treatment the customer just named.
+ */
+function resolvableTreatmentSubject(
+  turn: TurnUnderstanding,
+  state: ConversationV2State,
+) {
+  // A hedged mention of another treatment disqualifies every source of subject, not
+  // just this sentence, so the active subject cannot be inherited past it.
+  if (hasHedgedTreatmentMention(turn.text)) return undefined;
+  const namedInThisTurn = explicitPriceTreatmentKey(turn.text);
+  if (namedInThisTurn) return namedInThisTurn;
+  // `subjectKey` is prefixed ("treatment:onda_pro"), so reuse the existing decoder
+  // rather than comparing raw keys.
+  return subjectTreatmentKeys(state.activeTask.subjectKey)[0];
+}
+
+function makeAwaiting(
+  turn: TurnUnderstanding,
+  state: ConversationV2State,
+): AwaitingState | undefined {
   if (turn.clarification) {
     return {
       allowMultiple: turn.clarification.allowMultiple,
@@ -279,6 +331,19 @@ function makeAwaiting(turn: TurnUnderstanding): AwaitingState | undefined {
     (mention) => mention.confidence < 0.65 || mention.resolution === "underspecified",
   );
   if (!uncertain) return undefined;
+  // A price question owns its subject differently from an open treatment question.
+  // "ONDA 有沒有活動價格" names the treatment outright, and "體驗價呢" inherits the
+  // treatment the customer is already discussing, so asking "which treatment?" there
+  // discards an answer we already hold. Hedged discovery turns ("我好像想問那個肉毒")
+  // still clarify, because there the uncertainty is the point.
+  if (
+    turn.speechAct === "ask_price" &&
+    affirmedConcerns.length === 0 &&
+    affirmedAreas.length === 0 &&
+    resolvableTreatmentSubject(turn, state)
+  ) {
+    return undefined;
+  }
 
   const slot = affirmedTreatments.length > 0
     ? "treatment" as const
@@ -449,10 +514,15 @@ function generatedPlan(
     ? "address_objection"
     : action.taskKind === "compare_treatments"
       ? "compare_options"
+      // A bare concern ("雙下巴") asks for a direction even when the move is a
+      // continuation, otherwise the customer is handed a generic menu after telling us
+      // exactly what bothers them. Once they ask about a specific aspect (suitability,
+      // benefits, recovery) it is a genuine follow-up and must be answered as one.
+      : action.taskKind === "answer_concern" &&
+        ["none", "overview"].includes(action.responseContext.questionAspect)
+        ? "recommend_direction"
       : action.responseContext.conversationMove === "continue"
         ? "answer_followup"
-      : action.taskKind === "answer_concern"
-        ? "recommend_direction"
         : repeatedActiveOverview
           ? "answer_followup"
           : action.responseContext.questionAspect === "overview" &&
@@ -790,18 +860,32 @@ export function evaluateDialoguePolicy(
       type: "fallback_clarify",
     };
   } else if (turn.speechAct === "ask_price") {
+    const negatedTreatmentKeys = new Set(keys(negatedMentions(turn, turn.treatments)));
+    const namedInText = explicitPriceTreatmentKey(turn.text);
+    // A treatment the customer just declined must never own the price, even when it is
+    // the only one their sentence names.
+    const deterministicExplicitTreatment =
+      namedInText && !negatedTreatmentKeys.has(namedInText) ? namedInText : undefined;
     const confirmedTreatments = confirmedKeys(turn, turn.treatments);
     const hasUnconfirmedTreatmentMention =
+      !deterministicExplicitTreatment &&
       turn.treatments.length > 0 && confirmedTreatments.length === 0;
-    const contextualPriceTreatmentKeys = contextualTreatmentKeys(
-      state,
-      turn.dialogueReference,
-    );
+    // Suppressing `awaiting` is not enough on its own: this branch resolves the price
+    // subject independently, so a hedged mention has to be blocked from inheriting the
+    // active subject here too, otherwise the customer is quoted the wrong price.
+    const contextualPriceTreatmentKeys = hasHedgedTreatmentMention(turn.text)
+      ? []
+      : contextualTreatmentKeys(state, turn.dialogueReference);
+    // Confirmed entities already account for negation and rewording, so they outrank
+    // the raw text scan. The deterministic key exists only to rescue the case where low
+    // model confidence left nothing confirmed at all.
     const treatmentKeys = confirmedTreatments.length > 0
       ? confirmedTreatments
-      : contextualPriceTreatmentKeys.length > 0
-        ? contextualPriceTreatmentKeys
-        : [];
+      : deterministicExplicitTreatment
+        ? [deterministicExplicitTreatment]
+        : contextualPriceTreatmentKeys.length > 0
+          ? contextualPriceTreatmentKeys
+          : [];
     action = hasUnconfirmedTreatmentMention || treatmentKeys.length === 0
       ? {
           at: turn.receivedAt,
@@ -931,7 +1015,7 @@ export function evaluateDialoguePolicy(
       isContextualDetailFollowup ||
       isContextualComparison
     ) {
-      const awaiting = makeAwaiting(turn);
+      const awaiting = makeAwaiting(turn, state);
       const responseContext = turnPreferenceContext;
       let taskKind: "learn_treatment" | "compare_treatments" | "answer_concern" = turn.speechAct === "compare_treatments"
         ? "compare_treatments" as const

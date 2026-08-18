@@ -141,8 +141,12 @@ export function resolveTreatmentFact(
   const factIds = facts.map((_, index) =>
     `treatment:${treatment.key}:${treatment.contentVersion}:fact:${index + 1}`);
   const missingFields = treatmentMissingFields(treatment, mode, questionAspect);
+  const customerIntroReplies = treatment.educationMode === "human_only"
+    ? []
+    : unique(treatment.approvedIntroReplies);
   return {
     branchAvailability,
+    customerIntroReplies,
     facts,
     factIds,
     key: treatment.key,
@@ -231,8 +235,18 @@ export function resolveTreatmentKnowledge(
     item.missingFields.length > 0
       ? [{ fields: [...item.missingFields], treatmentKey: item.key }]
       : []);
+  const requestedConcernKeys = new Set(input.query.concernKeys);
+  const customerConcernReplies = offered.flatMap((item) => {
+    const treatment = snapshot.treatments.find((candidate) => candidate.key === item.key);
+    if (!treatment) return [];
+    return Object.entries(treatment.approvedConcernReplies)
+      .filter(([concernKey]) => requestedConcernKeys.has(concernKey))
+      .flatMap(([, replies]) => replies);
+  });
 
   return {
+    customerConcernReplies: unique(customerConcernReplies),
+    customerIntroReplies: unique(offered.flatMap((item) => item.customerIntroReplies)),
     factIds,
     facts,
     gaps,

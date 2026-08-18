@@ -88,15 +88,40 @@ function rendererDialogueAct(plan: GeneratedReplyPlan): DialogueAct {
   return plan.dialogueAct;
 }
 
-function generatedFallback(
+/**
+ * Deterministic customer-visible copy for a resolved treatment.
+ *
+ * `resolution.facts` is a knowledge base for the model and carries internal field
+ * labels ("療程名稱：X"), so it must never be sent to a customer. Only the approved
+ * customer-facing intro copy plus the planned next question may be rendered here.
+ * When approved copy is missing we fall back to the gap reply rather than exposing
+ * the labelled facts.
+ */
+function approvedCustomerFallback(
   resolution: TreatmentKnowledgeResolution,
   nextQuestion: string | undefined,
+  dialogueAct: GeneratedReplyPlan["dialogueAct"],
 ) {
-  if (resolution.facts.length === 0) return treatmentGapReply(resolution);
-  return unique([
-    ...resolution.facts.slice(0, 2),
-    nextQuestion ?? "",
-  ]).join("\n");
+  const approvedCopy = dialogueAct === "recommend_direction" && resolution.customerConcernReplies.length > 0
+    ? resolution.customerConcernReplies.slice(0, 2)
+    : resolution.customerIntroReplies.slice(0, 2);
+  if (approvedCopy.length === 0) return treatmentGapReply(resolution);
+  // The approved intro is the answer to "what is this treatment", so it belongs to the
+  // introduction turn only. Replaying it on every follow-up produced the dead end the
+  // customer hit: three turns in a row returned the same paragraph. Later turns keep
+  // at most one line of context and lead with the next step instead.
+  if (dialogueAct !== "introduce_treatment") {
+    // A concern-selection turn may use its approved explanation and follow-up. A
+    // later restatement of the same treatment/concern should advance with the
+    // planned question rather than replaying that explanation verbatim.
+    if (dialogueAct === "recommend_direction" && resolution.customerConcernReplies.length > 0) {
+      return unique([...approvedCopy, nextQuestion ?? ""]).join("\n");
+    }
+    const advance = nextQuestion?.trim() ||
+      "您想先了解這個部位可評估的方向，還是安排免費諮詢由醫師現場確認呢？";
+    return advance;
+  }
+  return unique([...approvedCopy, nextQuestion ?? ""]).join("\n");
 }
 
 function bookingToolRequest(state: ConversationV2State): ConversationV2ToolRequest {
@@ -196,14 +221,27 @@ export async function hydrateConversationV2ReplyPlan(
     const partialInstruction = treatmentResolution.profileCompleteness === "partial"
       ? "請自然介紹目前已確認的方向；不得宣稱這是完整院內清單，也不得把缺資料解讀為院內沒有提供。"
       : "";
-    const fallbackText = hasFacts && (hasResolutionGaps || hasRequestedDataGaps)
+    // A data gap changes what we say, never how we say it: the deterministic text is
+    // always approved customer-facing copy plus the gap explanation. Labelled facts
+    // stay in `approvedFacts` for the model only.
+    const gapCustomerCopy = replyPlan.dialogueAct === "recommend_direction" &&
+        treatmentResolution.customerConcernReplies.length > 0
+      ? treatmentResolution.customerConcernReplies.slice(0, 1)
+      : replyPlan.dialogueAct === "introduce_treatment"
+        ? treatmentResolution.customerIntroReplies.slice(0, 1)
+        : [];
+    const fallbackText = hasResolutionGaps || hasRequestedDataGaps
       ? unique([
-          ...treatmentResolution.facts.slice(0, 2),
+          ...gapCustomerCopy,
           hasResolutionGaps
             ? treatmentGapReply(treatmentResolution)
             : treatmentProfileGapReply(treatmentResolution),
         ]).join("\n")
-      : generatedFallback(treatmentResolution, replyPlan.nextQuestion);
+      : approvedCustomerFallback(
+        treatmentResolution,
+        replyPlan.nextQuestion,
+        replyPlan.dialogueAct,
+      );
     const rendererPlan = legacyDecisionToReplyPlan(
       {
         decisionType: hasFacts ? "treatment_intro_reply" : "fallback_reply",

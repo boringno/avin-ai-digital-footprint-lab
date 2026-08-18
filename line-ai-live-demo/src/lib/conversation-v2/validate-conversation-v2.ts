@@ -535,7 +535,17 @@ function validateUncertainUnderstandingMustClarify() {
       turnId: "uncertain-direct-price",
     }),
   );
-  expectAction(lowConfidenceDirectPrice, "fallback_clarify");
+  // Superseded by the deterministic price-subject rule. "肉毒多少錢" names its treatment
+  // and asks its price outright, so a low model confidence must not downgrade it into a
+  // clarification -- that was the production failure this round exists to fix. The
+  // resulting subject is asserted too, so this stays a contract rather than a loosened
+  // expectation: the named treatment must win, not the previously active one.
+  const lowConfidenceDirectPriceAction = expectAction(lowConfidenceDirectPrice, "answer_price");
+  assert.deepEqual(
+    lowConfidenceDirectPriceAction.treatmentKeys,
+    ["botox"],
+    "a treatment named outright must own its price question even at low confidence",
+  );
 
   const lowConfidenceBooking = evaluateDialoguePolicy(
     initial,
