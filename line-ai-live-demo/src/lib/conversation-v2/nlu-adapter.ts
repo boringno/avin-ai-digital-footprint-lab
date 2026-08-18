@@ -3,11 +3,13 @@ import {
   type ControlledIntent,
 } from "@/lib/ai-intent-classifier";
 import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
+import { findTreatmentByMessage } from "@/lib/clinic-config";
 import {
   parseNluFrame,
   type NluFrame,
   type NluSafetyFrame,
 } from "@/lib/nlu-frame";
+import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
 
 import type {
   AwaitingOption,
@@ -41,6 +43,14 @@ const BOOKING_FIELD_KEYS = new Set([
 const OPTION_ENTITIES = new Set(["area", "concern", "treatment", "answer"]);
 const CLARIFICATION_SLOTS = new Set(["area", "concern", "treatment"]);
 const INTENT_KEYS = new Set<string>(CONTROLLED_INTENTS);
+
+function hasDeterministicExplicitPriceSubject(text: string) {
+  return Boolean(
+    isPriceInquiry(text) &&
+    findTreatmentByMessage(text) &&
+    !isHedgedTreatmentReference(text),
+  );
+}
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
 export const CONVERSATION_V2_NLU_MIN_CONFIDENCE = 0.65;
@@ -812,12 +822,24 @@ export function adaptNluFrameToConversationV2Turn(
   }
 
   const entities = adaptEntities(parsedFrame, registry);
-  const resolution = resolveSpeechAct({
+  const resolved = resolveSpeechAct({
     entities,
     frame: parsedFrame,
     safety: safetySignals,
     supplemental,
   });
+  // A low model confidence must not erase deterministic evidence present in the
+  // customer's own sentence: a named treatment plus explicit price wording is enough
+  // to reach the approved price resolver. This only rescues the low-confidence
+  // "unknown" outcome. It must never outrank resolveSpeechAct's earlier conclusions --
+  // urgent_safety, request_handoff, a hard decision or a selection answer -- because
+  // "做完 ONDA 後臉腫得厲害，處理要多少錢" is a safety turn that also names a price.
+  const resolution =
+    resolved.speechAct === "unknown" &&
+    resolved.needsClarification &&
+    hasDeterministicExplicitPriceSubject(input.text)
+      ? { needsClarification: false, speechAct: "ask_price" as const }
+      : resolved;
   const sourceIntents = parsedFrame.intents.filter((intent) => INTENT_KEYS.has(intent));
   return {
     areas: makeMentionsConservative(entities.areas, resolution.needsClarification),

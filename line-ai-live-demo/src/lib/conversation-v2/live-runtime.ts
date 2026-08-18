@@ -8,6 +8,7 @@ import {
 } from "@/lib/clinic-facts";
 import {
   findAllTreatmentsByMessage,
+  findTreatmentByKey,
 } from "@/lib/clinic-config";
 import {
   type ConversationContext,
@@ -33,6 +34,7 @@ import {
   evaluateConversationV2CanaryGate,
   type ConversationV2CanaryGate,
 } from "./canary-gate";
+import { ensureCustomerSafeText } from "./customer-text-guard";
 import {
   hydrateConversationV2ReplyPlan,
   type HydratedConversationV2Reply,
@@ -337,6 +339,39 @@ function normalizeDecisionType(value: string): RouterDecision["decisionType"] {
     : "fallback_reply";
 }
 
+/**
+ * Customer-safe replacement used when a candidate reply leaks internal field labels.
+ * Deliberately generic: it is a safety net, not a conversational answer.
+ */
+const CUSTOMER_SAFE_TREATMENT_FALLBACK =
+  "這項療程的細節我想再幫您確認清楚一點。您比較在意哪個部位或困擾呢？我依院內核准資訊接著說明 😊";
+
+/**
+ * Tiered deterministic fallback.
+ *
+ * A generic "I did not understand" reply throws away context the customer already
+ * gave us and is the main source of the dead-end feeling. Only fall back to it when
+ * there genuinely is no treatment and no concern on record.
+ */
+function buildDeterministicFallbackText(context: ConversationContext) {
+  const focus = context.activeFocus;
+  const treatmentName = focus?.treatmentKey
+    ? findTreatmentByKey(focus.treatmentKey)?.name
+    : undefined;
+  const concernCount = focus?.concernKeys?.length ?? 0;
+
+  if (treatmentName && concernCount > 0) {
+    return `我先接著${treatmentName}與您在意的部位繼續整理 😊 您想先了解可評估的改善方向，還是安排免費諮詢由醫師現場評估呢？`;
+  }
+  if (treatmentName) {
+    return `我先接著${treatmentName}繼續說明 😊 您最想改善哪個部位或困擾呢？我依院內核准資訊幫您整理方向。`;
+  }
+  if (concernCount > 0) {
+    return "我先接著您提到的困擾整理 😊 想先了解院內可評估的方向，還是直接安排免費諮詢呢？";
+  }
+  return "想再確認一下您的需求 😊 可以告訴我想了解的療程、部位或困擾，我依院內核准資訊接著整理。";
+}
+
 function deterministicFallback(
   context: ConversationContext,
   state: ConversationV2State,
@@ -345,7 +380,7 @@ function deterministicFallback(
   at: string,
 ): RouterDecision {
   const receivedState = recordConversationV2TurnReceipt(state, turnId, at);
-  const replyText = "剛剛沒有完整理解您的問題，我先不亂猜。請再告訴我想了解的療程、部位或困擾，我會接著整理 😊";
+  const replyText = buildDeterministicFallbackText(context);
   const replyPlan = legacyDecisionToReplyPlan(
     {
       decisionType: "fallback_reply",
@@ -623,6 +658,86 @@ export async function routeConversationV2Canary(
       recentTurns: input.recentTurns,
     });
     if (!nlu?.frame) {
+      // Booking intent is parsed deterministically, so it must survive an NLU
+      // outage. Without this the customer saying "我要預約諮詢" is answered with
+      // "剛剛沒有完整理解您的問題" purely because the model returned no frame.
+      // The turn is still built through the adapter's frame-less contract and
+      // decided by the V2 engine; no booking logic lives here.
+      const deterministicBooking = buildConversationV2BookingUnderstanding({
+        message: routingMessage,
+        state,
+      });
+      if (!deterministicBooking?.explicit) {
+        return {
+          aiModel: nlu?.model,
+          aiTokensIn: nlu?.tokensIn,
+          aiTokensOut: nlu?.tokensOut,
+          dataStatus: "unavailable",
+          decision: deterministicFallback(
+            input.context,
+            state,
+            nlu?.errorCode ?? "nlu_unavailable",
+            turnId,
+            input.now.toISOString(),
+          ),
+          gate,
+          kind: "routed",
+          snapshotId: snapshot.snapshotId,
+        };
+      }
+      const bookingTurn = adaptNluFrameToConversationV2Turn({
+        frame: null,
+        ontology: snapshot.ontology,
+        receivedAt: input.now.toISOString(),
+        supplemental: { booking: deterministicBooking },
+        text: routingMessage,
+        turnId,
+      });
+      const bookingRouted = routeConversationTurnV2(state, bookingTurn);
+      if (bookingRouted.result) {
+        const bookingHydrated = await hydrateConversationV2ReplyPlan({
+          nextState: bookingRouted.nextState,
+          result: bookingRouted.result,
+          snapshot,
+          turn: bookingTurn,
+        }, {
+          resolveDoctorSchedule: ({ message, now }) =>
+            resolveDoctorScheduleDecision({ fallbackReply: "", message, today: now }),
+        });
+        const bookingPlan = bookingHydrated.rendererPlan;
+        if (bookingPlan) {
+          return {
+            aiModel: nlu?.model,
+            aiTokensIn: nlu?.tokensIn,
+            aiTokensOut: nlu?.tokensOut,
+            dataStatus: bookingHydrated.dataStatus,
+            decision: {
+              decisionType: normalizeDecisionType(bookingPlan.decisionType),
+              matchedKey: bookingPlan.matchedKey,
+              matchedType: bookingPlan.matchedType as RouterDecision["matchedType"],
+              nextContext: projectStateToContext({
+                context: input.context,
+                matchedKey: bookingPlan.matchedKey,
+                snapshot,
+                state: bookingHydrated.stateCommit === "commit"
+                  ? bookingRouted.nextState
+                  : recordConversationV2TurnReceipt(state, turnId, input.now.toISOString()),
+              }),
+              replyMessages: bookingPlan.richMessages,
+              replyPlan: bookingPlan,
+              replyText: ensureCustomerSafeText(
+                bookingPlan.fallbackText,
+                CUSTOMER_SAFE_TREATMENT_FALLBACK,
+              ),
+              suppressAiFooter: bookingPlan.suppressAiFooter,
+            },
+            gate,
+            kind: "routed",
+            snapshotId: snapshot.snapshotId,
+            ...(bookingHydrated.toolRequest ? { toolRequest: bookingHydrated.toolRequest } : {}),
+          };
+        }
+      }
       return {
         aiModel: nlu?.model,
         aiTokensIn: nlu?.tokensIn,
@@ -736,6 +851,12 @@ export async function routeConversationV2Canary(
       snapshot,
       state: committedState,
     });
+    // Internal labelled facts must never reach a customer. Call sites already pick
+    // approved copy; this check keeps that true for any future path as well.
+    const safeReplyText = ensureCustomerSafeText(
+      rendererPlan.fallbackText,
+      CUSTOMER_SAFE_TREATMENT_FALLBACK,
+    );
     return {
       aiModel: nlu.model,
       aiTokensIn: nlu.tokensIn,
@@ -748,7 +869,7 @@ export async function routeConversationV2Canary(
         nextContext,
         replyMessages: rendererPlan.richMessages,
         replyPlan: rendererPlan,
-        replyText: rendererPlan.fallbackText,
+        replyText: safeReplyText,
         suppressAiFooter: rendererPlan.suppressAiFooter,
       },
       gate,

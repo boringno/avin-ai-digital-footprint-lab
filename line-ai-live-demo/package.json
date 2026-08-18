@@ -65,6 +65,8 @@
     "validate:booking-lead-ownership": "tsx scripts/validate-booking-lead-ownership.ts",
     "validate:conversation-sessions": "tsx scripts/validate-conversation-sessions.ts",
     "validate:conversation-v2": "tsx src/lib/conversation-v2/validate-conversation-v2.ts",
+    "validate:conversation-v2-customer-experience": "tsx scripts/validate-conversation-v2-customer-experience.ts",
+    "validate:conversation-v2-journey": "tsx scripts/validate-conversation-v2-journey.ts",
     "validate:conversation-v2-nlu-adapter": "tsx scripts/validate-conversation-v2-nlu-adapter.ts",
     "validate:conversation-v2-repository": "tsx scripts/validate-conversation-v2-repository.ts",
     "validate:conversation-v2-runtime-shadow": "tsx scripts/validate-conversation-v2-runtime-shadow.ts",

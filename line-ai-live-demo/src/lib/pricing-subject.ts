@@ -8,6 +8,21 @@ import type { ConversationContext } from "@/lib/conversation-context";
 
 export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
 
+/**
+ * Hedged ways of naming a treatment ("我好像想問那個肉毒").
+ *
+ * A hedge means the customer has not committed to a subject, so a price answer must
+ * keep clarifying instead of borrowing whichever treatment happens to be active.
+ * Both the NLU adapter and the V2 policy gate on this, and they must never drift
+ * apart, so the pattern lives here beside the price wording it is paired with.
+ */
+export const HEDGED_TREATMENT_REFERENCE_PATTERN =
+  /(?:(?:好像|似乎|可能|也許).{0,8}(?:想問|想了解|是|指|哪個|那個)|(?:不確定|不太確定|不知道).{0,8}(?:是不是|哪一個|哪個|什麼療程)|某個.{0,4}(?:療程|治療))/u;
+
+export function isHedgedTreatmentReference(message: string) {
+  return HEDGED_TREATMENT_REFERENCE_PATTERN.test(message);
+}
+
 export type PricingQuestionKind =
   | "regular"
   | "post_campaign"

@@ -94,7 +94,9 @@ const SECONDARY_FALLBACKS: Record<DialogueAct, readonly string[]> = {
     "我會依您的目標整理方向；您想先改善哪個部位呢？",
   ],
   answer_followup: [
-    "我先直接接著您這題整理。您比較想了解改善方向、療程感受，還是恢復期呢？",
+    // Kept advancing rather than offering a menu: a three-way "方向／感受／恢復期"
+    // choice restarts discovery instead of moving toward a consultation.
+    "我先直接接著您這題整理。您想先了解可評估的改善方向，還是安排免費諮詢由醫師現場確認呢？",
     "我會延續目前的問題說明；您最想先確認哪個重點呢？",
   ],
   compare_options: [
@@ -395,10 +397,21 @@ function renderGuardedFallback(
     "這一輪不重複前面的介紹，我們直接往您現在最在意的差異繼續。",
     "前面的內容不用重說，您可以直接告訴我這次最想比較或確認的部分。",
   ];
+  // The per-act bank is written for a cold start: it asks the customer what they want
+  // without using anything they already told us. Once we hold a planned next question,
+  // a known need or a treatment, the context-aware candidates must be tried first,
+  // otherwise a customer who already said "雙下巴" is handed a generic menu again.
+  const hasConversationContext = Boolean(
+    input.plan.nextQuestion ||
+    input.plan.knownNeeds.length > 0 ||
+    input.plan.treatmentKeys.length > 0 ||
+    input.plan.concernKeys.length > 0,
+  );
   const secondaryCandidates = [
     input.plan.secondaryFallbackText,
-    ...SECONDARY_FALLBACKS[input.plan.dialogueAct],
-    ...dynamicSafeCandidates,
+    ...(hasConversationContext
+      ? [...dynamicSafeCandidates, ...SECONDARY_FALLBACKS[input.plan.dialogueAct]]
+      : [...SECONDARY_FALLBACKS[input.plan.dialogueAct], ...dynamicSafeCandidates]),
   ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
   const candidates: Array<{ text: string; variant: ReplyRendererFallbackVariant }> = [
     { text: input.plan.fallbackText, variant: "primary" },

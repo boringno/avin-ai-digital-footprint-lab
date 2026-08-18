@@ -197,6 +197,88 @@ function validateSafetyPreservation() {
   assert.equal(intentOnly.safetySignals.humanRequest, true, "intent safety evidence must be retained");
 }
 
+/**
+ * The deterministic price shortcut keys off the turn text, so a safety case whose text
+ * happens to name a treatment and ask a price must still route to safety. The rest of
+ * this file pins frames while leaving `text` at the default "測試訊息", which cannot
+ * exercise a text-driven shortcut at all -- that blind spot is why these cases exist.
+ */
+function validateDeterministicPriceShortcutRespectsSafety() {
+  const urgentWithPrice = adapt(
+    frame({ intents: ["pricing"], safety: { ...frame().safety, postTreatmentRisk: true } }),
+    undefined,
+    "做完 ONDA 後臉腫得厲害，處理要多少錢",
+  );
+  assert.equal(
+    urgentWithPrice.speechAct,
+    "urgent_safety",
+    "post-treatment risk must outrank a price question that names a treatment",
+  );
+
+  const pregnancyWithPrice = adapt(
+    frame({ intents: ["pricing"], safety: { ...frame().safety, pregnancyNursing: true } }),
+    undefined,
+    "我懷孕可以做 ONDA 嗎，費用多少",
+  );
+  assert.equal(
+    pregnancyWithPrice.speechAct,
+    "request_handoff",
+    "pregnancy must route to a human even when the turn asks a price",
+  );
+
+  const complaintWithPrice = adapt(
+    frame({
+      intents: ["pricing"],
+      safety: { ...frame().safety, complaint: true, humanRequest: true },
+    }),
+    undefined,
+    "ONDA 做完沒效果我要退費，想找真人",
+  );
+  assert.equal(
+    complaintWithPrice.speechAct,
+    "request_handoff",
+    "a complaint asking for a refund must not be answered as a price question",
+  );
+
+  // The narrowing above must not undo what the shortcut was built for: a clean
+  // low-confidence price question that names its treatment still has to reach the
+  // approved price resolver.
+  const lowConfidenceNamedPrice = adapt(
+    frame({ confidence: 0.4, intents: ["pricing"] }),
+    undefined,
+    "ONDA 有沒有活動價格",
+  );
+  assert.equal(
+    lowConfidenceNamedPrice.speechAct,
+    "ask_price",
+    "a named treatment plus explicit price wording must survive low NLU confidence",
+  );
+
+  for (const clearPriceQuestion of ["那個肉毒多少錢", "我不確定肉毒多少錢"]) {
+    const colloquialNamedPrice = adapt(
+      frame({ confidence: 0.4, intents: ["pricing"] }),
+      undefined,
+      clearPriceQuestion,
+    );
+    assert.equal(
+      colloquialNamedPrice.speechAct,
+      "ask_price",
+      `a colloquial but explicitly named price subject must not be treated as ambiguous: ${clearPriceQuestion}`,
+    );
+  }
+
+  const genuinelyHedgedPrice = adapt(
+    frame({ confidence: 0.4, intents: ["pricing"] }),
+    undefined,
+    "我好像想問那個肉毒多少錢",
+  );
+  assert.equal(
+    genuinelyHedgedPrice.speechAct,
+    "unknown",
+    "a genuinely uncertain treatment subject must still clarify",
+  );
+}
+
 function validateBookingSupplement() {
   const create = adapt(
     frame({ intents: ["booking", "treatment"], treatments: ["onda_pro"] }),
@@ -472,6 +554,7 @@ validateTreatmentAndEntityMapping();
 validateNegationPolarity();
 validateMultipleIntentResolution();
 validateSafetyPreservation();
+validateDeterministicPriceShortcutRespectsSafety();
 validateBookingSupplement();
 validateSelectionAndClarification();
 validateInvalidAndUnderspecifiedInputs();
