@@ -1,5 +1,6 @@
 import { clinicConfig, type ClinicConfig } from "@/lib/clinic-config";
 import { buildClinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
+import { DEFAULT_TENANT_ID } from "@/lib/conversation-store";
 import type { PricingCampaign } from "@/lib/seed-loader";
 import {
   createTreatmentKnowledgeResolver,
@@ -11,7 +12,10 @@ import type {
   CatalogCompleteness,
   ClinicFactsProvider,
   ClinicFactsSnapshot,
+  ClinicStateRegistryCatalog,
+  ClinicStateRegistryKeys,
 } from "./types";
+import { buildClinicStateRegistryCatalog } from "./state-registry-catalog";
 
 const MUTATING_DATE_METHODS = new Set([
   "setDate",
@@ -105,6 +109,10 @@ export type StaticClinicFactsProviderOptions = {
   snapshotId?: string;
   source?: string;
   staleTreatmentKeys?: readonly string[];
+  stateRegistryAnswerKeys?: readonly string[];
+  stateRegistryArchivedKeys?: Partial<ClinicStateRegistryKeys>;
+  stateRegistryCatalog?: ClinicStateRegistryCatalog;
+  stateRegistryOntologyVersion?: string;
   treatmentCatalogCompleteness?: CatalogCompleteness;
   treatmentSourceAvailable?: boolean;
   treatments?: readonly TreatmentKnowledge[];
@@ -127,13 +135,22 @@ export function createStaticClinicFactsProvider(
       : treatmentKnowledgeResolver.list());
   const configuredPrices = options.pricingCampaigns ?? [];
   const configuredOntology = options.ontology ?? buildClinicOntology(configuredClinic);
+  const approvedFactsById = options.approvedFactsById ?? {};
   const source = options.source?.trim() || "clinic_config_and_runtime_content";
   const baseSnapshotId = options.snapshotId?.trim() || "clinic-facts-static-v1";
 
   return {
-    async loadSnapshot({ now }): Promise<ClinicFactsSnapshot> {
+    async loadSnapshot({ now, tenantId }): Promise<ClinicFactsSnapshot> {
+      const stateRegistryCatalog = options.stateRegistryCatalog ?? buildClinicStateRegistryCatalog({
+        answerKeys: options.stateRegistryAnswerKeys,
+        approvedFactIds: Object.keys(approvedFactsById),
+        archived: options.stateRegistryArchivedKeys,
+        ontology: configuredOntology,
+        ontologyVersion: options.stateRegistryOntologyVersion,
+        tenantId: tenantId?.trim() || DEFAULT_TENANT_ID,
+      });
       return deepImmutableClone({
-        approvedFactsById: options.approvedFactsById ?? {},
+        approvedFactsById,
         asOf: new Date(now),
         clinic: configuredClinic,
         explicitAllBranchTreatmentKeys: new Set(options.explicitAllBranchTreatmentKeys ?? []),
@@ -144,6 +161,7 @@ export function createStaticClinicFactsProvider(
         pricingCampaigns: configuredPrices,
         snapshotId: baseSnapshotId,
         source,
+        stateRegistryCatalog,
         staleTreatmentKeys: new Set(options.staleTreatmentKeys ?? []),
         treatmentCatalogCompleteness: options.treatmentCatalogCompleteness ?? "partial",
         treatmentSourceAvailable: options.treatmentSourceAvailable ?? true,

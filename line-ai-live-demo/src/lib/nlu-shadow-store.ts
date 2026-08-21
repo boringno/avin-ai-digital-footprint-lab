@@ -80,7 +80,7 @@ type NluShadowQueryResult<T> = {
 
 type StoredOntologyRegistry = {
   areas: Array<{ key: string; label: string }>;
-  concerns: Array<{ areaKeys: string[]; key: string }>;
+  concerns: Array<{ areaKeys: string[]; key: string; label?: string }>;
   schemaVersion: 1;
   treatments: Array<{
     category: ClinicOntology["treatments"][number]["category"];
@@ -109,6 +109,18 @@ export type NluShadowTimelineQueryClient = {
   from(table: string): NluShadowTimelineQueryBuilder;
 };
 
+export type NluShadowObservationPatchQueryBuilder = {
+  eq(column: string, value: unknown): NluShadowObservationPatchQueryBuilder;
+  select(columns: string): PromiseLike<NluShadowQueryResult<unknown[]>>;
+  update(values: Record<string, unknown>): NluShadowObservationPatchQueryBuilder;
+};
+
+export type NluShadowObservationPatchQueryClient = {
+  from(table: string): NluShadowObservationPatchQueryBuilder;
+};
+
+export type NluShadowObservationPatchResult = "applied" | "skipped";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -126,7 +138,7 @@ function parseStringArray(value: unknown) {
 function compactOntology(ontology: ClinicOntology): StoredOntologyRegistry {
   return {
     areas: ontology.areas.map(({ key, label }) => ({ key, label })),
-    concerns: ontology.concerns.map(({ areaKeys, key }) => ({ areaKeys: [...areaKeys], key })),
+    concerns: ontology.concerns.map(({ areaKeys, key, label }) => ({ areaKeys: [...areaKeys], key, label })),
     schemaVersion: 1,
     treatments: ontology.treatments.map(({ category, key, name }) => ({ category, key, name })),
   };
@@ -153,6 +165,7 @@ function parseStoredOntology(value: unknown): ClinicOntology | null {
       areaKeys: parsedAreaKeys,
       key: item.key.trim(),
       keywords: [],
+      label: isNonEmptyString(item.label) ? item.label.trim() : item.key.trim(),
       recommendedTreatmentKeys: [],
       summary: "",
     }];
@@ -256,6 +269,10 @@ function parseShadowObservationRow(value: unknown): ShadowObservationRow | null 
 function parseDecision(value: unknown): DeterministicDecisionSnapshot {
   const record = isRecord(value) ? value : {};
   return {
+    ...record,
+    ...(isRecord(record.conversationV2)
+      ? { conversationV2: record.conversationV2 }
+      : {}),
     ...(typeof record.conversationStatus === "string"
       ? { conversationStatus: record.conversationStatus }
       : {}),
@@ -391,12 +408,24 @@ export async function loadNluShadowConversationTimeline(input: {
 export async function patchNluShadowObservationDecision(input: {
   deterministicDecision: DeterministicDecisionSnapshot;
   divergenceCategories: string[];
+  /**
+   * Full JSONB snapshot read before replay. This is a compare-and-swap guard:
+   * a concurrent writer (including a future schema writer) must make the
+   * update affect zero rows instead of being overwritten by this runtime.
+   */
+  expectedDeterministicDecision: DeterministicDecisionSnapshot;
   messageId: string;
   promptVersion: string;
   tenantId?: string;
-}) {
-  if (!input.messageId || !hasSupabaseServerConfig()) return;
-  const { error } = await getSupabaseServerClient()
+}, dependencies: {
+  client?: NluShadowObservationPatchQueryClient;
+  hasServerConfig?: () => boolean;
+} = {}): Promise<NluShadowObservationPatchResult> {
+  const hasServerConfig = dependencies.hasServerConfig ?? hasSupabaseServerConfig;
+  if (!input.messageId || !hasServerConfig()) return "skipped";
+  const supabase = dependencies.client
+    ?? getSupabaseServerClient() as unknown as NluShadowObservationPatchQueryClient;
+  const { data, error } = await supabase
     .from("nlu_shadow_observations")
     .update({
       deterministic_decision: input.deterministicDecision,
@@ -404,8 +433,13 @@ export async function patchNluShadowObservationDecision(input: {
     })
     .eq("tenant_id", input.tenantId ?? TENANT_ID)
     .eq("message_id", input.messageId)
-    .eq("prompt_version", input.promptVersion);
+    .eq("prompt_version", input.promptVersion)
+    // JSONB equality is order-insensitive. Unlike a schemaVersion text filter,
+    // this also rejects malformed or unknown future envelopes fail-closed.
+    .eq("deterministic_decision", JSON.stringify(input.expectedDeterministicDecision))
+    .select("message_id");
   if (error) throw new Error(`Failed to patch Conversation V2 shadow decision: ${error.message}`);
+  return data && data.length === 1 ? "applied" : "skipped";
 }
 
 export async function storeNluShadowObservation(input: NluShadowObservation) {

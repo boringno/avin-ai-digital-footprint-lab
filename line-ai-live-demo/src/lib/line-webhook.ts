@@ -399,6 +399,16 @@ export type ReplySendResult = {
   webhookEventId: string;
 };
 
+export type ConfirmedReplyDelivery = {
+  /** Stable across LINE webhook redelivery; contains no customer message text. */
+  deliveryId: string;
+  /** LINE accepted the reply request at this time; this is not a read receipt. */
+  deliveredAt: string;
+  messageId: string;
+  sourceUserId: string;
+  webhookEventId: string;
+};
+
 const NON_TEXT_REPLY = "目前我先支援文字訊息，如果方便的話，請直接用文字告訴我想了解的內容，我先幫您整理。";
 const INTRO_TEXT = `您好，我是${clinicConfig.aiName}，先幫您處理線上常見問題與預約整理。`;
 
@@ -1017,17 +1027,65 @@ async function sendReplyRequest(replyPayload: NonNullable<ProcessedWebhookResult
       signal: controller.signal,
     });
 
-    return response;
+    let responseBody = "";
+    try {
+      responseBody = await response.text();
+    } catch (error) {
+      // Once LINE has returned an HTTP status, that status is the delivery
+      // boundary. A broken response-body stream must never turn a confirmed
+      // 2xx into an unknown result and reuse the single-use reply token.
+      responseBody = response.ok
+        ? ""
+        : error instanceof Error
+          ? `Unable to read LINE error response: ${error.message}`
+          : "Unable to read LINE error response";
+    }
+    return { response, responseBody };
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-type SendReplyPayloadOptions = {
+export type SendReplyPayloadOptions = {
   authorizeBeforeSend?: (result: ProcessedWebhookResult) => Promise<boolean>;
+  /**
+   * Post-2xx hook for a future State V3 delivery commit. Failure is reported
+   * but never retries an already accepted LINE reply.
+   */
+  onConfirmedDelivery?: (
+    delivery: ConfirmedReplyDelivery,
+  ) => Promise<void>;
+  now?: () => Date;
   retryCount: number;
   timeoutMs: number;
 };
+
+export function buildConfirmedReplyDelivery(
+  result: ProcessedWebhookResult,
+  sendResult: ReplySendResult,
+  deliveredAt: string,
+): ConfirmedReplyDelivery | null {
+  if (
+    !sendResult.ok ||
+    sendResult.suppressedReason !== undefined ||
+    sendResult.status < 200 ||
+    sendResult.status >= 300 ||
+    !Number.isFinite(Date.parse(deliveredAt))
+  ) return null;
+  const publicEventId = result.webhookEventId || result.messageId;
+  const stableEventId = publicEventId || crypto
+    .createHash("sha256")
+    .update(result.replyToken)
+    .digest("hex")
+    .slice(0, 24);
+  return {
+    deliveredAt,
+    deliveryId: `line-reply:${stableEventId}`,
+    messageId: result.messageId,
+    sourceUserId: result.sourceUserId,
+    webhookEventId: result.webhookEventId,
+  };
+}
 
 export async function isReplyStillAuthorized(
   result: ProcessedWebhookResult,
@@ -1137,14 +1195,17 @@ export async function sendReplyPayloads(
         break;
       }
       try {
-        const response = await sendReplyRequest(result.replyPayload, accessToken, options.timeoutMs);
-        const body = await response.text();
+        const { response, responseBody } = await sendReplyRequest(
+          result.replyPayload,
+          accessToken,
+          options.timeoutMs,
+        );
         finalResult = {
           attempts: attempt,
           ok: response.ok,
           messageId: result.messageId,
           replyToken: result.replyToken,
-          responseBody: body,
+          responseBody,
           status: response.status,
           webhookEventId: result.webhookEventId,
         };
@@ -1211,6 +1272,32 @@ export async function sendReplyPayloads(
         status: finalResult.status,
         webhookEventId: result.webhookEventId,
       });
+    }
+
+    const confirmedDelivery = options.onConfirmedDelivery
+      ? buildConfirmedReplyDelivery(
+          result,
+          finalResult,
+          (options.now ?? (() => new Date()))().toISOString(),
+        )
+      : null;
+    if (confirmedDelivery && options.onConfirmedDelivery) {
+      try {
+        await options.onConfirmedDelivery(confirmedDelivery);
+      } catch (error) {
+        // LINE already accepted this reply. Retrying would risk a duplicate;
+        // leave State V3 uncommitted until a durable outbox can reconcile it.
+        await reportOperationalError({
+          alert: false,
+          error,
+          extra: {
+            delivery_id: confirmedDelivery.deliveryId,
+            message_id: result.messageId,
+            webhook_event_id: result.webhookEventId,
+          },
+          source: "line_reply_delivery_commit_failed",
+        });
+      }
     }
 
     sendResults.push(finalResult);

@@ -1,5 +1,10 @@
 import type { LineReplyMessage } from "@/lib/treatment-carousel";
 import {
+  cloneResponseContractAttachment,
+  createOffResponseContract,
+  type ResponseContractAttachment,
+} from "@/lib/response-contract";
+import {
   buildTreatmentApprovedFacts,
   buildTreatmentApprovedFactsForMode,
   resolveTreatmentKnowledgeByKey,
@@ -54,6 +59,7 @@ export type ReplyPlan = {
   prohibitedClaims: string[];
   recommendationReasons: string[];
   renderMode: ReplyRenderMode;
+  responseContract: ResponseContractAttachment;
   requiresHuman: boolean;
   richMessages: LineReplyMessage[];
   secondaryFallbackText?: string;
@@ -87,6 +93,7 @@ export type LegacyReplyPlanOptions = {
   prohibitedClaims?: readonly string[];
   recommendationReasons?: readonly string[];
   renderMode?: ReplyRenderMode;
+  responseContract?: ResponseContractAttachment;
   requiresHuman?: boolean;
   secondaryFallbackText?: string;
   strategyInstructions?: readonly string[];
@@ -246,6 +253,9 @@ export function legacyDecisionToReplyPlan(
     prohibitedClaims: normalizeStrings(options.prohibitedClaims ?? DEFAULT_PROHIBITED_CLAIMS),
     recommendationReasons: normalizeStrings(options.recommendationReasons),
     renderMode: hardDeterministic ? "deterministic" : options.renderMode ?? "generated",
+    responseContract: cloneResponseContractAttachment(
+      options.responseContract ?? createOffResponseContract(),
+    ),
     requiresHuman,
     richMessages,
     secondaryFallbackText: options.secondaryFallbackText?.trim() || undefined,

@@ -1,5 +1,5 @@
 import { createEmptyConversationContext, type ConversationContext } from "../src/lib/conversation-context";
-import { clinicConfig } from "../src/lib/clinic-config";
+import { clinicConfig, findConcernByMessage } from "../src/lib/clinic-config";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
 const NOW = new Date("2026-08-06T06:00:00.000Z");
@@ -96,6 +96,18 @@ function validatePackSchema() {
     );
   }
 
+  const dynamicWrinkles = clinicConfig.concernList.find((concern) => concern.key === "dynamic_wrinkles");
+  assert(
+    dynamicWrinkles?.label === "魚尾紋／抬頭紋／皺眉紋（動態紋）",
+    "TP4: customer-facing concern labels must be explicit and must not be derived from keyword order",
+  );
+  for (const alias of ["額頭紋", "抬頭紋", "皺眉紋", "眉間紋", "川字紋"]) {
+    assert(
+      findConcernByMessage(alias)?.key === "dynamic_wrinkles",
+      `TP4: search alias ${alias} must still resolve after display labels are separated`,
+    );
+  }
+
   console.log("PASS: TP4 treatment pack schema has stable, unique detail aspect keys");
 }
 
@@ -146,7 +158,9 @@ async function validateBotoxWrinkleProgression() {
   const { context, decisions } = await runTurns(["我想了解肉毒", "1", "皺眉紋", "皺眉紋", "價錢"]);
 
   assert(
-    decisions[2].replyText.includes("皺眉紋／眉間紋") && !decisions[2].replyText.includes("999"),
+    decisions[2].replyText.includes("皺眉紋（眉間動態紋）") &&
+      !decisions[2].replyText.includes("皺眉紋／眉間紋") &&
+      !decisions[2].replyText.includes("999"),
     "TP7: a specified wrinkle area must receive its configured detail without unsolicited pricing",
   );
   assert(!decisions[2].replyText.includes("平日還是假日"), "TP7: the wrinkle detail must not start booking");
@@ -166,6 +180,17 @@ async function validateBotoxWrinkleProgression() {
   );
   assert(!decisions[3].replyText.includes("999"), "TP7: repeating a booked detail must not repeat the price quote");
   assert(decisions[4].replyText.includes("999"), "TP7: an explicit price question must still return the approved price");
+
+  const availability = await runTurns(["我想了解肉毒", "皺眉紋", "請問有肉毒嗎"]);
+  const availabilityReply = availability.decisions[2].replyText;
+  assert(
+    availabilityReply.includes("魚尾紋／抬頭紋／皺眉紋（動態紋）"),
+    "TP7: availability follow-up must use the approved concern label",
+  );
+  assert(
+    !availabilityReply.includes("魚尾紋／抬頭紋／額頭紋"),
+    "TP7: search synonyms must never be rendered as separate customer choices",
+  );
   console.log("PASS: TP7 Botox wrinkle detail advances without repetition and only quotes on request");
 }
 

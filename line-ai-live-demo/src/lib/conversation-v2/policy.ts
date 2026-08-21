@@ -1,5 +1,6 @@
 import { findAllTreatmentsByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
 import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+import { createOffResponseContract } from "@/lib/response-contract";
 
 import {
   isPureAwaitingSelectionAnswer,
@@ -492,6 +493,7 @@ function generatedPlan(
       }),
       mode: "generated",
       objective: "承接客人選取的所有項目，逐項回答差異或適合方向，不重貼首輪介紹。",
+      responseContract: createOffResponseContract(),
       responseContext: cloneResponseContext(action.responseContext),
       selectedOptions: action.selectedOptions.map((option) => ({ ...option })),
       sourceTurnId: action.turnId,
@@ -553,6 +555,7 @@ function generatedPlan(
     objective: repeatedActiveOverview
       ? "承接客人重述的同一需求，補充一個尚未回答的重點並推進下一步；不得重貼完整首輪介紹。"
       : objectiveForTreatmentResponse(dialogueAct, action.responseContext),
+    responseContract: createOffResponseContract(),
     responseContext: cloneResponseContext(action.responseContext),
     sourceTurnId: action.turnId,
   };
@@ -568,6 +571,7 @@ function deterministicPlan(
         dialogueAct: "clarify",
         mode: "deterministic",
         nextQuestion: action.awaiting.prompt,
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "clarify_with_options",
         templateVariables: {
@@ -584,6 +588,7 @@ function deterministicPlan(
             ? "manage_booking"
             : "collect_booking",
         mode: "deterministic",
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: action.type,
         templateVariables: {},
@@ -593,6 +598,7 @@ function deterministicPlan(
         action: action.type,
         dialogueAct: "answer_clinic_info",
         mode: "deterministic",
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "clinic_info",
         templateVariables: { topic: action.topic ?? "general" },
@@ -609,6 +615,7 @@ function deterministicPlan(
           kind: action.priceKind,
           treatmentKeys: [...action.treatmentKeys],
         },
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "approved_price_lookup",
         templateVariables: {
@@ -621,6 +628,7 @@ function deterministicPlan(
         action: action.type,
         dialogueAct: "handoff",
         mode: "deterministic",
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "handoff_queued",
         templateVariables: {},
@@ -630,6 +638,7 @@ function deterministicPlan(
         action: action.type,
         dialogueAct: "answer_safety",
         mode: "deterministic",
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "urgent_safety",
         templateVariables: {},
@@ -640,6 +649,7 @@ function deterministicPlan(
         dialogueAct: "clarify",
         mode: "deterministic",
         nextQuestion: action.prompt,
+        responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "fallback_clarify",
         templateVariables: { prompt: action.prompt },
@@ -657,6 +667,7 @@ function planForAction(state: ConversationV2State, action: DialoguePolicyAction)
       action: action.type,
       mode: "silent",
       reason: action.reason,
+      responseContract: createOffResponseContract(),
       sourceTurnId: action.turnId,
     };
   }

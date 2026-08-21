@@ -143,12 +143,21 @@ function campaignScore(
   snapshot: ClinicFactsSnapshot,
   campaign: PriceCatalogEntry,
   treatmentKeys: readonly string[],
+  requestedCampaignId?: string,
 ) {
   const campaignKeys = campaignTreatmentKeys(snapshot, campaign);
   const requested = unique(treatmentKeys);
   const knowledge = requested.flatMap((key) =>
     snapshot.treatments.filter((treatment) => treatment.key === key));
   const approvedById = knowledge.some((treatment) => treatment.approvedPriceIds.includes(campaign.id));
+  if (requestedCampaignId) {
+    const isAuthorizedOffer =
+      campaign.id === requestedCampaignId &&
+      approvedById &&
+      requested.length > 0 &&
+      requested.every((key) => campaignKeys.includes(key));
+    return isAuthorizedOffer ? 1_000 : 0;
+  }
   const ownsAllTreatments =
     requested.length > 0 &&
     requested.length === campaignKeys.length &&
@@ -316,7 +325,7 @@ export function resolveApprovedPrice(
       applicability: applicabilityState(snapshot, campaign, query.applicability),
       campaign,
       index,
-      score: campaignScore(snapshot, campaign, treatmentKeys),
+      score: campaignScore(snapshot, campaign, treatmentKeys, query.campaignId),
       state: campaignState(
         campaign,
         snapshot.asOf,

@@ -200,7 +200,7 @@ export function parseNluFrame(
 export function buildNluInstructions(sourceOntology: ClinicOntology = clinicOntology) {
   const promptOntology = {
     areas: sourceOntology.areas.map(({ key, keywords, label }) => ({ key, keywords, label })),
-    concerns: sourceOntology.concerns.map(({ areaKeys, key, keywords }) => ({ areaKeys, key, keywords })),
+    concerns: sourceOntology.concerns.map(({ areaKeys, key, keywords, label }) => ({ areaKeys, key, keywords, label })),
     treatments: sourceOntology.treatments.map(({ aliases, key, name }) => ({ aliases, key, name })),
   };
 

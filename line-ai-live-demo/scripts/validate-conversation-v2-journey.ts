@@ -58,8 +58,22 @@ const ondaCampaign = {
   treatment_name: "ONDA PRO",
 };
 
+const ondaFaceCombinationCampaign = {
+  ...ondaCampaign,
+  booking_treatments: "ONDA PRO|肉毒",
+  campaign_aliases: "臉部輪廓組合|ONDA雙下巴|ONDA嘴邊肉|雙下巴方案|嘴邊肉方案|12999|12,999",
+  campaign_name: "2026 ONDA Pro＋肉毒小臉方案",
+  customer_price_text: "12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）",
+  end_date: "2026-08-31",
+  id: "promo-2026-08-face-contour-combo",
+  price_text: "12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）",
+  treatment_name: "臉部輪廓組合",
+};
+
 function factsProvider() {
-  return createStaticClinicFactsProvider({ pricingCampaigns: [ondaCampaign] });
+  return createStaticClinicFactsProvider({
+    pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign],
+  });
 }
 
 type FrameOverrides = Partial<NluFrame>;
@@ -145,6 +159,10 @@ function assertCustomerVisibleInvariants(turnIndex: number, replyText: string) {
   assert.ok(
     !replyText.includes(THREE_OPTION_LEGACY_TEXT),
     `turn ${turnIndex}: the non-advancing three-option menu must not be used`,
+  );
+  assert.ok(
+    !replyText.includes("我會從目前進度接著整理"),
+    `turn ${turnIndex}: contextual turns must not use the empty generic fallback`,
   );
 }
 
@@ -232,6 +250,12 @@ async function validateSixTurnJourney() {
   assert.ok(
     !turn4.decision.replyText.includes("哪一項療程"),
     "turn 4 must not ask which treatment when ONDA is already active",
+  );
+  assert.ok(
+    turn4.decision.replyText.includes("16,888") &&
+      turn4.decision.replyText.includes("12,999") &&
+      turn4.decision.replyText.includes("內容不同"),
+    `turn 4 must distinguish standalone and combination prices in a face-concern context: ${turn4.decision.replyText}`,
   );
   context = turn4.decision.nextContext;
 
@@ -373,6 +397,33 @@ async function validatePricingOwnership() {
   assert.ok(
     explicitSubject.decision.replyText.includes(ONDA_PRICE_AMOUNT),
     `P2: the reply must quote the approved ONDA amount: ${explicitSubject.decision.replyText}`,
+  );
+
+  const priceAndConcern = await askPrice({
+    context: activeContext,
+    frameOverrides: {
+      concerns: [{ area: "face", key: "jawline_looseness" }],
+      dialogue: { focus: "price_campaign", move: "continue", reference: "active_subject", speechAct: "ask_price" },
+      intents: ["pricing"],
+      treatments: [],
+    },
+    message: "有活動嗎？我在意肉肉臉",
+    userId: "U-price",
+  });
+  summarize("P2a", "有活動嗎？我在意肉肉臉", priceAndConcern.decision);
+  assert.ok(
+    priceAndConcern.decision.replyText.includes("16,888") &&
+      priceAndConcern.decision.replyText.includes("12,999"),
+    `P2a: same-turn price plus concern must explain both approved offers: ${priceAndConcern.decision.replyText}`,
+  );
+  assert.ok(
+    priceAndConcern.decision.nextContext.activeFocus?.concernKeys.includes("jawline_looseness"),
+    "P2a: same-turn concern must remain in canonical context",
+  );
+  assert.doesNotMatch(
+    priceAndConcern.decision.replyText,
+    /(?:2026|08[\/-]31|8\s*月\s*31)/u,
+    "P2a: campaign dates are internal only",
   );
 
   const noSubject = await askPrice({

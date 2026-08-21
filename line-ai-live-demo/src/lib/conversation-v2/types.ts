@@ -8,6 +8,7 @@ import type {
   PriceApplicabilityDimensions,
   PriceQuery,
 } from "../clinic-facts";
+import type { ResponseContractAttachment } from "../response-contract";
 
 export const CONVERSATION_V2_SCHEMA_VERSION = 2 as const;
 
@@ -296,6 +297,7 @@ export type ReplyKnowledgeQuery = {
 
 type ReplyPlanBase = {
   action: DialoguePolicyAction["type"];
+  responseContract: ResponseContractAttachment;
   sourceTurnId: string;
 };
 

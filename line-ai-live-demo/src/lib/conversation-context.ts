@@ -13,6 +13,11 @@ import type { PersistedDialogueStateV1 } from "@/lib/dialogue-state";
 import {
   parsePersistedConversationV2State,
 } from "@/lib/conversation-v2/state";
+import {
+  parseConversationStatePersistenceEnvelope,
+  preserveConversationStateEnvelope,
+  type PreservedConversationStateEnvelope,
+} from "@/lib/conversation-v2/state-envelope";
 import type { ConversationV2State } from "@/lib/conversation-v2/types";
 
 export type BookingDraft = {
@@ -79,6 +84,12 @@ export type ConversationContext = {
   dialogueState?: PersistedDialogueStateV1;
   /** Test-account V2 state; ignored by V1 and validated before every read. */
   conversationV2State?: ConversationV2State;
+  /**
+   * Preservation-first V3/future state envelope. The generic context layer
+   * keeps raw JSON intact; tenant and registry validation happens only after
+   * the turn-scoped clinic facts snapshot is available.
+   */
+  conversationStateEnvelope?: PreservedConversationStateEnvelope;
   /** Optimistic concurrency epoch for the whole dialogue context JSON. */
   contextRevision?: number;
   introSent: boolean;
@@ -273,6 +284,7 @@ function hydrateConversationContext(
       bookingDraftJson.appointmentAt ?? contextJson.bookingDraft?.appointmentAt,
     ),
     contextRevision: normalizeContextRevision(contextJson.contextRevision),
+    conversationStateEnvelope: preserveConversationStateEnvelope(contextJson.conversationStateEnvelope),
     conversationV2State: parsePersistedConversationV2State(contextJson.conversationV2State) ?? undefined,
     customerProfile: normalizeCustomerProfile(contextJson.customerProfile),
     bookingDraft: {
@@ -427,7 +439,187 @@ const ACCUMULATING_STRING_ARRAY_PATHS = new Set([
   "treatmentConsultation.answeredAspectKeys",
   "treatmentConsultation.concernKeys",
 ]);
-const ATOMIC_CONTEXT_PATHS = new Set(["conversationV2State"]);
+const ATOMIC_CONTEXT_PATHS = new Set(["conversationStateEnvelope", "conversationV2State"]);
+
+type AtomicStateOrder = {
+  revision: number;
+  schemaVersion: number;
+  updatedAt: number;
+};
+
+type AtomicEnvelopeDescriptor =
+  | { kind: "absent" }
+  | { kind: "opaque"; registryId?: string; tenantId?: string }
+  | { kind: "future"; registryId?: string; tenantId?: string; version: number }
+  | {
+      kind: "valid";
+      order: AtomicStateOrder;
+      registryId: string;
+      tenantId: string;
+    };
+
+function rawEnvelopeScope(value: unknown) {
+  if (!isPlainObject(value)) return {};
+  return {
+    ...(typeof value.registryId === "string" && value.registryId.trim()
+      ? { registryId: value.registryId.trim() }
+      : {}),
+    ...(typeof value.tenantId === "string" && value.tenantId.trim()
+      ? { tenantId: value.tenantId.trim() }
+      : {}),
+  };
+}
+
+function describeAtomicEnvelope(value: unknown | typeof ABSENT): AtomicEnvelopeDescriptor {
+  if (value === ABSENT) return { kind: "absent" };
+  const parsed = parseConversationStatePersistenceEnvelope(value);
+  if (parsed.kind === "missing") return { kind: "absent" };
+  if (parsed.kind === "future_envelope") {
+    return {
+      kind: "future",
+      ...rawEnvelopeScope(parsed.raw),
+      version: parsed.version,
+    };
+  }
+  if (parsed.kind === "invalid") {
+    return { kind: "opaque", ...rawEnvelopeScope(parsed.raw) };
+  }
+  return {
+    kind: "valid",
+    order: {
+      revision: parsed.envelope.stateRevision,
+      schemaVersion: Number(parsed.envelope.state.schemaVersion),
+      updatedAt: Date.parse(parsed.envelope.stateUpdatedAt),
+    },
+    registryId: parsed.envelope.registryId,
+    tenantId: parsed.envelope.tenantId,
+  };
+}
+
+function selectEnvelopeContextValue(
+  base: unknown | typeof ABSENT,
+  incoming: unknown | typeof ABSENT,
+  latest: unknown | typeof ABSENT,
+  incomingIsLater: boolean,
+) {
+  const baseDescriptor = describeAtomicEnvelope(base);
+  const incomingDescriptor = describeAtomicEnvelope(incoming);
+  const latestDescriptor = describeAtomicEnvelope(latest);
+  const baseTenant = baseDescriptor.kind === "absent" ? undefined : baseDescriptor.tenantId;
+  const incomingTenant = incomingDescriptor.kind === "absent" ? undefined : incomingDescriptor.tenantId;
+  const latestTenant = latestDescriptor.kind === "absent" ? undefined : latestDescriptor.tenantId;
+
+  // A context CAS is never allowed to switch tenants merely because a foreign
+  // envelope has a later timestamp.
+  if (baseTenant) {
+    if (incomingTenant === baseTenant && latestTenant && latestTenant !== baseTenant) return incoming;
+    if (latestTenant === baseTenant && incomingTenant && incomingTenant !== baseTenant) return latest;
+    if (
+      incomingTenant && incomingTenant !== baseTenant &&
+      latestTenant && latestTenant !== baseTenant
+    ) return base;
+  } else if (incomingTenant && latestTenant && incomingTenant !== latestTenant) {
+    // Without a base snapshot, `latest` is the authoritative stored context.
+    // Never let an incoming write switch its tenant scope.
+    return latest;
+  }
+
+  if (incomingDescriptor.kind === "absent") return latest;
+  if (latestDescriptor.kind === "absent") return incoming;
+
+  const rank = (descriptor: AtomicEnvelopeDescriptor) => {
+    if (descriptor.kind === "future") return 3;
+    if (descriptor.kind === "opaque") return 2;
+    if (descriptor.kind === "valid") return 1;
+    return 0;
+  };
+  const incomingRank = rank(incomingDescriptor);
+  const latestRank = rank(latestDescriptor);
+  if (incomingRank !== latestRank) return incomingRank > latestRank ? incoming : latest;
+
+  if (incomingDescriptor.kind === "future" && latestDescriptor.kind === "future") {
+    if (incomingDescriptor.version !== latestDescriptor.version) {
+      return incomingDescriptor.version > latestDescriptor.version ? incoming : latest;
+    }
+  }
+  if (incomingDescriptor.kind === "valid" && latestDescriptor.kind === "valid") {
+    if (incomingDescriptor.order.schemaVersion !== latestDescriptor.order.schemaVersion) {
+      return incomingDescriptor.order.schemaVersion > latestDescriptor.order.schemaVersion ? incoming : latest;
+    }
+    // Within the same state schema, stay on the base canonical registry. A
+    // higher inner schema may legitimately introduce a registry migration and
+    // therefore wins before this guard.
+    if (baseDescriptor.kind === "valid") {
+      const baseRegistry = baseDescriptor.registryId;
+      if (incomingDescriptor.registryId === baseRegistry && latestDescriptor.registryId !== baseRegistry) {
+        return incoming;
+      }
+      if (latestDescriptor.registryId === baseRegistry && incomingDescriptor.registryId !== baseRegistry) {
+        return latest;
+      }
+      if (
+        incomingDescriptor.registryId !== baseRegistry &&
+        latestDescriptor.registryId !== baseRegistry
+      ) return base;
+    } else if (incomingDescriptor.registryId !== latestDescriptor.registryId) {
+      // Same state schema but no base: retain the authoritative stored
+      // registry. A higher state schema is handled above as an explicit
+      // forward migration signal.
+      return latest;
+    }
+    if (incomingDescriptor.order.updatedAt !== latestDescriptor.order.updatedAt) {
+      return incomingDescriptor.order.updatedAt > latestDescriptor.order.updatedAt ? incoming : latest;
+    }
+    if (incomingDescriptor.order.revision !== latestDescriptor.order.revision) {
+      return incomingDescriptor.order.revision > latestDescriptor.order.revision ? incoming : latest;
+    }
+  }
+  return incomingIsLater ? incoming : latest;
+}
+
+function atomicStateOrder(value: unknown | typeof ABSENT, path: string): AtomicStateOrder | undefined {
+  if (value === ABSENT || !isPlainObject(value)) return undefined;
+  if (path !== "conversationV2State") return undefined;
+  const revision = value.revision;
+  const schemaVersion = value.schemaVersion;
+  const updatedAt = typeof value.updatedAt === "string" ? Date.parse(value.updatedAt) : Number.NaN;
+  return Number.isSafeInteger(revision) && Number(revision) >= 0 &&
+    Number.isSafeInteger(schemaVersion) && Number.isFinite(updatedAt)
+    ? { revision: Number(revision), schemaVersion: Number(schemaVersion), updatedAt }
+    : undefined;
+}
+
+function selectAtomicContextValue(
+  base: unknown | typeof ABSENT,
+  incoming: unknown | typeof ABSENT,
+  latest: unknown | typeof ABSENT,
+  incomingIsLater: boolean,
+  path: string,
+) {
+  if (path === "conversationStateEnvelope") {
+    return selectEnvelopeContextValue(base, incoming, latest, incomingIsLater);
+  }
+  const incomingOrder = atomicStateOrder(incoming, path);
+  const latestOrder = atomicStateOrder(latest, path);
+
+  // An older runtime must never replace a future schema with a current one,
+  // even when the outer context timestamp happens to be later.
+  if (incomingOrder && latestOrder && incomingOrder.schemaVersion !== latestOrder.schemaVersion) {
+    return incomingOrder.schemaVersion > latestOrder.schemaVersion ? incoming : latest;
+  }
+  if (incomingOrder && latestOrder) {
+    if (incomingOrder.updatedAt !== latestOrder.updatedAt) {
+      return incomingOrder.updatedAt > latestOrder.updatedAt ? incoming : latest;
+    }
+    if (incomingOrder.revision !== latestOrder.revision) {
+      return incomingOrder.revision > latestOrder.revision ? incoming : latest;
+    }
+  } else if (incomingOrder || latestOrder) {
+    // Preserve the recognized state blob over a missing or malformed sibling.
+    return incomingOrder ? incoming : latest;
+  }
+  return incomingIsLater ? incoming : latest;
+}
 
 function valuesEqual(left: unknown | typeof ABSENT, right: unknown | typeof ABSENT): boolean {
   if (left === ABSENT || right === ABSENT) return left === right;
@@ -452,10 +644,19 @@ function rebaseContextValue(
   incomingIsLater: boolean,
   path = "",
 ): unknown | typeof ABSENT {
-  if (valuesEqual(incoming, base)) return latest;
-  if (valuesEqual(latest, base)) return incoming;
   if (ATOMIC_CONTEXT_PATHS.has(path)) {
-    return incomingIsLater ? incoming : latest;
+    return selectAtomicContextValue(base, incoming, latest, incomingIsLater, path);
+  }
+  const canMergeObject =
+    (base === ABSENT || isPlainObject(base)) &&
+    isPlainObject(incoming) &&
+    isPlainObject(latest);
+  // Recurse through objects even when one whole object still equals the base.
+  // Atomic descendants may carry an opaque/future schema that an old writer
+  // is not allowed to erase. Scalar and array values retain the fast path.
+  if (!canMergeObject) {
+    if (valuesEqual(incoming, base)) return latest;
+    if (valuesEqual(latest, base)) return incoming;
   }
   if (
     ACCUMULATING_STRING_ARRAY_PATHS.has(path) &&
@@ -474,11 +675,7 @@ function rebaseContextValue(
     // accumulation, so conflicting corrections remain last-event-wins.
     return incomingIsLater ? incoming : latest;
   }
-  if (
-    (base === ABSENT || isPlainObject(base)) &&
-    isPlainObject(incoming) &&
-    isPlainObject(latest)
-  ) {
+  if (canMergeObject) {
     const merged: Record<string, unknown> = {};
     const baseRecord = base === ABSENT ? {} : base;
     const keys = new Set([...Object.keys(baseRecord), ...Object.keys(incoming), ...Object.keys(latest)]);
@@ -598,12 +795,29 @@ export function mergeConcurrentConversationContexts(
     ? rebaseContextValue(base, incoming, latest, incomingIsLater)
     : incomingIsLater ? incoming : latest;
   const canonical = isPlainObject(rebased) ? rebased as unknown as ConversationContext : incoming;
-  return {
+  const merged: ConversationContext = {
     ...canonical,
     contextRevision: normalizeContextRevision(latest.contextRevision),
     recentTurns: mergeConcurrentRecentTurns(latest, incoming, incomingIsLater, base),
     userId: canonical.userId || latest.userId || incoming.userId,
-  } satisfies ConversationContext;
+  };
+  if (!base) {
+    for (const path of ATOMIC_CONTEXT_PATHS) {
+      const incomingValue = Object.prototype.hasOwnProperty.call(incoming, path)
+        ? incoming[path as keyof ConversationContext]
+        : ABSENT;
+      const latestValue = Object.prototype.hasOwnProperty.call(latest, path)
+        ? latest[path as keyof ConversationContext]
+        : ABSENT;
+      const selected = selectAtomicContextValue(ABSENT, incomingValue, latestValue, incomingIsLater, path);
+      if (selected === ABSENT) {
+        delete merged[path as keyof ConversationContext];
+      } else {
+        (merged as unknown as Record<string, unknown>)[path] = selected;
+      }
+    }
+  }
+  return merged;
 }
 
 async function loadAuthoritativeConversationContext(userId: string) {
