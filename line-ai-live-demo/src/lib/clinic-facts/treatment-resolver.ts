@@ -69,6 +69,14 @@ function treatmentMissingFields(
   if (questionAspect === "comfort_recovery") {
     return treatment.comfort || treatment.downtime ? [] : ["comfort_recovery"];
   }
+  // These aspects do not have dedicated fields in the current static
+  // TreatmentKnowledge schema.  Mechanism or expected-direction copy must not
+  // be treated as an answer to a side-effect, duration, or session-count
+  // question.  A snapshot-pinned approved reply asset may still satisfy the
+  // exact gap later in hydration.
+  if (questionAspect === "side_effects") return ["side_effects"];
+  if (questionAspect === "duration") return ["duration"];
+  if (questionAspect === "sessions") return ["sessions"];
   if (questionAspect === "brands" || questionAspect === "brand_difference") {
     return treatment.availableBrands.length > 0 || treatment.brandReplies.length > 0
       ? []

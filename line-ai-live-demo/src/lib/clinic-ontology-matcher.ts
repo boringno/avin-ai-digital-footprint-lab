@@ -1,5 +1,5 @@
 import { normalizeClinicText, type TreatmentAreaKey } from "@/lib/clinic-config";
-import { clinicOntology } from "@/lib/clinic-ontology";
+import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
 
 const NEGATION_PATTERNS = [
   /不(?:想|要|考慮|需要|接受|打|做|用)/u,
@@ -38,18 +38,21 @@ function collectMatches(message: string, entries: Array<{ key: string; terms: st
   });
 }
 
-export function matchClinicOntology(message: string): OntologyMatchResult {
+export function matchClinicOntology(
+  message: string,
+  sourceOntology: ClinicOntology = clinicOntology,
+): OntologyMatchResult {
   const normalizedMessage = normalizeClinicText(message);
   const areas = collectMatches(
     message,
-    clinicOntology.areas.map((area) => ({ key: area.key, terms: [area.label, ...area.keywords] })),
+    sourceOntology.areas.map((area) => ({ key: area.key, terms: [area.label, ...area.keywords] })),
   );
   const directConcerns = collectMatches(
     message,
-    clinicOntology.concerns.map((concern) => ({ key: concern.key, terms: concern.keywords })),
+    sourceOntology.concerns.map((concern) => ({ key: concern.key, terms: concern.keywords })),
   );
   const inferredConcernKeys = areas.flatMap((area) => {
-    const candidates = clinicOntology.concerns.filter((concern) => concern.areaKeys.includes(area.key as TreatmentAreaKey));
+    const candidates = sourceOntology.concerns.filter((concern) => concern.areaKeys.includes(area.key as TreatmentAreaKey));
     return candidates.length === 1 ? [candidates[0].key] : [];
   });
   const concernsByKey = new Map(directConcerns.map((concern) => [concern.key, concern]));
@@ -61,7 +64,7 @@ export function matchClinicOntology(message: string): OntologyMatchResult {
   const concerns = [...concernsByKey.values()];
   const treatments = collectMatches(
     message,
-    clinicOntology.treatments.map((treatment) => ({ key: treatment.key, terms: [treatment.name, ...treatment.aliases] })),
+    sourceOntology.treatments.map((treatment) => ({ key: treatment.key, terms: [treatment.name, ...treatment.aliases] })),
   );
   const negated = NEGATION_PATTERNS.some((pattern) => pattern.test(normalizedMessage));
   const hasMultipleEntities = treatments.length > 1 || concerns.length > 1 || areas.length > 1;

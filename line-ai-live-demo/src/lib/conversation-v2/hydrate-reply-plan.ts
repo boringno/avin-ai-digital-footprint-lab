@@ -10,6 +10,11 @@ import {
   type TreatmentKnowledgeResolution,
 } from "@/lib/clinic-facts";
 import {
+  buildTreatmentReplyAssets,
+  type TreatmentReplyAsset,
+} from "@/lib/clinic-facts/treatment-reply-assets";
+import type { QuestionAspect } from "@/lib/dialogue-semantics";
+import {
   DEFAULT_PROHIBITED_CLAIMS,
   legacyDecisionToReplyPlan,
   type DialogueAct,
@@ -149,6 +154,83 @@ function rendererDialogueAct(plan: GeneratedReplyPlan): DialogueAct {
   return plan.dialogueAct;
 }
 
+function resolvedAffirmedKeys(
+  mentions: TurnUnderstanding["treatments"] | TurnUnderstanding["concerns"],
+) {
+  return unique(
+    mentions
+      .filter((mention) =>
+        mention.polarity === "affirmed" && mention.resolution === "resolved")
+      .map((mention) => mention.key),
+  );
+}
+
+function approvedAssetQuestionAspects(asset: TreatmentReplyAsset): ReadonlySet<QuestionAspect> {
+  const aspect = asset.aspectKey?.trim().toLowerCase() ?? "";
+  if (/(?:side_effect|sideeffect|risk)/u.test(aspect)) return new Set<QuestionAspect>(["side_effects"]);
+  if (/(?:comfort|recovery|downtime)/u.test(aspect)) return new Set<QuestionAspect>(["comfort_recovery"]);
+  if (/(?:combination|single)/u.test(aspect)) {
+    return new Set<QuestionAspect>(["single_vs_combination", "combination_reason", "general_difference"]);
+  }
+  if (/(?:brand)/u.test(aspect)) return new Set<QuestionAspect>(["brands", "brand_difference"]);
+  if (/(?:duration)/u.test(aspect)) return new Set<QuestionAspect>(["duration"]);
+  if (/(?:session)/u.test(aspect)) return new Set<QuestionAspect>(["sessions"]);
+  if (/(?:feature|mechanism|cooling)/u.test(aspect)) return new Set<QuestionAspect>(["mechanism"]);
+  if (/(?:intro)/u.test(aspect)) return new Set<QuestionAspect>(["benefits", "mechanism"]);
+  return new Set<QuestionAspect>(["benefits", "suitability"]);
+}
+
+/**
+ * Resolve only the exact, snapshot-pinned approved asset selected by the
+ * semantic layer.  The asset may supply content for an already-decided V2
+ * action; it must never create or change the treatment/concern owner itself.
+ */
+function resolveApprovedReplyAsset(
+  input: HydrateConversationV2ReplyInput,
+  plan: GeneratedReplyPlan,
+): TreatmentReplyAsset | undefined {
+  const replyAssetId = input.turn.replyAssetId?.trim();
+  if (
+    !replyAssetId ||
+    input.turn.semanticEvidence !== "approved_asset" ||
+    input.turn.speechAct !== "ask_treatment_detail" ||
+    input.turn.questionAspect !== plan.responseContext.questionAspect
+  ) return undefined;
+
+  const treatmentKeys = unique(plan.knowledgeQuery.treatmentKeys);
+  const concernKeys = unique(plan.knowledgeQuery.concernKeys);
+  const turnTreatmentKeys = resolvedAffirmedKeys(input.turn.treatments);
+  const turnConcernKeys = resolvedAffirmedKeys(input.turn.concerns);
+  // An asset only fills an already-grounded, singular content request. It must
+  // not create an owner for a stale, ambiguous, or replay-injected turn.
+  if (
+    treatmentKeys.length !== 1 ||
+    concernKeys.length !== 1 ||
+    turnTreatmentKeys.length !== 1 ||
+    turnConcernKeys.length !== 1 ||
+    turnTreatmentKeys[0] !== treatmentKeys[0] ||
+    turnConcernKeys[0] !== concernKeys[0]
+  ) return undefined;
+
+  const asset = buildTreatmentReplyAssets(input.snapshot.clinic).find(
+    (candidate) => candidate.id === replyAssetId,
+  );
+  if (
+    !asset ||
+    !["detail", "quick"].includes(asset.kind) ||
+    !asset.aspectKey ||
+    !asset.customerCopy.trim() ||
+    asset.treatmentKey !== treatmentKeys[0] ||
+    !approvedAssetQuestionAspects(asset).has(input.turn.questionAspect)
+  ) return undefined;
+
+  if (
+    asset.concernKey &&
+    concernKeys[0] !== asset.concernKey
+  ) return undefined;
+  return asset;
+}
+
 /**
  * Deterministic customer-visible copy for a resolved treatment.
  *
@@ -281,6 +363,16 @@ export async function hydrateConversationV2ReplyPlan(
     const hasResolutionGaps = treatmentResolution.gaps.length > 0;
     const hasUnknownGaps = treatmentResolution.gaps.some((gap) => gap.status === "unknown");
     const hasRequestedDataGaps = treatmentResolution.requestedDataGaps.length > 0;
+    // A reviewed asset can fill a missing aspect only after the ordinary facts
+    // resolver has confirmed that the treatment itself has no availability,
+    // stale-source, or not-offered gap.  Real resolution gaps always win.
+    const approvedReplyAsset = hasResolutionGaps
+      ? undefined
+      : resolveApprovedReplyAsset(input, replyPlan);
+    const approvedAssetFacts = approvedReplyAsset ? [approvedReplyAsset.customerCopy] : [];
+    const approvedAssetNextQuestion = approvedReplyAsset?.followup ?? replyPlan.nextQuestion;
+    const hasApprovedAnswer = hasFacts || approvedAssetFacts.length > 0;
+    const hasUnresolvedRequestedData = hasRequestedDataGaps && !approvedReplyAsset;
     const partialInstruction = treatmentResolution.profileCompleteness === "partial"
       ? "請自然介紹目前已確認的方向；不得宣稱這是完整院內清單，也不得把缺資料解讀為院內沒有提供。"
       : "";
@@ -293,7 +385,12 @@ export async function hydrateConversationV2ReplyPlan(
       : replyPlan.dialogueAct === "introduce_treatment"
         ? treatmentResolution.customerIntroReplies.slice(0, 1)
         : [];
-    const fallbackText = hasResolutionGaps || hasRequestedDataGaps
+    const fallbackText = approvedReplyAsset
+      ? unique([
+          approvedReplyAsset.customerCopy,
+          approvedAssetNextQuestion ?? "",
+        ]).join("\n")
+      : hasResolutionGaps || hasRequestedDataGaps
       ? unique([
           ...gapCustomerCopy,
           hasResolutionGaps
@@ -307,26 +404,26 @@ export async function hydrateConversationV2ReplyPlan(
       );
     const rendererPlan = legacyDecisionToReplyPlan(
       {
-        decisionType: hasFacts ? "treatment_intro_reply" : "fallback_reply",
+        decisionType: hasApprovedAnswer ? "treatment_intro_reply" : "fallback_reply",
         matchedKey: `conversation_v2:${replyPlan.action}`,
         matchedType: "config",
         replyText: fallbackText,
       },
       {
-        approvedFacts: treatmentResolution.facts,
-        approvedKnowledge: treatmentResolution.facts,
+        approvedFacts: unique([...treatmentResolution.facts, ...approvedAssetFacts]),
+        approvedKnowledge: unique([...treatmentResolution.facts, ...approvedAssetFacts]),
         concernKeys: replyPlan.knowledgeQuery.concernKeys,
-        dialogueAct: hasFacts && !hasResolutionGaps && !hasRequestedDataGaps
+        dialogueAct: hasApprovedAnswer && !hasResolutionGaps && !hasUnresolvedRequestedData
           ? rendererDialogueAct(replyPlan)
           : "clarify",
         fallbackText,
         knowledgeSource: "turn_snapshot",
-        nextQuestion: replyPlan.nextQuestion,
+        nextQuestion: approvedAssetNextQuestion,
         prohibitedClaims: [
           ...DEFAULT_PROHIBITED_CLAIMS,
           "不得把資料未載入、未審核或查詢失敗解讀為院內未提供",
         ],
-        renderMode: hasFacts && !hasResolutionGaps && !hasRequestedDataGaps
+        renderMode: hasApprovedAnswer && !hasResolutionGaps && !hasUnresolvedRequestedData
           ? "generated"
           : "deterministic",
         responseContract: replyPlan.responseContract,
@@ -343,7 +440,7 @@ export async function hydrateConversationV2ReplyPlan(
       rendererPlan,
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",
-      ...(!hasUnknownGaps && !hasRequestedDataGaps
+      ...(!hasUnknownGaps && (!hasRequestedDataGaps || Boolean(approvedReplyAsset))
         ? {}
         : {
             toolRequest: factConfirmationRequest(

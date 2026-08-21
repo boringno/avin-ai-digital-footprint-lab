@@ -105,6 +105,7 @@ function isExplicitlyExcluded(
       new RegExp(`(?:不搭配|不搭|先不要搭(?:配)?)(?:做|打)?${escapedAlias}`, "u"),
       new RegExp(`(?:不想|不要|不用|不需要|不考慮|不選|不做|不打|先不|排除)(?:再|先)?(?:做|打|選|選擇|考慮|了解|問|要)?(?:的是)?${escapedAlias}`, "u"),
       new RegExp(`(?:^|我|而)不是(?:想|要|想做|要做|打|做|選|選擇|考慮|了解|問|在問)?(?:的是)?${escapedAlias}`, "u"),
+      new RegExp(`(?:^|我)(?:沒有|沒)(?:想|要|想要|要做|要打|要選|要了解|要問)(?:的是)?${escapedAlias}`, "u"),
       new RegExp(`${escapedAlias}(?:我)?(?:先)?(?:不要|不用|不需要|不考慮|不選|不做|不打|排除)`, "u"),
       new RegExp(`${escapedAlias}(?:我)?(?:先)?(?:不要搭配|不要搭|不搭配|不搭)`, "u"),
       new RegExp(`${escapedAlias}(?:我)?(?:先)?不想(?:做|打|選|選擇|考慮|了解|問)?`, "u"),

@@ -753,10 +753,10 @@ function suppliesExpectedBookingField(state: ConversationV2State, turn: TurnUnde
     name: Boolean(fields.name),
     phone: Boolean(fields.phone),
     time_slots: Boolean(fields.timeSlots?.length),
-    treatment: Boolean(
-      fields.treatmentKeys?.length &&
-        (turn.treatments.length === 0 || confirmedKeys(turn, turn.treatments).length > 0),
-    ),
+    // `booking.fields.treatmentKeys` comes from the deterministic booking
+    // adapter and is ontology-validated before policy. A low-confidence model
+    // echo must not veto the exact short answer the booking flow requested.
+    treatment: Boolean(fields.treatmentKeys?.length),
   };
   return supplied[state.bookingTask.expectedField];
 }
@@ -1022,7 +1022,7 @@ export function evaluateDialoguePolicy(
     } else if (
       Boolean(turn.clarification) ||
       hasAffirmedEntity ||
-      hasActionableNegation ||
+      (hasActionableNegation && hasCanonicalTreatmentKnowledge) ||
       isContextualDetailFollowup ||
       isContextualComparison
     ) {

@@ -178,6 +178,41 @@ export type BookingUnderstanding = {
   intent: BookingIntent;
 };
 
+/**
+ * High-trust evidence that the current customer text explicitly rejects an
+ * ontology entity. An empty key set is still meaningful: it says the sentence
+ * is a clear negation but its object could not be resolved deterministically,
+ * so model-produced positive entities must be discarded rather than guessed.
+ */
+export type DeterministicNegationGuard = {
+  affirmedAreaKeys: string[];
+  affirmedConcernKeys: string[];
+  affirmedTreatmentKeys: string[];
+  areaKeys: string[];
+  concernKeys: string[];
+  treatmentKeys: string[];
+};
+
+/**
+ * High-trust, customer-message evidence produced without asking the model to
+ * decide clinic facts. It may ground a low-confidence treatment-content turn,
+ * but it never carries prices, booking mutations, safety decisions, or prose.
+ */
+export type TrustedSemanticAnchor = {
+  areaKeys: string[];
+  concernKeys: string[];
+  conversationMove: ConversationMove;
+  dialogueReference: DialogueReference;
+  questionAspect: QuestionAspect;
+  replyAssetId?: string;
+  source: "active_subject_query" | "approved_asset" | "exact_ontology";
+  speechAct: Extract<
+    DialogueSpeechAct,
+    "ask_concern" | "ask_treatment_detail" | "learn_treatment"
+  >;
+  treatmentKeys: string[];
+};
+
 export type TurnSpeechAct = DialogueSpeechAct;
 
 export type TreatmentResponseContext = {
@@ -207,7 +242,10 @@ export type TurnUnderstanding = {
   priceApplicability?: PriceApplicabilityDimensions;
   questionAspect: QuestionAspect;
   receivedAt: string;
+  /** Snapshot-pinned approved content selected by a trusted semantic anchor. */
+  replyAssetId?: string;
   selection?: SelectionUnderstanding;
+  semanticEvidence?: TrustedSemanticAnchor["source"];
   speechAct: TurnSpeechAct;
   text: string;
   treatments: EntityMention[];
