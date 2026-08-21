@@ -181,6 +181,66 @@ expect(
   "different semantic axes for one LINE identity must stop replay instead of choosing a winner",
 );
 
+function approvedAssetTurn(replyAssetId: string, overrides: Partial<TurnUnderstanding> = {}) {
+  return turn({
+    areas: [{ confidence: 1, key: "jawline", polarity: "affirmed", resolution: "resolved" }],
+    concerns: [{ confidence: 1, key: "jawline_looseness", polarity: "affirmed", resolution: "resolved" }],
+    conversationMove: "continue",
+    dialogueReference: "active_subject",
+    questionAspect: "benefits",
+    replyAssetId,
+    semanticEvidence: "approved_asset",
+    speechAct: "ask_treatment_detail",
+    text: "脂肪堆積",
+    treatments: [{ confidence: 1, key: "onda_pro", polarity: "affirmed", resolution: "resolved" }],
+    turnId: `asset-${replyAssetId}`,
+    ...overrides,
+  });
+}
+
+const validAssetId = "treatment:onda_pro:detail:jawline_expectation";
+const invalidAssetRecords = [
+  approvedAssetTurn(validAssetId),
+  approvedAssetTurn("treatment:onda_pro:quick:benefits"),
+  approvedAssetTurn("treatment:onda_pro:detail:attacker_chosen_nonexistent"),
+  approvedAssetTurn(validAssetId, {
+    concerns: [{ confidence: 1, key: "local_contour", polarity: "affirmed", resolution: "resolved" }],
+  }),
+  approvedAssetTurn(validAssetId, { questionAspect: "brands" }),
+  approvedAssetTurn("treatment:onda_pro:quick:comfort_and_recovery", {
+    questionAspect: "benefits",
+  }),
+  approvedAssetTurn("treatment:onda_pro:intro:1"),
+  approvedAssetTurn("treatment:onda_pro:related:botox_small_face"),
+  approvedAssetTurn("treatment:onda_pro:feature:summary"),
+  approvedAssetTurn("not-an-asset-id"),
+  approvedAssetTurn("treatment:botox:detail:dynamic_wrinkles_evaluation"),
+  approvedAssetTurn(validAssetId, { semanticEvidence: undefined }),
+  approvedAssetTurn(validAssetId, { semanticEvidence: "exact_ontology" }),
+  approvedAssetTurn(validAssetId, { replyAssetId: undefined }),
+  approvedAssetTurn(validAssetId, { concerns: [] }),
+];
+const injectedAssetReplay = repository.replay({
+  episodeId: EPISODE,
+  records: invalidAssetRecords.map((candidate, index) => record({
+    lineTimestamp: 3_300 + index,
+    messageId: `msg-invalid-asset-${index}`,
+    turn: candidate,
+  })),
+  tenantId: TENANT,
+  userId: USER,
+});
+expect(
+  injectedAssetReplay.invalidRecords.length === invalidAssetRecords.length &&
+    injectedAssetReplay.appliedRecordCount === 0,
+  "schema-v2 replay rejects runtime-only asset evidence until a pinned snapshot catalog is available",
+);
+expect(
+  injectedAssetReplay.state.knowledge.treatmentKeys.length === 0 &&
+    injectedAssetReplay.state.knowledge.concernKeys.length === 0,
+  "invalid replay assets cannot mutate canonical conversation knowledge",
+);
+
 const wrongSchema = { ...startBooking, schemaVersion: 999 };
 const malformedTurn = {
   ...provideBranch,

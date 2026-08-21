@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 
+import { clinicConfig } from "../src/lib/clinic-config";
+import { clinicOntology } from "../src/lib/clinic-ontology";
 import type { NluFrame } from "../src/lib/nlu-frame";
 import {
   adaptNluFrameToConversationV2Turn,
   type ConversationV2NluAdapterInput,
   type ConversationV2NluSupplement,
 } from "../src/lib/conversation-v2/nlu-adapter";
+import { resolveDeterministicNegationGuard } from "../src/lib/conversation-v2/deterministic-negation";
+import { resolveTrustedSemanticAnchor } from "../src/lib/conversation-v2/semantic-anchor";
+import { createConversationV2State } from "../src/lib/conversation-v2/state";
+import type { ConversationV2State } from "../src/lib/conversation-v2/types";
 
 const RECEIVED_AT = "2026-08-14T09:00:00.000Z";
 let turnSequence = 0;
@@ -527,6 +533,743 @@ function validateV2DialogueContract() {
   assert.deepEqual(explicitArea.areas.map((item) => item.key), ["abdomen"]);
 }
 
+function activeOndaJawlineState(): ConversationV2State {
+  const state = createConversationV2State({
+    episodeId: "semantic-anchor",
+    now: RECEIVED_AT,
+  });
+  return {
+    ...state,
+    activeTask: {
+      id: "semantic-anchor:jawline",
+      kind: "answer_concern",
+      startedAt: RECEIVED_AT,
+      subjectKey: "treatment:onda_pro",
+    },
+    knowledge: {
+      approvedFactIds: [],
+      areaKeys: ["jawline"],
+      concernKeys: ["jawline_looseness"],
+      treatmentKeys: ["onda_pro"],
+    },
+  };
+}
+
+function validateTrustedSemanticAnchors() {
+  const emptyState = createConversationV2State({
+    episodeId: "semantic-anchor-empty",
+    now: RECEIVED_AT,
+  });
+  const exactAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "overview", speechAct: "learn_treatment" },
+    clinic: clinicConfig,
+    message: "ONDA",
+    ontology: clinicOntology,
+    state: emptyState,
+  });
+  assert.ok(exactAnchor, "an exact canonical treatment must produce a semantic anchor");
+  assert.equal(exactAnchor.source, "exact_ontology");
+  assert.deepEqual(exactAnchor.treatmentKeys, ["onda_pro"]);
+  assert.equal(exactAnchor.replyAssetId, undefined, "an ontology name alone must not invent a reply asset");
+
+  const frameLessExactAnchor = resolveTrustedSemanticAnchor({
+    clinic: clinicConfig,
+    message: "ONDA",
+    ontology: clinicOntology,
+    state: emptyState,
+  });
+  assert.ok(frameLessExactAnchor, "frame-less rescue may accept one exact short ontology entity");
+  assert.equal(frameLessExactAnchor.source, "exact_ontology");
+  const frameLessContentAnchor = resolveTrustedSemanticAnchor({
+    clinic: clinicConfig,
+    message: "ONDA 有什麼效果",
+    ontology: clinicOntology,
+    state: emptyState,
+  });
+  assert.ok(
+    frameLessContentAnchor,
+    "frame-less rescue must retain an explicit treatment with a fully consumed content question",
+  );
+  assert.equal(frameLessContentAnchor.speechAct, "ask_treatment_detail");
+  assert.equal(frameLessContentAnchor.questionAspect, "benefits");
+
+  const exactQuestionAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+    clinic: clinicConfig,
+    message: "ONDA 有什麼效果",
+    ontology: clinicOntology,
+    state: emptyState,
+  });
+  assert.ok(
+    exactQuestionAnchor,
+    "a unique explicit treatment must remain grounded when the customer also asks a content question",
+  );
+  assert.equal(exactQuestionAnchor.speechAct, "ask_treatment_detail");
+  assert.equal(exactQuestionAnchor.questionAspect, "benefits");
+  assert.deepEqual(exactQuestionAnchor.treatmentKeys, ["onda_pro"]);
+
+  const lowConfidenceOnda = v2Frame({
+    focus: "overview",
+    move: "start",
+    reference: "explicit",
+    speechAct: "learn_treatment",
+  }, {
+    confidence: 0.4,
+    intents: ["treatment_consultation"],
+    treatments: ["onda_pro"],
+  });
+  const withoutAnchor = adapt(lowConfidenceOnda, undefined, "ONDA");
+  assert.equal(
+    withoutAnchor.speechAct,
+    "unknown",
+    "the low-confidence control must remain unresolved without deterministic evidence",
+  );
+
+  const exactTurn = adapt(lowConfidenceOnda, { semanticAnchor: exactAnchor }, "ONDA");
+  assert.equal(exactTurn.speechAct, "learn_treatment");
+  assert.equal(exactTurn.confidence, 1, "trusted current-message evidence must outrank low model confidence");
+  assert.equal(exactTurn.semanticEvidence, "exact_ontology");
+  assert.deepEqual(
+    exactTurn.treatments.map(({ confidence, key, polarity, resolution }) => ({
+      confidence,
+      key,
+      polarity,
+      resolution,
+    })),
+    [{ confidence: 1, key: "onda_pro", polarity: "affirmed", resolution: "resolved" }],
+  );
+
+  const activeState = activeOndaJawlineState();
+  const frameLessAssetAnchor = resolveTrustedSemanticAnchor({
+    clinic: clinicConfig,
+    message: "脂肪堆積",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(
+    frameLessAssetAnchor,
+    "frame-less rescue must retain a unique approved asset under an active treatment and concern",
+  );
+  assert.equal(frameLessAssetAnchor.source, "approved_asset");
+  assert.equal(frameLessAssetAnchor.questionAspect, "benefits");
+  const assetAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+    clinic: clinicConfig,
+    message: "脂肪堆積",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(assetAnchor, "a reviewed concern-specific phrase must select an approved asset");
+  assert.equal(assetAnchor.source, "approved_asset");
+  assert.ok(assetAnchor.replyAssetId, "the anchor must carry the exact reviewed asset id");
+  assert.deepEqual(assetAnchor.treatmentKeys, ["onda_pro"]);
+  assert.deepEqual(assetAnchor.concernKeys, ["jawline_looseness"]);
+
+  const assetTurn = adapt(v2Frame({
+    focus: "benefits",
+    move: "continue",
+    reference: "active_subject",
+    speechAct: "ask_treatment_detail",
+  }, {
+    confidence: 0.4,
+    intents: ["treatment_consultation"],
+    treatments: ["onda_pro"],
+  }), { semanticAnchor: assetAnchor }, "脂肪堆積");
+  assert.equal(assetTurn.speechAct, "ask_treatment_detail");
+  assert.equal(assetTurn.confidence, 1);
+  assert.equal(assetTurn.semanticEvidence, "approved_asset");
+  assert.equal(assetTurn.replyAssetId, assetAnchor.replyAssetId);
+  assert.deepEqual(
+    assetTurn.concerns.map(({ confidence, key, polarity, resolution }) => ({
+      confidence,
+      key,
+      polarity,
+      resolution,
+    })),
+    [{ confidence: 1, key: "jawline_looseness", polarity: "affirmed", resolution: "resolved" }],
+  );
+  assert.deepEqual(
+    assetTurn.areas.map(({ confidence, key, polarity, resolution }) => ({
+      confidence,
+      key,
+      polarity,
+      resolution,
+    })),
+    [{ confidence: 1, key: "jawline", polarity: "affirmed", resolution: "resolved" }],
+  );
+
+  const supportedConcernAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "benefits", speechAct: "ask_concern" },
+    clinic: clinicConfig,
+    message: "雙下巴",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(supportedConcernAnchor, "a concern supported by the active treatment may inherit that owner");
+  assert.deepEqual(supportedConcernAnchor.treatmentKeys, ["onda_pro"]);
+
+  const brandQueryAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "brands", speechAct: "ask_treatment_detail" },
+    clinic: clinicConfig,
+    message: "脂肪堆積是哪個品牌",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(brandQueryAnchor, "an explicit brand question must retain the active treatment subject");
+  assert.equal(brandQueryAnchor.source, "active_subject_query");
+  assert.equal(brandQueryAnchor.questionAspect, "brands");
+  assert.equal(brandQueryAnchor.replyAssetId, undefined, "a brand query must not reuse a benefits asset");
+  assert.deepEqual(brandQueryAnchor.treatmentKeys, ["onda_pro"]);
+  assert.deepEqual(brandQueryAnchor.concernKeys, ["jawline_looseness"]);
+
+  const sideEffectQueryAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "side_effects", speechAct: "ask_treatment_detail" },
+    clinic: clinicConfig,
+    message: "脂肪型副作用",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(sideEffectQueryAnchor, "an explicit side-effect question must retain the active treatment subject");
+  assert.equal(sideEffectQueryAnchor.source, "active_subject_query");
+  assert.equal(sideEffectQueryAnchor.questionAspect, "side_effects");
+  assert.equal(sideEffectQueryAnchor.replyAssetId, undefined, "a side-effect query must not reuse a benefits asset");
+
+  for (const message of [
+    "脂肪型會不會有副作用",
+    "脂肪型有風險嗎",
+    "脂肪型會有什麼副作用",
+    "這個脂肪型有什麼副作用",
+    "脂肪型做完會有副作用嗎",
+    "脂肪型有沒有副作用",
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "side_effects", speechAct: "ask_treatment_detail" },
+      clinic: clinicConfig,
+      message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.ok(anchor, `natural side-effect wording must retain the active subject: ${message}`);
+    assert.equal(anchor.source, "active_subject_query", message);
+    assert.equal(anchor.questionAspect, "side_effects", message);
+    assert.equal(anchor.replyAssetId, undefined, message);
+  }
+  for (const input of [
+    { aspect: "side_effects" as const, message: "ONDA有沒有副作用" },
+    { aspect: "benefits" as const, message: "ONDA有沒有什麼效果" },
+    { aspect: "comfort_recovery" as const, message: "ONDA有沒有恢復期" },
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: input.aspect, speechAct: "ask_treatment_detail" },
+      clinic: clinicConfig,
+      message: input.message,
+      ontology: clinicOntology,
+      state: emptyState,
+    });
+    assert.ok(anchor, `yes/no wording must not be mistaken for negation: ${input.message}`);
+    assert.equal(anchor.questionAspect, input.aspect, input.message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], input.message);
+  }
+  for (const input of [
+    {
+      candidate: { questionAspect: "benefits" as const, speechAct: "unknown" as const },
+      expectedAspect: "brands" as const,
+      message: "脂肪堆積是哪個品牌",
+    },
+    {
+      candidate: { questionAspect: "mechanism" as const, speechAct: "unknown" as const },
+      expectedAspect: "side_effects" as const,
+      message: "脂肪型副作用",
+    },
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: input.candidate,
+      clinic: clinicConfig,
+      message: input.message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.ok(anchor, `current-text aspect evidence must override a mismatched model aspect: ${input.message}`);
+    assert.equal(anchor.source, "active_subject_query", input.message);
+    assert.equal(anchor.questionAspect, input.expectedAspect, input.message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], input.message);
+  }
+  for (const message of [
+    "有後遺症嗎",
+    "會不會有後遺症",
+    "有沒有後遺症",
+    "危險嗎",
+    "會不會傷身",
+    "風險高嗎",
+    "有什麼風險",
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "overview", speechAct: "unknown" },
+      clinic: clinicConfig,
+      message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.ok(anchor, `side-effect question grammar must retain the active subject: ${message}`);
+    assert.equal(anchor.source, "active_subject_query", message);
+    assert.equal(anchor.questionAspect, "side_effects", message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], message);
+  }
+  for (const message of [
+    "品牌叫什麼",
+    "什麼牌子的",
+    "用哪牌",
+    "哪一個牌子",
+    "原廠是哪家",
+    "哪個廠商",
+    "是哪家出的",
+    "機器品牌是什麼",
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "overview", speechAct: "unknown" },
+      clinic: clinicConfig,
+      message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.ok(anchor, `brand question grammar must retain the active subject: ${message}`);
+    assert.equal(anchor.source, "active_subject_query", message);
+    assert.equal(anchor.questionAspect, "brands", message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], message);
+  }
+  const compositionalAspectFamilies = [
+    {
+      aspect: "side_effects" as const,
+      activeMessages: [
+        "是否安全",
+        "安不安全",
+        "危不危險",
+        "傷不傷身",
+        "有無風險",
+        "會否有副作用",
+        "副作用大不大",
+        "副作用常不常見",
+        "風險嚴不嚴重",
+        "做完腫不腫",
+        "打完痛不痛",
+        "紅不紅",
+        "麻不麻",
+        "術後出不出血",
+        "起不起水泡",
+        "發炎嚴不嚴重",
+        "做完會否發炎",
+        "打完有無紅腫",
+        "打完紅腫久不久",
+        "後遺症多不多",
+        "會有風險對嗎",
+        "做起來危險不危險",
+      ],
+    },
+    {
+      aspect: "brands" as const,
+      activeMessages: [
+        "用的是哪個牌",
+        "哪一品牌",
+        "機台是哪個牌子",
+        "品牌名稱是什麼",
+        "哪個製造商",
+        "機器哪家製造",
+        "哪家公司出的",
+        "牌子為何",
+        "是誰家的機器",
+        "廠牌為何",
+        "用的哪間原廠",
+        "設備是哪家的",
+      ],
+    },
+  ];
+  const compositionalCandidateVariants = [
+    undefined,
+    { questionAspect: "overview" as const, speechAct: "unknown" as const },
+    { questionAspect: "benefits" as const, speechAct: "ask_treatment_detail" as const },
+  ];
+  for (const family of compositionalAspectFamilies) {
+    for (const activeMessage of family.activeMessages) {
+      for (const candidate of compositionalCandidateVariants) {
+        for (const scope of ["active", "explicit"] as const) {
+          const message = scope === "explicit" ? `ONDA${activeMessage}` : activeMessage;
+          const anchor = resolveTrustedSemanticAnchor({
+            candidate,
+            clinic: clinicConfig,
+            message,
+            ontology: clinicOntology,
+            state: scope === "explicit" ? emptyState : activeState,
+          });
+          assert.ok(
+            anchor,
+            `compositional ${family.aspect} grammar must resolve (${scope}): ${message}`,
+          );
+          assert.equal(anchor.questionAspect, family.aspect, message);
+          assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], message);
+        }
+      }
+    }
+  }
+  for (const message of [
+    "ONDA哪家公司出的朋友比較好",
+    "ONDA做完腫不腫我要改預約",
+    "ONDA有無風險費用多少",
+  ]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        candidate: undefined,
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: emptyState,
+      }),
+      undefined,
+      `unconsumed or hard-domain residue must fail closed: ${message}`,
+    );
+  }
+  for (const input of [
+    { aspect: "side_effects" as const, message: "ONDA有後遺症嗎" },
+    { aspect: "brands" as const, message: "ONDA機器品牌是什麼" },
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: undefined,
+      clinic: clinicConfig,
+      message: input.message,
+      ontology: clinicOntology,
+      state: emptyState,
+    });
+    assert.ok(anchor, `explicit treatment question grammar must resolve without an NLU frame: ${input.message}`);
+    assert.equal(anchor.source, "exact_ontology", input.message);
+    assert.equal(anchor.questionAspect, input.aspect, input.message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], input.message);
+  }
+  for (const input of [
+    { candidate: undefined, message: "ONDA做了之後會不會發炎", state: emptyState, source: "exact_ontology" as const },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "unknown" as const },
+      message: "ONDA做完有沒有副作用",
+      state: emptyState,
+      source: "exact_ontology" as const,
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "unknown" as const },
+      message: "做完有沒有副作用",
+      state: activeState,
+      source: "active_subject_query" as const,
+    },
+    {
+      candidate: { questionAspect: "side_effects" as const, speechAct: "ask_treatment_detail" as const },
+      message: "打完會不會發炎",
+      state: activeState,
+      source: "active_subject_query" as const,
+    },
+    {
+      candidate: undefined,
+      message: "ONDA做完會發炎嗎",
+      state: emptyState,
+      source: "exact_ontology" as const,
+    },
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: input.candidate,
+      clinic: clinicConfig,
+      message: input.message,
+      ontology: clinicOntology,
+      state: input.state,
+    });
+    assert.ok(anchor, `prospective risk education must have a deterministic owner: ${input.message}`);
+    assert.equal(anchor.source, input.source, input.message);
+    assert.equal(anchor.questionAspect, "side_effects", input.message);
+    assert.equal(anchor.speechAct, "ask_treatment_detail", input.message);
+    assert.deepEqual(anchor.treatmentKeys, ["onda_pro"], input.message);
+  }
+  for (const message of [
+    "脂肪堆積用什麼品牌",
+    "脂肪堆積是哪個牌子",
+    "脂肪型是哪個廠牌",
+    "這個脂肪型是哪個品牌",
+    "脂肪堆積是哪一牌",
+    "脂肪堆積什麼牌",
+    "脂肪堆積哪牌",
+  ]) {
+    const anchor = resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "brands", speechAct: "ask_treatment_detail" },
+      clinic: clinicConfig,
+      message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.ok(anchor, `natural brand wording must retain the active subject: ${message}`);
+    assert.equal(anchor.source, "active_subject_query", message);
+    assert.equal(anchor.questionAspect, "brands", message);
+    assert.equal(anchor.replyAssetId, undefined, message);
+  }
+
+  const unsupportedConcernAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "benefits", speechAct: "ask_concern" },
+    clinic: clinicConfig,
+    message: "毛孔",
+    ontology: clinicOntology,
+    state: activeState,
+  });
+  assert.ok(unsupportedConcernAnchor, "an explicit new concern must form a clean new ontology anchor");
+  assert.equal(unsupportedConcernAnchor.source, "exact_ontology");
+  assert.deepEqual(
+    unsupportedConcernAnchor.treatmentKeys,
+    [],
+    "a concern unsupported by the active treatment must detach that treatment",
+  );
+  assert.deepEqual(unsupportedConcernAnchor.concernKeys, ["pores_texture"]);
+  assert.deepEqual(unsupportedConcernAnchor.areaKeys, ["skin"]);
+  assert.equal(unsupportedConcernAnchor.conversationMove, "start");
+
+  const bookingCollectingState: ConversationV2State = {
+    ...activeState,
+    bookingTask: {
+      ...activeState.bookingTask,
+      expectedField: "treatment",
+      intent: "create",
+      status: "collecting",
+    },
+  };
+  for (const message of ["ONDA", "脂肪堆積"]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: bookingCollectingState,
+      }),
+      undefined,
+      `booking collection must disable every semantic anchor: ${message}`,
+    );
+  }
+
+  const rejectedCases = [
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "hedged treatment reference",
+      message: "我好像想問那個 ONDA",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "negated treatment",
+      message: "我不要 ONDA",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "copular negation",
+      message: "不是 ONDA",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "negation containing 沒有",
+      message: "我沒有要問 ONDA",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "unknown" as const },
+      label: "multiple treatments",
+      message: "ONDA 跟肉毒",
+    },
+    {
+      candidate: { questionAspect: "price_unspecified" as const, speechAct: "ask_price" as const },
+      label: "price question",
+      message: "ONDA 多少錢",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "book_consultation" as const },
+      label: "booking request",
+      message: "我要預約 ONDA",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "unknown" as const },
+      label: "clinic information question",
+      message: "ONDA 高雄館在哪",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "post-procedure reaction",
+      message: "ONDA做了之後發炎",
+    },
+    {
+      candidate: { questionAspect: "side_effects" as const, speechAct: "ask_treatment_detail" as const },
+      label: "asset aspect mismatch",
+      message: "脂肪",
+    },
+    {
+      candidate: { questionAspect: "benefits" as const, speechAct: "ask_treatment_detail" as const },
+      label: "asset phrase with an unsupported body area",
+      message: "屁股脂肪堆積",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "unknown" as const },
+      label: "unrecognized fee intent",
+      message: "ONDA 收費",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "unknown" as const },
+      label: "contact intent",
+      message: "ONDA 聯絡電話",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "unknown" as const },
+      label: "availability by branch intent",
+      message: "ONDA 哪間有",
+    },
+    {
+      candidate: { questionAspect: "none" as const, speechAct: "unknown" as const },
+      label: "unrecognized booking wording",
+      message: "ONDA 可以約",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "undecided customer statement",
+      message: "ONDA 還沒決定",
+    },
+    {
+      candidate: { questionAspect: "general_difference" as const, speechAct: "unknown" as const },
+      label: "external treatment comparison",
+      message: "ONDA 跟海芙差在哪",
+    },
+    {
+      candidate: { questionAspect: "overview" as const, speechAct: "learn_treatment" as const },
+      label: "treatment word used as a nickname",
+      message: "朋友綽號叫 ONDA",
+    },
+  ];
+  for (const item of rejectedCases) {
+    const rejected = resolveTrustedSemanticAnchor({
+      candidate: item.candidate,
+      clinic: clinicConfig,
+      message: item.message,
+      ontology: clinicOntology,
+      state: activeState,
+    });
+    assert.equal(rejected, undefined, `${item.label} must not be rescued by a content semantic anchor`);
+  }
+
+  for (const message of [
+    "ONDA 收費",
+    "ONDA 聯絡電話",
+    "ONDA 哪間有",
+    "ONDA 可以約",
+    "ONDA 還沒決定",
+    "ONDA 跟海芙差在哪",
+    "朋友綽號叫 ONDA",
+  ]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: activeState,
+      }),
+      undefined,
+      `frame-less rescue must accept only a short entity answer: ${message}`,
+    );
+  }
+
+  for (const message of [
+    "我不想了解ONDA",
+    "我沒有想了解ONDA",
+    "我並非想了解ONDA",
+  ]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: activeState,
+      }),
+      undefined,
+      `a negated content-intro phrase must not become a positive anchor: ${message}`,
+    );
+  }
+
+  for (const message of [
+    "我沒有興趣想了解ONDA",
+    "我沒興趣想問ONDA",
+    "我並無意願想知道ONDA",
+    "我無意想諮詢ONDA",
+    "我沒有打算想了解ONDA",
+    "沒有興趣要了解ONDA",
+    "沒有意願要問ONDA",
+    "並無打算要知道ONDA",
+    "不是有興趣想了解ONDA",
+    "並不是有意願想諮詢ONDA",
+    "我沒有太大興趣想了解ONDA",
+    "我沒多少興趣想問ONDA",
+    "我並無特別意願想知道ONDA",
+    "我沒有那個打算想了解ONDA",
+    "我沒有這個念頭想問ONDA",
+    "我沒有特別需求想知道ONDA",
+    "我沒有半點興趣想了解ONDA",
+    "我沒有很大的意願想諮詢ONDA",
+    "我沒啥興趣想問ONDA",
+    "我沒有興趣再想了解ONDA",
+    "我沒有多大興趣想了解ONDA",
+    "我沒有太大的興趣想了解ONDA",
+    "我並沒有多少的意願想問ONDA",
+    "我沒有絲毫興趣想知道ONDA",
+    "我沒有真正的意願想諮詢ONDA",
+    "我沒有任何的打算想了解ONDA",
+    "我沒有這方面的需求想問ONDA",
+    "我沒有一丁點興趣想了解ONDA",
+  ]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: activeState,
+      }),
+      undefined,
+      `a negative intent nominal must own its following content verb: ${message}`,
+    );
+  }
+
+  for (const { label, message } of [
+    { label: "price", message: "我沒有問題，但想問ONDA價格" },
+    { label: "booking", message: "我不是很懂，可是想預約ONDA" },
+    { label: "safety", message: "我沒有做過醫美，但做完ONDA後呼吸困難" },
+    { label: "clinic", message: "我沒有問題，但想問哪間有ONDA" },
+  ]) {
+    assert.equal(
+      resolveTrustedSemanticAnchor({
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state: activeState,
+      }),
+      undefined,
+      `a negative/meta clause must not hide a mixed ${label} intent: ${message}`,
+    );
+  }
+
+  const safetyTurn = adapt(
+    lowConfidenceOnda,
+    {
+      hardDecision: { reason: "deterministic_post_treatment_risk", speechAct: "urgent_safety" },
+      semanticAnchor: exactAnchor,
+    },
+    "做完 ONDA 後呼吸困難",
+  );
+  assert.equal(safetyTurn.speechAct, "urgent_safety", "hard safety must outrank a semantic anchor");
+  assert.equal(safetyTurn.semanticEvidence, undefined, "ignored content evidence must not leak into a safety turn");
+
+  const bookingTurn = adapt(
+    lowConfidenceOnda,
+    {
+      booking: { explicit: true, intent: "create" },
+      semanticAnchor: exactAnchor,
+    },
+    "我要預約 ONDA",
+  );
+  assert.equal(bookingTurn.speechAct, "book_consultation", "explicit booking must outrank a semantic anchor");
+  assert.equal(bookingTurn.semanticEvidence, undefined, "ignored content evidence must not leak into booking");
+}
+
 function validateDeterministicHardDecision() {
   const validButOverridden = adapt(
     v2Frame({
@@ -550,6 +1293,246 @@ function validateDeterministicHardDecision() {
   assert.equal(malformedButOverridden.confidence, 0);
 }
 
+function validateDeterministicCurrentTextNegation() {
+  const state = createConversationV2State({ episodeId: "negation", now: RECEIVED_AT });
+  const guard = resolveDeterministicNegationGuard({
+    candidateSpeechAct: "ask_concern",
+    clinic: clinicConfig,
+    message: "我沒有脂肪堆積",
+    ontology: clinicOntology,
+    state,
+  });
+  assert.ok(guard, "an explicit current-text negation must create a deterministic guard");
+  assert.deepEqual(
+    guard,
+    {
+      affirmedAreaKeys: [],
+      affirmedConcernKeys: [],
+      affirmedTreatmentKeys: [],
+      areaKeys: [],
+      concernKeys: [],
+      treatmentKeys: [],
+    },
+    "an unrecognized negated phrase must still clear model-positive entities without inventing a key",
+  );
+
+  for (const confidence of [0.4, 0.95]) {
+    const guarded = adapt(
+      v2Frame({
+        focus: "benefits",
+        move: "start",
+        reference: "explicit",
+        speechAct: "ask_concern",
+      }, {
+        confidence,
+        concerns: [{ area: "jawline", key: "jawline_looseness" }],
+        intents: ["treatment_consultation"],
+      }),
+      { negationGuard: guard },
+      "我沒有脂肪堆積",
+    );
+    assert.equal(guarded.speechAct, "unknown", `${confidence}: negation must suppress the positive task`);
+    assert.equal(guarded.confidence, 1, `${confidence}: deterministic evidence owns confidence`);
+    assert.equal(
+      guarded.concerns.some((item) => item.polarity === "affirmed"),
+      false,
+      `${confidence}: model-positive concerns must be discarded`,
+    );
+    assert.deepEqual(guarded.concerns, []);
+  }
+
+  const frameLess = adapt(null, { negationGuard: guard }, "我沒有脂肪堆積");
+  assert.equal(frameLess.speechAct, "unknown");
+  assert.equal(frameLess.confidence, 1);
+  assert.deepEqual(frameLess.concerns, []);
+
+  const exactGuard = resolveDeterministicNegationGuard({
+    candidateSpeechAct: "ask_concern",
+    clinic: clinicConfig,
+    message: "我沒有雙下巴",
+    ontology: clinicOntology,
+    state,
+  });
+  assert.ok(exactGuard);
+  assert.ok(exactGuard.concernKeys.includes("jawline_looseness"));
+  const exact = adapt(null, { negationGuard: exactGuard }, "我沒有雙下巴");
+  assert.equal(exact.speechAct, "unknown");
+  assert.deepEqual(
+    exact.concerns.map(({ key, polarity, resolution }) => ({ key, polarity, resolution })),
+    [{ key: "jawline_looseness", polarity: "negated", resolution: "resolved" }],
+  );
+
+  for (const message of [
+    "我沒脂肪堆積",
+    "沒雙下巴",
+    "我並非脂肪型",
+    "非脂肪型",
+    "我無脂肪堆積",
+    "脂肪堆積不是我的困擾",
+    "脂肪堆積我沒有",
+    "雙下巴我沒有",
+    "脂肪型我並沒有",
+    "脂肪堆積我並非",
+    "脂肪型我不是",
+    "ONDA不是我想要的",
+    "我不想了解ONDA",
+    "ONDA我不選",
+    "ONDA我不會選",
+    "ONDA我不選擇",
+    "ONDA我不打算選",
+    "ONDA我不需要",
+    "ONDA我不接受",
+    "ONDA我不做",
+    "ONDA我不打",
+    "ONDA我不用",
+    "ONDA我不考慮選",
+    "ONDA絕對不選",
+  ]) {
+    assert.ok(
+      resolveDeterministicNegationGuard({
+        candidateSpeechAct: "ask_concern",
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state,
+      }),
+      `natural explicit negation must be guarded: ${message}`,
+    );
+  }
+
+  for (const message of [
+    "我沒有做過醫美，想了解ONDA",
+    "我不是很懂，想了解ONDA",
+    "我沒有問題。想了解ONDA",
+    "我沒有做過醫美想了解ONDA",
+    "我不是很懂想了解ONDA",
+    "我沒有問題想了解ONDA",
+    "我沒有問題只想問ONDA",
+    "我沒做過醫美要諮詢ONDA",
+    "我沒有經驗想了解ONDA",
+    "我沒有概念想了解ONDA",
+    "我不是專家想了解ONDA",
+    "我沒有費用資料想了解ONDA",
+  ]) {
+    assert.equal(
+      resolveDeterministicNegationGuard({
+        candidateSpeechAct: "learn_treatment",
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state,
+      }),
+      undefined,
+      `an unrelated negative clause must not own the positive ONDA clause: ${message}`,
+    );
+  }
+
+  const mixedGuard = resolveDeterministicNegationGuard({
+    candidateSpeechAct: "learn_treatment",
+    clinic: clinicConfig,
+    message: "我沒有脂肪堆積，但想了解ONDA",
+    ontology: clinicOntology,
+    state,
+  });
+  assert.ok(mixedGuard);
+  assert.deepEqual(mixedGuard.affirmedTreatmentKeys, ["onda_pro"]);
+  assert.deepEqual(mixedGuard.concernKeys, []);
+
+  const unresolvedGuard = {
+    affirmedAreaKeys: [],
+    affirmedConcernKeys: [],
+    affirmedTreatmentKeys: [],
+    areaKeys: [],
+    concernKeys: [],
+    treatmentKeys: [],
+  };
+  const unresolved = adapt(
+    v2Frame({
+      focus: "benefits",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_concern",
+    }, {
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+      intents: ["treatment_consultation"],
+    }),
+    { negationGuard: unresolvedGuard },
+    "我沒有這個困擾",
+  );
+  assert.equal(unresolved.speechAct, "unknown");
+  assert.deepEqual(unresolved.concerns, [], "unresolved negation must clear model-positive entities");
+
+  for (const message of [
+    "ONDA有沒有副作用",
+    "ONDA是不是我想要的",
+    "ONDA不是侵入式療程",
+    "ONDA不用開刀",
+    "ONDA不需要恢復期",
+    "ONDA不做手術",
+    "ONDA不打針",
+    "我不確定肉毒多少錢",
+    "ONDA沒有活動價格嗎",
+    "我不要預約了",
+    "做完ONDA後沒有呼吸困難但很痛",
+  ]) {
+    assert.equal(
+      resolveDeterministicNegationGuard({
+        candidateSpeechAct: message.includes("價格") || message.includes("多少")
+          ? "ask_price"
+          : "unknown",
+        clinic: clinicConfig,
+        message,
+        ontology: clinicOntology,
+        state,
+      }),
+      undefined,
+      `hard-domain or yes/no wording must not be captured by the content negation guard: ${message}`,
+    );
+  }
+
+  const hardSafety = adapt(
+    v2Frame({
+      focus: "benefits",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_concern",
+    }, {
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+    }),
+    {
+      hardDecision: { reason: "deterministic_post_treatment_risk", speechAct: "urgent_safety" },
+      negationGuard: guard,
+    },
+    "做完 ONDA 後很痛",
+  );
+  assert.equal(hardSafety.speechAct, "urgent_safety", "hard safety must outrank negation");
+
+  const booking = adapt(
+    frame(),
+    {
+      booking: { explicit: true, intent: "cancel" },
+      negationGuard: guard,
+    },
+    "我不要預約了",
+  );
+  assert.equal(booking.speechAct, "manage_booking", "booking must outrank content negation");
+
+  const selection = adapt(
+    v2Frame({
+      focus: "none",
+      move: "continue",
+      reference: "active_subject",
+      speechAct: "unknown",
+    }, { confidence: 0.4, intents: ["treatment"] }),
+    {
+      negationGuard: guard,
+      selection: { indexes: [1], mode: "indexes" },
+    },
+    "1",
+  );
+  assert.equal(selection.speechAct, "select_options", "an awaited selection must outrank negation");
+}
+
 validateTreatmentAndEntityMapping();
 validateNegationPolarity();
 validateMultipleIntentResolution();
@@ -560,6 +1543,8 @@ validateSelectionAndClarification();
 validateInvalidAndUnderspecifiedInputs();
 validateEnvelopeContract();
 validateV2DialogueContract();
+validateTrustedSemanticAnchors();
 validateDeterministicHardDecision();
+validateDeterministicCurrentTextNegation();
 
-console.log("Conversation V2 NLU adapter validation passed (10 scenario families)");
+console.log("Conversation V2 NLU adapter validation passed (13 scenario families)");

@@ -14,6 +14,7 @@ import {
   resolveTreatmentKnowledge,
   type PriceCatalogEntry,
 } from "../src/lib/clinic-facts";
+import { buildTreatmentReplyAssets } from "../src/lib/clinic-facts/treatment-reply-assets";
 import {
   hydrateConversationV2ReplyPlan,
   routeConversationTurnV2,
@@ -255,6 +256,83 @@ async function validateTreatmentTriStateAndPartialProfiles() {
     "introduction",
   );
   assert(stale.status === "unknown" && stale.reason === "stale", "CF-T6: stale treatment content leaked");
+}
+
+async function validateUnmodeledTreatmentAspectsFailClosed() {
+  // Use the real static treatment snapshot.  In particular, do not erase
+  // mechanismInPlainLanguage or expectedDirections: those populated fields are
+  // the regression condition that previously hid these aspect-specific gaps.
+  const current = await snapshot();
+  const aspectCases: Array<{
+    aspect: "side_effects" | "duration" | "sessions";
+    text: string;
+  }> = [
+    { aspect: "side_effects", text: "ONDA 有什麼副作用" },
+    { aspect: "duration", text: "ONDA 一次療程要多久" },
+    { aspect: "sessions", text: "ONDA 通常要做幾次" },
+  ];
+
+  for (const { aspect, text } of aspectCases) {
+    const detailTurn = turn({
+      questionAspect: aspect,
+      speechAct: "ask_treatment_detail",
+      text,
+      treatments: [
+        { confidence: 0.95, key: "onda_pro", polarity: "affirmed", resolution: "resolved" },
+      ],
+      turnId: `unmodeled-aspect-${aspect}`,
+    });
+    const initial = createConversationV2State({
+      episodeId: `unmodeled-aspect-${aspect}`,
+      now: NOW.toISOString(),
+    });
+    const routed = routeConversationTurnV2(initial, detailTurn);
+    assert(!routed.duplicate && routed.result, `CF-T7 ${aspect}: detail turn did not route`);
+    const hydrated = await hydrateConversationV2ReplyPlan({
+      nextState: routed.nextState,
+      result: routed.result,
+      snapshot: current,
+      turn: detailTurn,
+    });
+    assert(
+      hydrated.treatmentResolution?.requestedDataGaps.some(
+        (gap) => gap.treatmentKey === "onda_pro" && gap.fields.includes(aspect),
+      ),
+      `CF-T7 ${aspect}: populated general facts incorrectly satisfied an unmodeled aspect`,
+    );
+    assert(
+      hydrated.toolRequest?.type === "request_fact_confirmation" &&
+        hydrated.toolRequest.reason.includes(aspect),
+      `CF-T7 ${aspect}: unmodeled aspect did not request fact confirmation`,
+    );
+  }
+
+  const brandsTurn = turn({
+    questionAspect: "brands",
+    speechAct: "ask_treatment_detail",
+    text: "肉毒有哪些品牌",
+    treatments: [
+      { confidence: 0.95, key: "botox", polarity: "affirmed", resolution: "resolved" },
+    ],
+    turnId: "modeled-aspect-brands",
+  });
+  const brandsInitial = createConversationV2State({
+    episodeId: "modeled-aspect-brands",
+    now: NOW.toISOString(),
+  });
+  const brandsRoute = routeConversationTurnV2(brandsInitial, brandsTurn);
+  assert(!brandsRoute.duplicate && brandsRoute.result, "CF-T8 brands: detail turn did not route");
+  const hydratedBrands = await hydrateConversationV2ReplyPlan({
+    nextState: brandsRoute.nextState,
+    result: brandsRoute.result,
+    snapshot: current,
+    turn: brandsTurn,
+  });
+  assert(
+    hydratedBrands.treatmentResolution?.requestedDataGaps.length === 0,
+    "CF-T8 brands: modeled static brand facts regressed into a data gap",
+  );
+  assert(!hydratedBrands.toolRequest, "CF-T8 brands: modeled brand facts requested human confirmation");
 }
 
 async function validatePriceStateMachine() {
@@ -899,6 +977,146 @@ async function validateSnapshotKnowledgeIsolation() {
   assert(!generatorKnowledge.includes("Coolwaves"), "CF-I4: renderer reloaded legacy global knowledge");
 }
 
+async function validateApprovedReplyAssetFailClosed() {
+  const assets = buildTreatmentReplyAssets(clinicConfig);
+  const fatAsset = assets.find((asset) =>
+    asset.kind === "detail" &&
+    asset.treatmentKey === "onda_pro" &&
+    asset.aspectKey === "jawline_expectation");
+  const introAsset = assets.find((asset) =>
+    asset.kind === "intro" && asset.treatmentKey === "onda_pro");
+  const botoxAsset = assets.find((asset) =>
+    asset.kind === "detail" && asset.treatmentKey === "botox");
+  assert(fatAsset && introAsset && botoxAsset, "CF-A1: required reviewed asset fixtures are missing");
+
+  const gapKnowledge = treatmentKnowledgeResolver.list().map((item) =>
+    item.key === "onda_pro"
+      ? {
+          ...item,
+          availableBrands: [],
+          brandReplies: [],
+          comfort: "",
+          downtime: "",
+          expectedDirections: [],
+          mechanismInPlainLanguage: "",
+        }
+      : item);
+  const current = await snapshot({
+    snapshotId: "clinic-facts-approved-asset-fail-closed",
+    treatments: gapKnowledge,
+  });
+
+  async function hydrateAssetTurn(input: {
+    concernKey?: string;
+    questionAspect?: TurnUnderstanding["questionAspect"];
+    replyAssetId?: string;
+    semanticEvidence?: TurnUnderstanding["semanticEvidence"];
+  }) {
+    const concernKey = input.concernKey ?? "jawline_looseness";
+    const currentTurn = turn({
+      areas: [{ confidence: 1, key: "jawline", polarity: "affirmed", resolution: "resolved" }],
+      concerns: [{ confidence: 1, key: concernKey, polarity: "affirmed", resolution: "resolved" }],
+      conversationMove: "continue",
+      dialogueReference: "active_subject",
+      questionAspect: input.questionAspect ?? "benefits",
+      ...(input.replyAssetId ? { replyAssetId: input.replyAssetId } : {}),
+      ...(input.semanticEvidence ? { semanticEvidence: input.semanticEvidence } : {}),
+      speechAct: "ask_treatment_detail",
+      text: "脂肪堆積",
+      treatments: [{ confidence: 1, key: "onda_pro", polarity: "affirmed", resolution: "resolved" }],
+      turnId: `asset-${input.questionAspect ?? "benefits"}-${input.replyAssetId ?? "missing"}-${concernKey}`,
+    });
+    const initial = createConversationV2State({
+      episodeId: `asset-${currentTurn.turnId}`,
+      now: NOW.toISOString(),
+    });
+    const routed = routeConversationTurnV2(initial, currentTurn);
+    assert(!routed.duplicate && routed.result, `CF-A1: ${currentTurn.turnId} did not route`);
+    return hydrateConversationV2ReplyPlan({
+      nextState: routed.nextState,
+      result: routed.result,
+      snapshot: current,
+      turn: currentTurn,
+    });
+  }
+
+  const approved = await hydrateAssetTurn({
+    replyAssetId: fatAsset.id,
+    semanticEvidence: "approved_asset",
+  });
+  assert(
+    (approved.treatmentResolution?.requestedDataGaps.length ?? 0) > 0,
+    "CF-A1: positive control must contain a real requested-data gap",
+  );
+  assert(!approved.toolRequest, "CF-A1: a matching reviewed detail asset did not satisfy the exact gap");
+  assert(
+    approved.rendererPlan?.fallbackText.includes(fatAsset.customerCopy),
+    "CF-A1: the matching reviewed asset was not delivered to the customer",
+  );
+
+  async function assertRejectedAsset(
+    label: string,
+    input: Parameters<typeof hydrateAssetTurn>[0],
+    forbiddenCopy: string,
+  ) {
+    const hydrated = await hydrateAssetTurn(input);
+    assert(
+      hydrated.toolRequest?.type === "request_fact_confirmation",
+      `${label}: an untrusted or mismatched asset suppressed fact confirmation`,
+    );
+    assert(
+      !hydrated.rendererPlan?.fallbackText.includes(forbiddenCopy),
+      `${label}: mismatched asset copy reached the customer`,
+    );
+  }
+
+  await assertRejectedAsset(
+    "CF-A2 missing semantic evidence",
+    { replyAssetId: fatAsset.id },
+    fatAsset.customerCopy,
+  );
+  await assertRejectedAsset(
+    "CF-A3 intro asset injected into a brand question",
+    {
+      questionAspect: "brands",
+      replyAssetId: introAsset.id,
+      semanticEvidence: "approved_asset",
+    },
+    introAsset.customerCopy,
+  );
+  await assertRejectedAsset(
+    "CF-A4 nonexistent snapshot asset",
+    {
+      replyAssetId: "treatment:onda_pro:detail:not_in_snapshot",
+      semanticEvidence: "approved_asset",
+    },
+    fatAsset.customerCopy,
+  );
+  await assertRejectedAsset(
+    "CF-A5 cross-treatment asset",
+    { replyAssetId: botoxAsset.id, semanticEvidence: "approved_asset" },
+    botoxAsset.customerCopy,
+  );
+  await assertRejectedAsset(
+    "CF-A6 wrong concern asset",
+    {
+      concernKey: "local_contour",
+      replyAssetId: fatAsset.id,
+      semanticEvidence: "approved_asset",
+    },
+    fatAsset.customerCopy,
+  );
+  await assertRejectedAsset(
+    "CF-A7 jawline benefits asset injected into side effects",
+    {
+      questionAspect: "side_effects",
+      replyAssetId: fatAsset.id,
+      semanticEvidence: "approved_asset",
+    },
+    fatAsset.customerCopy,
+  );
+}
+
 async function validateClinicCompletenessAndExcludedRecommendations() {
   const firstBranch = clinicConfig.branches.find((branch) => branch.isActive)!;
   const incompleteClinic: ClinicConfig = {
@@ -1032,6 +1250,7 @@ async function validateHydrationAndNonBlockingEffects() {
 
 async function main() {
   await validateTreatmentTriStateAndPartialProfiles();
+  await validateUnmodeledTreatmentAspectsFailClosed();
   await validatePriceStateMachine();
   await validateRealSeedPriceOwnership();
   await validateVersionedUpdatesWithoutPolicyChanges();
@@ -1040,6 +1259,7 @@ async function main() {
   await validateDynamicOntologyUsesTheSameSnapshot();
   await validateRecognitionRegistryAndInventoryAreIndependent();
   await validateSnapshotKnowledgeIsolation();
+  await validateApprovedReplyAssetFailClosed();
   await validateClinicCompletenessAndExcludedRecommendations();
   await validateHydrationAndNonBlockingEffects();
   console.log("Conversation V2 clinic facts validation passed: immutable snapshots, ontology-bound inventory, partial catalogs, pricing, hydration, and typed effects");
