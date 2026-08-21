@@ -178,6 +178,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 
 ## line-ai-live-demo
 
+- [LINE AI 專案協作與智能分工](line-ai-live-demo/AGENTS.md)
 - [Google Sheets Setup](line-ai-live-demo/GOOGLE_SHEETS_SETUP.md)
 - [LINE AI Live Demo App](line-ai-live-demo/README.md)
 - [新客戶導入 SOP](line-ai-live-demo/docs/CLIENT_SETUP.md)
@@ -189,7 +190,9 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Client Demo Test Script](line-ai-live-demo/docs/client-demo-test-script.md)
 - [順風醫美 LINE AI 客服後台操作說明](line-ai-live-demo/docs/clinic-staff-operating-guide.md)
 - [對話架構瘦身待辦](line-ai-live-demo/docs/conversation-architecture-backlog.md)
+- [Conversation State V3 與 Response Contract](line-ai-live-demo/docs/conversation-state-v3-response-contract.md)
 - [Conversation V2 cutover](line-ai-live-demo/docs/conversation-v2-cutover.md)
+- [Conversation V2 資料對齊與替換藍圖](line-ai-live-demo/docs/conversation-v2-parity-replacement-blueprint.md)
 - [活動價格資料規格](line-ai-live-demo/docs/pricing-campaigns-spec.md)
 - [R1 Reporting Notes](line-ai-live-demo/docs/r1-reporting-implementation-notes.md)
 - [Runtime 回覆發布與回退](line-ai-live-demo/docs/runtime-release-operations.md)
