@@ -388,9 +388,10 @@ function renderGuardedFallback(
   generationMetadata?: GeneratedAiReply,
 ): ReplyRendererResult {
   const dynamicSafeCandidates = [
-    input.plan.nextQuestion
-      ? `我會從目前進度接著整理。${input.plan.nextQuestion}`
-      : "我會從目前進度接著整理，您可以直接補充最想先確認的重點。",
+    input.plan.nextQuestion,
+    input.plan.treatmentKeys.length > 0 || input.plan.concernKeys.length > 0
+      ? "前面的介紹先不重複；您想接著問效果、價格、搭配，還是預約諮詢呢？"
+      : "您可以直接補充最想先確認的療程、部位或問題。",
     input.plan.knownNeeds.length > 0
       ? `已保留您先前提到的需求，我會直接承接這一輪的新問題。`
       : "目前的療程脈絡我有保留，我會直接承接這一輪的新問題。",

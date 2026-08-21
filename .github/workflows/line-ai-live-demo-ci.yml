@@ -100,16 +100,24 @@ jobs:
           npm run validate:conversation-v2-nlu-adapter
           npm run validate:conversation-v2-repository
           npm run validate:conversation-v2-runtime-shadow
+          npm run validate:conversation-v2-shadow-forward
           npm run validate:conversation-v2-golden-journeys
           npm run validate:conversation-v2-clinic-facts
           npm run validate:conversation-v2-runtime-provider
           npm run validate:conversation-v2-canary
+          npm run validate:conversation-v2-customer-quality-fixtures
+          npm run validate:conversation-state-v3
+          npm run validate:conversation-state-envelope
+          npm run validate:conversation-state-registry
+          npm run validate:line-delivery-commit
+          npm run validate:response-contract
           npm run validate:pricing-subject
           npm run validate:treatment-packs
           npm run validate:dialogue-state
           npm run validate:reply-plan
           npm run validate:reply-renderer
           npm run validate:treatment-knowledge
+          npm run validate:treatment-reply-assets
           npm run validate:nlu-decision-adapter
           npm run validate:dialogue-policy-journeys
           npm run validate:dialogue-root-fix

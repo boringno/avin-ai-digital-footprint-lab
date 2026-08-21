@@ -224,6 +224,29 @@ async function validateFallbackLadderAvoidsPreviousReply() {
   assert.equal(result.fallbackReason, "generator_timeout", "RR3b: timeout reason must remain observable after fallback selection");
   assert.match(result.replyText, /承接.*雙下巴/u, "RR3b: a repeated primary fallback must advance to the secondary fallback");
   assert.notEqual(result.replyText, primary, "RR3b: timeout must not replay the previous assistant answer");
+
+  const contextualPlan = treatmentPlan(primary);
+  contextualPlan.concernKeys = ["jawline_looseness"];
+  contextualPlan.nextQuestion = "您比較在意脂肪感，還是下顎線鬆弛呢？";
+  contextualPlan.treatmentKeys = ["onda_pro"];
+  const contextualFallback = await renderReplyPlan({
+    customerMessage: "雙下巴",
+    dialogueState: dialogueState({ treatmentKeys: ["onda_pro"] }),
+    footer: FOOTER,
+    generator: async () => null,
+    plan: contextualPlan,
+    recentTurns: [{ role: "assistant", text: `${primary}\n\n${FOOTER}` }],
+  });
+  assert.match(
+    contextualFallback.replyText,
+    /脂肪感.*下顎線/u,
+    "RR3b: contextual fallback must advance with the planned question",
+  );
+  assert.doesNotMatch(
+    contextualFallback.replyText,
+    /我會從目前進度接著整理/u,
+    "RR3b: customer-facing fallback must not expose an empty process narration",
+  );
 }
 
 async function validateFallbackLadderNeverBypassesGuard() {

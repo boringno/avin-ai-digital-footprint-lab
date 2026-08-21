@@ -69,6 +69,8 @@ export type PriceApplicabilityDimensions = {
 
 export type PriceQuery = {
   applicability?: PriceApplicabilityDimensions;
+  /** Internally selected clinic-approved offer. Never populated from free-form model output. */
+  campaignId?: string;
   kind: "campaign" | "regular" | "unspecified";
   treatmentKeys: readonly string[];
 };
@@ -156,6 +158,26 @@ export type ClinicInfoFactResolution =
       topic: string;
     };
 
+export type ClinicStateRegistryKeys = {
+  answerKeys: readonly string[];
+  approvedFactIds: readonly string[];
+  areaKeys: readonly string[];
+  concernKeys: readonly string[];
+  treatmentKeys: readonly string[];
+};
+
+/**
+ * Provider-owned canonical key catalog for durable conversation state.
+ * This intentionally excludes prices, campaigns, availability, and prose.
+ */
+export type ClinicStateRegistryCatalog = {
+  active: ClinicStateRegistryKeys;
+  archived: ClinicStateRegistryKeys;
+  ontologyVersion: string;
+  registryId: string;
+  tenantId: string;
+};
+
 export type ClinicFactsSnapshot = {
   approvedFactsById: Readonly<Record<string, string>>;
   asOf: Date;
@@ -168,6 +190,7 @@ export type ClinicFactsSnapshot = {
   pricingCampaigns: readonly PriceCatalogEntry[];
   snapshotId: string;
   source: string;
+  stateRegistryCatalog: ClinicStateRegistryCatalog;
   staleTreatmentKeys: ReadonlySet<string>;
   treatmentCatalogCompleteness: CatalogCompleteness;
   treatmentSourceAvailable: boolean;

@@ -58,6 +58,7 @@ function validateInjectedRecognitionSnapshot() {
         areaKeys: ["face" as const],
         key: "future_concern",
         keywords: ["未來困擾"],
+        label: "未來困擾",
         recommendedTreatmentKeys: ["future_device"],
         summary: "fixture",
       },

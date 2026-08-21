@@ -1,4 +1,8 @@
-import { createEmptyConversationContext, type ConversationContext } from "../src/lib/conversation-context";
+import {
+  appendRecentConversationTurns,
+  createEmptyConversationContext,
+  type ConversationContext,
+} from "../src/lib/conversation-context";
 import { parsePricingQuestionKind, type PricingQuestionKind } from "../src/lib/pricing-subject";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
@@ -32,11 +36,28 @@ async function runTurns(messages: string[], userId: string) {
   return { context, decisions };
 }
 
-function assertStandaloneOndaPrice(decision: RouterDecision, scenario: string) {
+async function runTurnsWithPersistedHistory(messages: string[], userId: string) {
+  let context = createEmptyConversationContext(userId);
+  const decisions: RouterDecision[] = [];
+
+  for (const message of messages) {
+    const decision = await route(message, context);
+    decisions.push(decision);
+    context = appendRecentConversationTurns(decision.nextContext, [
+      { role: "user", text: message },
+      { role: "assistant", text: decision.replyText },
+    ]);
+  }
+
+  return { context, decisions };
+}
+
+function assertContextualOndaPrices(decision: RouterDecision, scenario: string) {
   assert(decision.decisionType === "pricing_auto_reply", `${scenario}: price questions must use the controlled pricing route`);
   assert(decision.matchedKey === "ONDA PRO", `${scenario}: a double-chin concern alone must keep ONDA as the pricing subject`);
   assert(decision.replyText.includes("16,888"), `${scenario}: standalone ONDA must return its approved amount`);
-  assert(!decision.replyText.includes("12,999"), `${scenario}: standalone ONDA must not silently select the combo campaign`);
+  assert(decision.replyText.includes("12,999"), `${scenario}: the approved face-contour combination must also be explained`);
+  assert(decision.replyText.includes("內容不同"), `${scenario}: two approved offers must never be presented as the same treatment content`);
   const replyPayload = JSON.stringify(decision.replyMessages ?? []);
   assert(!/VIO|皮秒|除毛/.test(replyPayload), `${scenario}: ONDA price must not attach unrelated treatment cards`);
   assertNoCustomerVisibleCampaignDate(decision, scenario);
@@ -127,13 +148,27 @@ async function main() {
 
   const ondaExperience = await getActiveOndaConsultation("pricing-subject-ps1");
   const ps1 = await route("體驗價", ondaExperience.context);
-  assertStandaloneOndaPrice(ps1, "PS1");
-  console.log("PASS: PS1 active ONDA face consultation resolves 體驗價 to standalone ONDA");
+  assertContextualOndaPrices(ps1, "PS1");
+  console.log("PASS: PS1 active ONDA face consultation explains standalone and combination prices");
 
   const ondaHowMuch = await getActiveOndaConsultation("pricing-subject-ps2");
   const ps2 = await route("多少錢", ondaHowMuch.context);
-  assertStandaloneOndaPrice(ps2, "PS2");
-  console.log("PASS: PS2 active ONDA face consultation resolves 多少錢 to standalone ONDA");
+  assertContextualOndaPrices(ps2, "PS2");
+  console.log("PASS: PS2 active ONDA face consultation explains standalone and combination prices");
+
+  for (const [scenario, preference] of [
+    ["PS2a", "我不要肉毒，只想做ONDA"],
+    ["PS2b", "先不考慮一起做"],
+  ] as const) {
+    const journey = await runTurnsWithPersistedHistory(
+      ["想了解ONDA", "雙下巴", "想了解ONDA+肉毒的組合", preference, "多少錢"],
+      `pricing-subject-${scenario.toLowerCase()}`,
+    );
+    const priceReply = journey.decisions.at(-1)?.replyText ?? "";
+    assert(priceReply.includes("16,888"), `${scenario}: a standalone preference must retain the approved ONDA price`);
+    assert(!priceReply.includes("12,999"), `${scenario}: a declined combination must not reappear in the next price reply`);
+  }
+  console.log("PASS: PS2a-PS2b persisted decline and standalone preferences suppress the combination price");
 
   const ps3 = await route("現在活動有哪些", createEmptyConversationContext("pricing-subject-ps3"));
   assert(ps3.matchedKey === "promotion_overview", "PS3: an explicit browse request must retain the promotion overview");
@@ -166,7 +201,7 @@ async function main() {
   const ps9Hours = await route("高雄館營業時間", ondaThenHours.context);
   assert(ps9Hours.matchedKey.startsWith("branch_hours:"), "PS9: an intervening clinic-info question must replace the latest intent");
   const ps9 = await route("多少錢", ps9Hours.nextContext);
-  assertStandaloneOndaPrice(ps9, "PS9");
+  assertContextualOndaPrices(ps9, "PS9");
   assertNoCustomerVisibleCampaignDate(ps9, "PS9");
   console.log("PASS: PS9 active consultation survives an intervening clinic-info question for pricing");
 
@@ -222,7 +257,7 @@ async function main() {
   assertNoCustomerVisibleCampaignDate(ps13, "PS13 legacy booking context");
   console.log("PASS: PS12-PS13 campaign dates stay internal across consultation and legacy booking context");
 
-  console.log("pricing subject validation passed (14 scenarios)");
+  console.log("pricing subject validation passed (16 scenarios)");
 }
 
 main().catch((error) => {

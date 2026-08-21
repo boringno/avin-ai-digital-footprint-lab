@@ -71,8 +71,25 @@ async function main() {
   assert(!directPrice.replyText.includes("12,999"), "X7: direct price without a face need must not substitute the combo");
 
   const facePriceFollowup = await route("多少錢", face.nextContext);
-  assert(facePriceFollowup.replyText.includes("16,888"), "X8: a face concern alone must retain the standalone ONDA price");
-  assert(!facePriceFollowup.replyText.includes("12,999"), "X8: a face concern alone must not silently select the combo campaign");
+  assert(facePriceFollowup.replyText.includes("16,888"), "X8: a face concern must still show the standalone ONDA price");
+  assert(facePriceFollowup.replyText.includes("12,999"), "X8: a face concern price question must also explain the approved combination option");
+  assert(facePriceFollowup.replyText.includes("內容不同"), "X8: two approved amounts must be explicitly distinguished");
+
+  const multiIntentPrice = await route("有活動嗎？我在意肉肉臉", intro.nextContext);
+  assert(multiIntentPrice.replyText.includes("16,888"), "X8a: same-turn price plus concern must answer the standalone price");
+  assert(
+    multiIntentPrice.replyText.includes("12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）"),
+    "X8a: same-turn price plus concern must preserve the complete approved combination content",
+  );
+  assert(
+    (multiIntentPrice.replyText.match(/？/gu) ?? []).length === 1,
+    "X8a: a combined price answer must end with one next-step question, not stacked campaign CTAs",
+  );
+  assert(
+    multiIntentPrice.nextContext.treatmentConsultation?.concernKeys.includes("jawline_looseness"),
+    "X8a: same-turn price plus concern must persist the concern",
+  );
+  assert(!/(?:2026|08[\/-]31|8\s*月\s*31)/u.test(multiIntentPrice.replyText), "X8a: activity dates are internal only");
 
   const explicitCombo = await route("想了解ONDA加肉毒的組合", face.nextContext);
   const explicitComboPrice = await route("多少錢", explicitCombo.nextContext);
@@ -134,7 +151,7 @@ async function main() {
     );
   }
 
-  console.log("ONDA Xiaoying flow validation passed (11 scenarios)");
+  console.log("ONDA Xiaoying flow validation passed (12 scenarios)");
 }
 
 main().catch((error) => {

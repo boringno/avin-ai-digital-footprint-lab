@@ -5,9 +5,11 @@ import {
   patchNluShadowObservationDecision,
   type NluShadowConversationTimeline,
   type NluShadowObservation,
+  type NluShadowObservationPatchResult,
 } from "@/lib/nlu-shadow-store";
 
 import { replayConversationV2Shadow } from "./shadow";
+import { CONVERSATION_V2_SCHEMA_VERSION } from "./types";
 
 const TENANT_ID = "tenant_001";
 
@@ -55,11 +57,17 @@ type RuntimeShadowDependencies = {
     promptVersion: string;
     tenantId?: string;
   }) => Promise<NluShadowConversationTimeline>;
-  patch?: typeof patchNluShadowObservationDecision;
+  patch?: (input: Parameters<typeof patchNluShadowObservationDecision>[0]) => Promise<NluShadowObservationPatchResult | void>;
 };
 
 function baseNluDivergenceCategories(values: readonly string[]) {
   return values.filter((value) => !value.startsWith("v2_"));
+}
+
+function hasFutureConversationV2Envelope(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const schemaVersion = (value as { schemaVersion?: unknown }).schemaVersion;
+  return Number.isSafeInteger(schemaVersion) && Number(schemaVersion) > CONVERSATION_V2_SCHEMA_VERSION;
 }
 
 function buildEnvelope(input: {
@@ -118,6 +126,7 @@ export async function captureConversationV2ShadowRecord(
     const mode = dependencies.getMode?.() ?? getRuntimeConfig().conversationV2Mode;
     if (mode !== "shadow") return null;
     if (!input.conversationId || !input.sourceUserId) return null;
+    if (hasFutureConversationV2Envelope(input.observation.deterministicDecision.conversationV2)) return null;
 
     const timeline = await (dependencies.loadTimeline ?? loadNluShadowConversationTimeline)({
       conversationId: input.conversationId,
@@ -129,6 +138,19 @@ export async function captureConversationV2ShadowRecord(
     const episodeId = input.episodeKey
       ? `shadow:${input.episodeKey}`
       : `shadow:${input.conversationId}`;
+    const currentRecord = timeline.records.find((record) => record.messageId === input.observation.messageId);
+    const currentTimestamp = input.lineTimestamp ?? currentRecord?.lineTimestamp;
+    const earliestFutureTimestamp = timeline.records
+      .filter((record) => hasFutureConversationV2Envelope(record.legacyDecision.conversationV2))
+      .reduce<number | undefined>((earliest, record) => (
+        earliest === undefined || record.lineTimestamp < earliest ? record.lineTimestamp : earliest
+      ), undefined);
+    // A current turn at or after an opaque future row depends on state this
+    // runtime cannot reconstruct. Treat that row as a timeline barrier.
+    if (
+      earliestFutureTimestamp !== undefined &&
+      (currentTimestamp === undefined || earliestFutureTimestamp <= currentTimestamp)
+    ) return null;
     const replay = replayConversationV2Shadow({
       episodeId,
       records: timeline.records,
@@ -136,10 +158,10 @@ export async function captureConversationV2ShadowRecord(
       totalCustomerMessages: timeline.totalCustomerMessages,
       userId: input.sourceUserId,
     });
-    const currentRecord = timeline.records.find((record) => record.messageId === input.observation.messageId);
-    const currentTimestamp = input.lineTimestamp ?? currentRecord?.lineTimestamp;
     const patch = dependencies.patch ?? patchNluShadowObservationDecision;
     let currentEnvelope: ConversationV2ShadowEnvelope | null = null;
+    let currentPatchSkipped = false;
+    let currentTurnHasFutureEnvelope = false;
 
     // A late older event can change every later turn. Re-materialize the
     // current turn and all visible successors, not only the callback that just
@@ -147,28 +169,46 @@ export async function captureConversationV2ShadowRecord(
     for (const turn of replay.turns) {
       const record = timeline.records.find((candidate) => candidate.messageId === turn.messageId);
       if (!record || (currentTimestamp !== undefined && record.lineTimestamp < currentTimestamp)) continue;
+      if (hasFutureConversationV2Envelope(record.legacyDecision.conversationV2)) {
+        if (record.messageId === input.observation.messageId) currentTurnHasFutureEnvelope = true;
+        // A successor after an opaque future row depends on state this runtime
+        // cannot replay. Stop the suffix rather than writing through the gap.
+        break;
+      }
       const envelope = buildEnvelope({ replay, turn });
       const divergenceCategories = Array.from(new Set([
         ...baseNluDivergenceCategories(record.divergenceCategories),
         ...turn.divergenceCategories,
         ...(replay.replayStatus === "conflict" ? ["v2_replay_conflict"] : []),
       ]));
-      await patch({
+      const patchResult = await patch({
         deterministicDecision: {
           ...record.legacyDecision,
           conversationV2: envelope,
         },
         divergenceCategories,
+        expectedDeterministicDecision: record.legacyDecision,
         messageId: record.messageId,
         promptVersion: input.observation.promptVersion,
         tenantId: TENANT_ID,
       });
+      if (patchResult === "skipped") {
+        if (record.messageId === input.observation.messageId) currentPatchSkipped = true;
+        // Replay is sequential: once any row changed after the snapshot, every
+        // later materialized state may depend on stale input. Stop rather than
+        // propagating that stale state into successor rows.
+        break;
+      }
       if (record.messageId === input.observation.messageId) currentEnvelope = envelope;
     }
 
+    if (currentTurnHasFutureEnvelope) return null;
+    // A read/patch race can mean a newer writer replaced this record after the
+    // replay snapshot. Do not turn that failed CAS into a fallback overwrite.
+    if (currentPatchSkipped) return null;
     if (!currentEnvelope) {
       currentEnvelope = buildEnvelope({ replay, turn: null, turnMissing: true });
-      await patch({
+      const patchResult = await patch({
         deterministicDecision: {
           ...input.observation.deterministicDecision,
           conversationV2: currentEnvelope,
@@ -178,10 +218,12 @@ export async function captureConversationV2ShadowRecord(
           "v2_current_turn_missing",
           ...(replay.replayStatus === "conflict" ? ["v2_replay_conflict"] : []),
         ])),
+        expectedDeterministicDecision: input.observation.deterministicDecision,
         messageId: input.observation.messageId,
         promptVersion: input.observation.promptVersion,
         tenantId: TENANT_ID,
       });
+      if (patchResult === "skipped") return null;
     }
     return currentEnvelope;
   } catch (error) {

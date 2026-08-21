@@ -94,6 +94,7 @@ function validateNewConfigWithoutRouterException() {
         areaKeys: ["face"],
         key: "future_concern",
         keywords: ["未來困擾"],
+        label: "未來困擾",
         recommendedTreatmentKeys: ["future_device"],
         summary: "未來困擾的核准改善方向。",
       },

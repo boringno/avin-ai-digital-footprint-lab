@@ -10,4 +10,7 @@ export * from "./repository";
 export * from "./selection";
 export * from "./shadow";
 export * from "./state";
+export * from "./state-envelope";
+export * from "./state-v3";
+export * from "./state-v3-registry";
 export * from "./types";

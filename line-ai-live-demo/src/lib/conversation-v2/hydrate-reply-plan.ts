@@ -15,6 +15,7 @@ import {
   type DialogueAct,
   type ReplyPlan as RendererReplyPlan,
 } from "@/lib/reply-plan";
+import type { ResponseContractAttachment } from "@/lib/response-contract";
 
 import {
   priceGapReply,
@@ -36,6 +37,7 @@ type DoctorScheduleDecision = {
 };
 
 export type HydratedConversationV2Reply = {
+  alternativePriceResolution?: PriceFactResolution;
   clinicInfoResolution?: ClinicInfoFactResolution;
   dataStatus: "partial" | "ready" | "unresolved";
   priceResolution?: PriceFactResolution;
@@ -73,6 +75,65 @@ const BOOKING_PROMPTS: Record<BookingField, string> = {
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function customerPriceReply(
+  snapshot: ClinicFactsSnapshot,
+  resolution: Extract<PriceFactResolution, { status: "approved_current" }>,
+) {
+  const treatmentNames = resolution.treatmentKeys
+    .map((key) => snapshot.clinic.treatmentList.find((item) => item.key === key)?.name)
+    .filter((name): name is string => Boolean(name));
+  const subject = treatmentNames.length === 1 ? `${treatmentNames[0]}目前可參考` : "目前可參考";
+  return unique([
+    `${subject}：${resolution.customerPriceText}。`,
+    resolution.branchScope ? `${resolution.branchScope}。` : "",
+  ]).join("\n");
+}
+
+function contextualPriceCampaignId(input: HydrateConversationV2ReplyInput) {
+  const query = input.result.replyPlan.mode === "deterministic"
+    ? input.result.replyPlan.pricingQuery
+    : undefined;
+  if (!query || query.treatmentKeys.length === 0) return undefined;
+  const concernKeys = unique([
+    ...input.turn.concerns
+      .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
+      .map((mention) => mention.key),
+    ...input.nextState.knowledge.concernKeys,
+  ]);
+  for (const concernKey of concernKeys) {
+    for (const treatmentKey of query.treatmentKeys) {
+      const treatment = input.snapshot.clinic.treatmentList.find((item) => item.key === treatmentKey);
+      const combinationKeys = treatment?.consultationGuide?.approvedCombinationTreatmentKeys ?? [];
+      if (
+        input.nextState.preferences.treatmentApproach === "single" ||
+        combinationKeys.some((key) => input.nextState.preferences.excludedTreatmentKeys.includes(key))
+      ) {
+        continue;
+      }
+      const campaignId = treatment?.consultationGuide?.concernReplies?.find(
+        (item) => item.concernKey === concernKey,
+      )?.pricingCampaignId;
+      if (campaignId) return campaignId;
+    }
+  }
+  return undefined;
+}
+
+function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
+  const concernKeys = unique([
+    ...input.turn.concerns
+      .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
+      .map((mention) => mention.key),
+    ...input.nextState.knowledge.concernKeys,
+  ]);
+  const label = concernKeys
+    .map((key) => input.snapshot.clinic.concernList.find((item) => item.key === key)?.label)
+    .find(Boolean);
+  return label
+    ? `您提到在意${label}；兩個方案內容不同，要我接著幫您比較單做與搭配的差異嗎？😊`
+    : "兩個方案內容不同；要我接著幫您比較單做與搭配的差異嗎？😊";
 }
 
 function treatmentFactMode(plan: GeneratedReplyPlan) {
@@ -146,6 +207,7 @@ function deterministicPlan(input: {
   dialogueAct: DialogueAct;
   matchedKey: string;
   replyText: string;
+  responseContract: ResponseContractAttachment;
   requiresHuman?: boolean;
   richMessages?: RendererReplyPlan["richMessages"];
   exactPriceFacts?: string[];
@@ -173,6 +235,7 @@ function deterministicPlan(input: {
       exactPriceFacts: input.exactPriceFacts,
       fallbackText: input.replyText,
       renderMode: "deterministic",
+      responseContract: input.responseContract,
       requiresHuman: input.requiresHuman,
     },
   );
@@ -266,6 +329,7 @@ export async function hydrateConversationV2ReplyPlan(
         renderMode: hasFacts && !hasResolutionGaps && !hasRequestedDataGaps
           ? "generated"
           : "deterministic",
+        responseContract: replyPlan.responseContract,
         strategyInstructions: unique([replyPlan.objective, partialInstruction]),
         treatmentKeys: treatmentResolution.resolvedTreatmentKeys,
       },
@@ -298,20 +362,44 @@ export async function hydrateConversationV2ReplyPlan(
 
   if (replyPlan.dialogueAct === "answer_price" && replyPlan.pricingQuery) {
     const priceResolution = resolveApprovedPrice(input.snapshot, replyPlan.pricingQuery);
+    const contextualCampaignId = contextualPriceCampaignId(input);
+    const alternativePriceResolution = contextualCampaignId
+      ? resolveApprovedPrice(input.snapshot, {
+          ...replyPlan.pricingQuery,
+          campaignId: contextualCampaignId,
+        })
+      : undefined;
+    const hasDistinctAlternative =
+      priceResolution.status === "approved_current" &&
+      alternativePriceResolution?.status === "approved_current" &&
+      alternativePriceResolution.campaignId !== priceResolution.campaignId;
     const replyText = priceResolution.status === "approved_current"
-      ? `${priceResolution.customerFacts.join("，")}。`
+      ? hasDistinctAlternative
+        ? unique([
+            `🟢 ${customerPriceReply(input.snapshot, priceResolution)}`,
+            `💎 另有搭配方案：${alternativePriceResolution.customerPriceText}。${alternativePriceResolution.branchScope ? `\n${alternativePriceResolution.branchScope}。` : ""}`,
+            priceConcernFollowup(input),
+          ]).join("\n")
+        : customerPriceReply(input.snapshot, priceResolution)
       : priceGapReply(priceResolution);
     return {
+      ...(alternativePriceResolution ? { alternativePriceResolution } : {}),
       dataStatus: priceResolution.status === "approved_current" ? "ready" : "unresolved",
       priceResolution,
       rendererPlan: deterministicPlan({
         action: replyPlan.action,
         dialogueAct: "quote_approved_price",
         exactPriceFacts: priceResolution.status === "approved_current"
-          ? priceResolution.customerFacts
+          ? unique([
+              ...priceResolution.customerFacts,
+              ...(hasDistinctAlternative && alternativePriceResolution.status === "approved_current"
+                ? alternativePriceResolution.customerFacts
+                : []),
+            ])
           : [],
         matchedKey: `conversation_v2:price:${priceResolution.status}`,
         replyText,
+        responseContract: replyPlan.responseContract,
       }),
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",
@@ -366,6 +454,7 @@ export async function hydrateConversationV2ReplyPlan(
         dialogueAct: "answer_clinic_info",
         matchedKey: `conversation_v2:clinic:${topic}:${clinicInfoResolution.status}`,
         replyText,
+        responseContract: replyPlan.responseContract,
         richMessages: doctorSchedule?.replyMessages,
       }),
       snapshotId: input.snapshot.snapshotId,
@@ -394,6 +483,7 @@ export async function hydrateConversationV2ReplyPlan(
           dialogueAct: "clarify",
           matchedKey: `conversation_v2:booking:treatment:${treatmentGap.status}`,
           replyText,
+          responseContract: replyPlan.responseContract,
         }),
         snapshotId: input.snapshot.snapshotId,
         stateCommit: "hold",
@@ -423,6 +513,7 @@ export async function hydrateConversationV2ReplyPlan(
             ? "booking_cancel_request"
             : "booking_intake",
         replyText,
+        responseContract: replyPlan.responseContract,
       }),
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",
@@ -442,6 +533,7 @@ export async function hydrateConversationV2ReplyPlan(
         dialogueAct: "handoff",
         matchedKey: `conversation_v2:handoff:${reason}`,
         replyText,
+        responseContract: replyPlan.responseContract,
         requiresHuman: true,
       }),
       snapshotId: input.snapshot.snapshotId,
@@ -458,6 +550,7 @@ export async function hydrateConversationV2ReplyPlan(
         dialogueAct: "answer_safety",
         matchedKey: "conversation_v2:urgent_safety",
         replyText: "若有呼吸困難、持續出血、嚴重疼痛或意識異常，請立即撥打 119；其他術後不適也請直接聯絡診所，由真人協助。",
+        responseContract: replyPlan.responseContract,
       }),
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",
@@ -472,6 +565,7 @@ export async function hydrateConversationV2ReplyPlan(
       dialogueAct: "clarify",
       matchedKey: `conversation_v2:${replyPlan.templateKey}`,
       replyText: prompt,
+      responseContract: replyPlan.responseContract,
     }),
     snapshotId: input.snapshot.snapshotId,
     stateCommit: "commit",

@@ -37,8 +37,9 @@ async function main() {
   assert(contextualPrice.decisionType === "pricing_auto_reply", "T2: a short price follow-up must use the pricing route");
   assert(contextualPrice.matchedKey === "ONDA PRO", "T2: a short price follow-up must retain the selected standalone ONDA treatment");
   assert(contextualPrice.replyText.includes("16,888"), "T2: a short price follow-up must return the standalone ONDA amount");
+  assert(contextualPrice.replyText.includes("12,999"), "T2: a face concern price question must also explain the approved combination option");
+  assert(contextualPrice.replyText.includes("內容不同"), "T2: standalone and combination prices must be clearly distinguished");
   assert(!contextualPrice.replyText.includes("2026") && !contextualPrice.replyText.includes("12/31"), "T2: internal campaign dates must not be shown proactively");
-  assert(!contextualPrice.replyText.includes("肉毒小臉"), "T2: a double-chin concern alone must not add a Botox component");
 
   const staleBookingDraft = createEmptyConversationContext("onda-pricing-after-botox-test");
   staleBookingDraft.bookingDraft.treatment = "肉毒";

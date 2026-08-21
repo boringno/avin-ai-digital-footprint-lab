@@ -281,8 +281,9 @@ function stripPromotionDateWording(text: string) {
     .replace(/依館別、檔期與現場評估調整/g, "依館別與現場評估調整")
     .replace(/依館別與日期調整/g, "依館別調整")
     .replace(/依檔期調整/g, "依現場狀況調整")
+    .replace(/[（(]\s*[）)]/gu, "")
     .replace(/\s{2,}/g, " ")
-    .replace(/^[\s\-–—~～至/.,，、:：()（）]+|[\s\-–—~～至/.,，、:：()（）]+$/gu, "")
+    .replace(/^[\s\-–—~～至/.,，、:：]+|[\s\-–—~～至/.,，、:：]+$/gu, "")
     .trim();
 }
 
@@ -1070,15 +1071,26 @@ function consultationOwnsCampaign(context: ConversationContext, campaign: Pricin
 function findConsultationPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
   const treatmentKey = context.treatmentConsultation?.treatmentKey;
   const concernKeys = context.treatmentConsultation?.concernKeys ?? [];
-  const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
   const latestConcernKey = concernKeys[concernKeys.length - 1];
+  const campaign = treatmentKey && latestConcernKey
+    ? findConcernPricingCampaign(treatmentKey, latestConcernKey, activeCampaigns)
+    : null;
+
+  return campaign && consultationOwnsCampaign(context, campaign) ? campaign : null;
+}
+
+function findConcernPricingCampaign(
+  treatmentKey: string,
+  concernKey: string,
+  activeCampaigns: PricingCampaign[],
+) {
+  const treatment = findTreatmentByKey(treatmentKey);
   const pricingCampaignId = treatment?.consultationGuide?.concernReplies?.find(
-    (item) => item.concernKey === latestConcernKey,
+    (item) => item.concernKey === concernKey,
   )?.pricingCampaignId;
 
   if (!pricingCampaignId) return null;
-  const campaign = activeCampaigns.find((item) => item.id === pricingCampaignId) ?? null;
-  return campaign && consultationOwnsCampaign(context, campaign) ? campaign : null;
+  return activeCampaigns.find((item) => item.id === pricingCampaignId) ?? null;
 }
 
 function extractBookingName(message: string, allowSelfIntroduction = false) {
@@ -2022,15 +2034,8 @@ function getActiveTreatmentConsultation(context: ConversationContext, treatmentK
 }
 
 function getTreatmentConsultationConcernLabel(concernKey: string) {
-  if (concernKey === "jawline_looseness") {
-    return "雙下巴／嘴邊肉等臉部輪廓";
-  }
-  if (concernKey === "local_contour") {
-    return "手臂、腹部或大腿等身體局部";
-  }
-
   const concern = clinicConfig.concernList.find((item) => item.key === concernKey);
-  return concern?.keywords.slice(0, 3).join("／") ?? concernKey;
+  return concern?.label ?? concernKey;
 }
 
 function formatTreatmentConsultationConcerns(concernKeys: string[]) {
@@ -2913,11 +2918,7 @@ function getTreatmentBrandFollowupReply(message: string, context: ConversationCo
   } satisfies Omit<RouterDecision, "nextContext">;
 }
 
-function buildPricingReply(campaign: PricingCampaign) {
-  const normalizedFallbackMessage = stripPromotionDateWording(campaign.fallback_message.trim());
-  const fallbackSuffix = normalizedFallbackMessage
-    ? ` ${normalizedFallbackMessage}`
-    : "";
+function buildPricingCoreReply(campaign: PricingCampaign) {
   const campaignLabel = `${campaign.treatment_name} 目前可參考`;
   const branchScope = campaign.branch_scope.trim();
   const branchScopeLabel =
@@ -2931,7 +2932,63 @@ function buildPricingReply(campaign: PricingCampaign) {
     ? `：${customerPriceText}。`
     : "；詳細內容可直接參考活動圖片。";
 
-  return `${campaignLabel}${detailLabel} ${branchScopeLabel}${fallbackSuffix}`.trim();
+  return `${campaignLabel}${detailLabel} ${branchScopeLabel}`.trim();
+}
+
+function buildPricingReply(campaign: PricingCampaign) {
+  const normalizedFallbackMessage = stripPromotionDateWording(campaign.fallback_message.trim());
+  const fallbackSuffix = normalizedFallbackMessage
+    ? ` ${normalizedFallbackMessage}`
+    : "";
+  return `${buildPricingCoreReply(campaign)}${fallbackSuffix}`.trim();
+}
+
+function buildContextualPricingComparison(
+  baseCampaign: PricingCampaign,
+  treatmentKey: string | undefined,
+  concernKey: string | undefined,
+  activeCampaigns: PricingCampaign[],
+  context: ConversationContext,
+): RouterDecision | null {
+  if (!treatmentKey || !concernKey) return null;
+  const contextualCampaign = findConcernPricingCampaign(treatmentKey, concernKey, activeCampaigns);
+  if (!contextualCampaign || contextualCampaign.id === baseCampaign.id) return null;
+  const additionalTreatmentKeys = campaignTreatmentKeys(contextualCampaign)
+    .filter((key) => key !== treatmentKey);
+  const latestRelevantPreference = [...(context.recentTurns ?? [])]
+    .reverse()
+    .filter((turn) => turn.role === "user")
+    .map((turn) => ({
+      behavior: parseContextualTreatmentBehavior(turn.text, context),
+      selection: parseTreatmentSelection(turn.text),
+    }))
+    .find(({ behavior, selection }) =>
+      behavior === "combination_declined" ||
+      behavior === "single_treatment_preference" ||
+      behavior === "combination_comparison" ||
+      selection.excludedKeys.some((key) => additionalTreatmentKeys.includes(key)) ||
+      selection.selectedKeys.some((key) => additionalTreatmentKeys.includes(key)));
+  if (
+    latestRelevantPreference?.behavior === "combination_declined" ||
+    latestRelevantPreference?.behavior === "single_treatment_preference" ||
+    latestRelevantPreference?.selection.excludedKeys.some((key) => additionalTreatmentKeys.includes(key))
+  ) {
+    return null;
+  }
+  const concernLabel = getTreatmentConsultationConcernLabel(concernKey);
+  return {
+    decisionType: "pricing_auto_reply",
+    // Preserve the primary treatment key for analytics and downstream state.
+    // The comparison is customer-visible detail, not a new routing subject.
+    matchedKey: baseCampaign.treatment_name,
+    matchedType: "pricing_campaign",
+    nextContext: context,
+    replyText: [
+      `🟢 ${buildPricingCoreReply(baseCampaign)}`,
+      `💎 另有搭配方案：${buildPricingCoreReply(contextualCampaign)}`,
+      `您提到在意${concernLabel}；兩個方案內容不同，要我接著幫您比較單做與搭配的差異嗎？😊`,
+    ].join("\n"),
+  } satisfies RouterDecision;
 }
 
 function getPricingReply(
@@ -2997,6 +3054,20 @@ function getPricingReply(
 
   const explicitlyMatchedCampaign = findExplicitPricingCampaign(message, activeCampaigns);
   if (explicitlyMatchedCampaign) {
+    const explicitTreatmentKey =
+      subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
+        ? subject.treatmentKey
+        : campaignTreatmentKeys(explicitlyMatchedCampaign)[0];
+    const contextualComparison = buildContextualPricingComparison(
+      explicitlyMatchedCampaign,
+      explicitTreatmentKey,
+      findConcernByMessage(message)?.key ??
+        context.treatmentConsultation?.concernKeys.at(-1) ??
+        context.activeFocus?.concernKeys.at(-1),
+      activeCampaigns,
+      context,
+    );
+    if (contextualComparison) return contextualComparison;
     const replyText = buildPricingReply(explicitlyMatchedCampaign);
     return {
       decisionType: "pricing_auto_reply",
@@ -3041,6 +3112,18 @@ function getPricingReply(
           : "想了解哪個療程的價格或優惠呢？我可以先幫您確認核准方案。",
       } satisfies RouterDecision;
     }
+
+    const contextualConcernKey = findConcernByMessage(message)?.key ??
+      context.treatmentConsultation?.concernKeys.at(-1) ??
+      context.activeFocus?.concernKeys.at(-1);
+    const contextualComparison = buildContextualPricingComparison(
+      matchedPricing,
+      subject.treatmentKey,
+      contextualConcernKey,
+      activeCampaigns,
+      context,
+    );
+    if (contextualComparison) return contextualComparison;
 
     const replyText = buildPricingReply(matchedPricing);
     return {
@@ -3487,12 +3570,25 @@ async function routeCustomerMessageLegacy({
     isBookingConversationIntent(previousContext.lastIntent),
   );
   if (earlyPricingReply) {
+    const pricingConcern = findConcernByMessage(trimmedMessage);
+    const pricingTreatmentKey = findTreatmentByMessage(trimmedMessage)?.key ??
+      nextContext.activeFocus?.treatmentKey ??
+      nextContext.treatmentConsultation?.treatmentKey;
+    if (pricingConcern && pricingTreatmentKey) {
+      recordTreatmentConsultationConcern(nextContext, pricingTreatmentKey, pricingConcern.key);
+    }
     nextContext.lastIntent = earlyPricingReply.matchedKey;
     nextContext.activeFocus = {
       answeredTopics: nextContext.activeFocus?.answeredTopics ?? [],
-      areaKeys: nextContext.activeFocus?.areaKeys ?? [],
+      areaKeys: Array.from(new Set([
+        ...(nextContext.activeFocus?.areaKeys ?? []),
+        ...(pricingConcern?.areaKeys ?? []),
+      ])),
       bookingExplicit: false,
-      concernKeys: nextContext.activeFocus?.concernKeys ?? [],
+      concernKeys: Array.from(new Set([
+        ...(nextContext.activeFocus?.concernKeys ?? []),
+        ...(pricingConcern ? [pricingConcern.key] : []),
+      ])),
       goal: "ask_price",
       requestedInfo: "price",
       treatmentKey: nextContext.activeFocus?.treatmentKey ?? nextContext.treatmentConsultation?.treatmentKey,
