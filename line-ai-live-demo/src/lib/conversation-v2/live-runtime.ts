@@ -9,7 +9,9 @@ import {
 import {
   findAllTreatmentsByMessage,
   findTreatmentByKey,
+  normalizeClinicText,
 } from "@/lib/clinic-config";
+import type { ClinicOntology } from "@/lib/clinic-ontology";
 import {
   type ConversationContext,
   type RecentConversationTurn,
@@ -40,6 +42,8 @@ import {
   type HydratedConversationV2Reply,
 } from "./hydrate-reply-plan";
 import { adaptNluFrameToConversationV2Turn } from "./nlu-adapter";
+import { resolveDeterministicNegationGuard } from "./deterministic-negation";
+import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { routeConversationTurnV2 } from "./engine";
 import {
   cloneConversationV2State,
@@ -222,7 +226,55 @@ function bookingProvidesNonSensitiveExpectedField(
   booking: ReturnType<typeof buildConversationV2BookingUnderstanding>,
   expectedField: ConversationV2State["bookingTask"]["expectedField"],
   message: string,
+  ontology: ClinicOntology,
 ) {
+  if (expectedField === "treatment") {
+    const treatmentKeys = booking?.fields?.treatmentKeys ?? [];
+    if (treatmentKeys.length !== 1) return false;
+    const normalized = normalizeClinicText(message);
+    const treatmentMatches = ontology.treatments.flatMap((treatment) => {
+      const matchedTerms = [treatment.name, ...treatment.aliases]
+        .map(normalizeClinicText)
+        .filter((term) => term && normalized.includes(term));
+      return matchedTerms.length > 0 ? [{ key: treatment.key, matchedTerms }] : [];
+    });
+    if (
+      treatmentMatches.length !== 1 ||
+      treatmentMatches[0]?.key !== treatmentKeys[0]
+    ) {
+      return false;
+    }
+    let residual = normalized;
+    for (const term of treatmentMatches[0].matchedTerms.sort(
+      (left, right) => right.length - left.length,
+    )) {
+      residual = residual.split(term).join("");
+    }
+    for (const filler of [
+      "我想了解",
+      "我想要",
+      "我想做",
+      "我想打",
+      "想了解",
+      "想要",
+      "想做",
+      "想打",
+      "我要",
+      "要做",
+      "要打",
+      "選擇",
+      "選",
+      "療程",
+      "這個",
+      "那個",
+      "先",
+      "就好",
+      "為主",
+    ].map(normalizeClinicText).sort((left, right) => right.length - left.length)) {
+      residual = residual.split(filler).join("");
+    }
+    return residual.length === 0;
+  }
   const normalized = message.replace(/\s+/gu, "");
   if (
     /[?？]/u.test(message) ||
@@ -231,7 +283,7 @@ function bookingProvidesNonSensitiveExpectedField(
   ) {
     return false;
   }
-  return ["treatment", "branch", "time_slots", "first_visit"].includes(
+  return ["branch", "time_slots", "first_visit"].includes(
     expectedField ?? "",
   ) && bookingProvidesExpectedField(booking, expectedField);
 }
@@ -667,7 +719,39 @@ export async function routeConversationV2Canary(
         message: routingMessage,
         state,
       });
-      if (!deterministicBooking?.explicit) {
+      const expectedBookingFieldProvided =
+        state.bookingTask.status === "collecting" &&
+        bookingProvidesNonSensitiveExpectedField(
+          deterministicBooking,
+          state.bookingTask.expectedField,
+          routingMessage,
+          snapshot.ontology,
+        );
+      const trustedDeterministicBooking =
+        deterministicBooking?.explicit || expectedBookingFieldProvided
+          ? deterministicBooking
+          : undefined;
+      const negationGuard = trustedDeterministicBooking
+        ? undefined
+        : resolveDeterministicNegationGuard({
+            clinic: snapshot.clinic,
+            message: routingMessage,
+            ontology: snapshot.ontology,
+            state,
+          });
+      // A bare answer such as "ONDA" can be both an exact treatment anchor and
+      // the pending booking field. While booking is collecting, the expected
+      // field owns that turn; only look for treatment-content semantics when no
+      // trusted booking continuation was supplied.
+      const semanticAnchor = trustedDeterministicBooking || negationGuard
+        ? undefined
+        : resolveTrustedSemanticAnchor({
+            clinic: snapshot.clinic,
+            message: routingMessage,
+            ontology: snapshot.ontology,
+            state,
+          });
+      if (!trustedDeterministicBooking && !negationGuard && !semanticAnchor) {
         return {
           aiModel: nlu?.model,
           aiTokensIn: nlu?.tokensIn,
@@ -685,56 +769,62 @@ export async function routeConversationV2Canary(
           snapshotId: snapshot.snapshotId,
         };
       }
-      const bookingTurn = adaptNluFrameToConversationV2Turn({
+      const deterministicTurn = adaptNluFrameToConversationV2Turn({
         frame: null,
         ontology: snapshot.ontology,
         receivedAt: input.now.toISOString(),
-        supplemental: { booking: deterministicBooking },
+        supplemental: {
+          ...(trustedDeterministicBooking ? { booking: trustedDeterministicBooking } : {}),
+          ...(negationGuard ? { negationGuard } : {}),
+          ...(semanticAnchor ? { semanticAnchor } : {}),
+        },
         text: routingMessage,
         turnId,
       });
-      const bookingRouted = routeConversationTurnV2(state, bookingTurn);
-      if (bookingRouted.result) {
-        const bookingHydrated = await hydrateConversationV2ReplyPlan({
-          nextState: bookingRouted.nextState,
-          result: bookingRouted.result,
+      const deterministicRouted = routeConversationTurnV2(state, deterministicTurn);
+      if (deterministicRouted.result) {
+        const deterministicHydrated = await hydrateConversationV2ReplyPlan({
+          nextState: deterministicRouted.nextState,
+          result: deterministicRouted.result,
           snapshot,
-          turn: bookingTurn,
+          turn: deterministicTurn,
         }, {
           resolveDoctorSchedule: ({ message, now }) =>
             resolveDoctorScheduleDecision({ fallbackReply: "", message, today: now }),
         });
-        const bookingPlan = bookingHydrated.rendererPlan;
-        if (bookingPlan) {
+        const deterministicPlan = deterministicHydrated.rendererPlan;
+        if (deterministicPlan) {
           return {
             aiModel: nlu?.model,
             aiTokensIn: nlu?.tokensIn,
             aiTokensOut: nlu?.tokensOut,
-            dataStatus: bookingHydrated.dataStatus,
+            dataStatus: deterministicHydrated.dataStatus,
             decision: {
-              decisionType: normalizeDecisionType(bookingPlan.decisionType),
-              matchedKey: bookingPlan.matchedKey,
-              matchedType: bookingPlan.matchedType as RouterDecision["matchedType"],
+              decisionType: normalizeDecisionType(deterministicPlan.decisionType),
+              matchedKey: deterministicPlan.matchedKey,
+              matchedType: deterministicPlan.matchedType as RouterDecision["matchedType"],
               nextContext: projectStateToContext({
                 context: input.context,
-                matchedKey: bookingPlan.matchedKey,
+                matchedKey: deterministicPlan.matchedKey,
                 snapshot,
-                state: bookingHydrated.stateCommit === "commit"
-                  ? bookingRouted.nextState
+                state: deterministicHydrated.stateCommit === "commit"
+                  ? deterministicRouted.nextState
                   : recordConversationV2TurnReceipt(state, turnId, input.now.toISOString()),
               }),
-              replyMessages: bookingPlan.richMessages,
-              replyPlan: bookingPlan,
+              replyMessages: deterministicPlan.richMessages,
+              replyPlan: deterministicPlan,
               replyText: ensureCustomerSafeText(
-                bookingPlan.fallbackText,
+                deterministicPlan.fallbackText,
                 CUSTOMER_SAFE_TREATMENT_FALLBACK,
               ),
-              suppressAiFooter: bookingPlan.suppressAiFooter,
+              suppressAiFooter: deterministicPlan.suppressAiFooter,
             },
             gate,
             kind: "routed",
             snapshotId: snapshot.snapshotId,
-            ...(bookingHydrated.toolRequest ? { toolRequest: bookingHydrated.toolRequest } : {}),
+            ...(deterministicHydrated.toolRequest
+              ? { toolRequest: deterministicHydrated.toolRequest }
+              : {}),
           };
         }
       }
@@ -761,29 +851,86 @@ export async function routeConversationV2Canary(
       message: routingMessage,
       state,
     });
+    const expectedBookingFieldProvided =
+      state.bookingTask.status === "collecting" &&
+      bookingProvidesNonSensitiveExpectedField(
+        parsedBooking,
+        state.bookingTask.expectedField,
+        routingMessage,
+        snapshot.ontology,
+      );
+    const modelClaimsBookingAction = [
+      "book_consultation",
+      "manage_booking",
+      "provide_booking_field",
+    ].includes(nlu.frame.dialogue.speechAct);
+    const currentTextTreatmentKeys = snapshot.ontology.treatments
+      .filter((treatment) =>
+        [treatment.name, ...treatment.aliases]
+          .map(normalizeClinicText)
+          .filter(Boolean)
+          .some((term) => normalizeClinicText(routingMessage).includes(term)),
+      )
+      .map((treatment) => treatment.key);
+    const rejectedExpectedTreatmentCandidate =
+      state.bookingTask.status === "collecting" &&
+      state.bookingTask.expectedField === "treatment" &&
+      !parsedBooking?.explicit &&
+      !expectedBookingFieldProvided &&
+      currentTextTreatmentKeys.length > 0;
     const booking = parsedBooking && (
       parsedBooking.explicit ||
-      [
-        "book_consultation",
-        "manage_booking",
-        "provide_booking_field",
-      ].includes(nlu.frame.dialogue.speechAct) ||
+      expectedBookingFieldProvided ||
+      // When treatment is the field currently being collected, every source
+      // (frame-less, low/high confidence, and any model speech act) must pass
+      // the same deterministic short-answer whitelist above. Otherwise a
+      // model misclassification could turn "ONDA 收費怎麼算" into consent to
+      // book ONDA merely because the parser noticed the treatment alias.
       (
-        nlu.frame.dialogue.speechAct === "unknown" &&
-        bookingProvidesNonSensitiveExpectedField(
-          parsedBooking,
-          state.bookingTask.expectedField,
-          routingMessage,
-        )
+        state.bookingTask.expectedField !== "treatment" &&
+        modelClaimsBookingAction
       )
     )
       ? parsedBooking
       : undefined;
+    const negationGuard = booking || rejectedExpectedTreatmentCandidate
+      ? undefined
+      : resolveDeterministicNegationGuard({
+          candidateSpeechAct: nlu.frame.dialogue.speechAct,
+          clinic: snapshot.clinic,
+          message: routingMessage,
+          ontology: snapshot.ontology,
+          state,
+        });
+    const semanticAnchor = !rejectedExpectedTreatmentCandidate && !negationGuard
+      ? resolveTrustedSemanticAnchor({
+          candidate: {
+            questionAspect: nlu.frame.dialogue.focus,
+            speechAct: nlu.frame.dialogue.speechAct,
+          },
+          clinic: snapshot.clinic,
+          message: routingMessage,
+          ontology: snapshot.ontology,
+          state,
+        })
+      : undefined;
     const turn: TurnUnderstanding = adaptNluFrameToConversationV2Turn({
-      frame: nlu.frame,
+      // A model-labelled booking action cannot turn a richer treatment
+      // sentence into the expected short answer. Adapting it as frame-less
+      // preserves the collecting task exactly as the NLU-outage path does,
+      // rather than allowing positive model entities to suspend booking.
+      frame: rejectedExpectedTreatmentCandidate ? null : nlu.frame,
       ontology: snapshot.ontology,
       receivedAt: input.now.toISOString(),
-      ...(booking ? { supplemental: { booking } } : {}),
+      ...(booking || negationGuard || semanticAnchor
+        ? {
+            supplemental: {
+              ...(booking ? { booking } : {}),
+              ...(negationGuard ? { negationGuard } : {}),
+              ...(semanticAnchor ? { semanticAnchor } : {}),
+            },
+          }
+        : {}),
       text: routingMessage,
       turnId,
     });

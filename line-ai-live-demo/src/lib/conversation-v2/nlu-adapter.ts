@@ -10,14 +10,21 @@ import {
   type NluSafetyFrame,
 } from "@/lib/nlu-frame";
 import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+import {
+  CONVERSATION_MOVES,
+  DIALOGUE_REFERENCES,
+  QUESTION_ASPECTS,
+} from "@/lib/dialogue-semantics";
 
 import type {
   AwaitingOption,
   BookingDraft,
   BookingUnderstanding,
   ClarificationNeed,
+  DeterministicNegationGuard,
   EntityMention,
   SelectionUnderstanding,
+  TrustedSemanticAnchor,
   TurnSpeechAct,
   TurnUnderstanding,
 } from "./types";
@@ -43,6 +50,38 @@ const BOOKING_FIELD_KEYS = new Set([
 const OPTION_ENTITIES = new Set(["area", "concern", "treatment", "answer"]);
 const CLARIFICATION_SLOTS = new Set(["area", "concern", "treatment"]);
 const INTENT_KEYS = new Set<string>(CONTROLLED_INTENTS);
+const SEMANTIC_ANCHOR_KEYS = new Set([
+  "areaKeys",
+  "concernKeys",
+  "conversationMove",
+  "dialogueReference",
+  "questionAspect",
+  "replyAssetId",
+  "source",
+  "speechAct",
+  "treatmentKeys",
+]);
+const NEGATION_GUARD_KEYS = new Set([
+  "affirmedAreaKeys",
+  "affirmedConcernKeys",
+  "affirmedTreatmentKeys",
+  "areaKeys",
+  "concernKeys",
+  "treatmentKeys",
+]);
+const SEMANTIC_ANCHOR_SOURCES = new Set<TrustedSemanticAnchor["source"]>([
+  "active_subject_query",
+  "approved_asset",
+  "exact_ontology",
+]);
+const SEMANTIC_ANCHOR_SPEECH_ACTS = new Set<TrustedSemanticAnchor["speechAct"]>([
+  "ask_concern",
+  "ask_treatment_detail",
+  "learn_treatment",
+]);
+const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);
+const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
+const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
 
 function hasDeterministicExplicitPriceSubject(text: string) {
   return Boolean(
@@ -60,6 +99,8 @@ export type ConversationV2NluSupplement = {
   booking?: BookingUnderstanding;
   /** Trusted clarification produced by a deterministic resolver. */
   clarification?: ClarificationNeed;
+  /** Current-text negation that must outrank model-produced positive entities. */
+  negationGuard?: DeterministicNegationGuard;
   /** Deterministic safety/handoff preflight always outranks model semantics. */
   hardDecision?: {
     reason: string;
@@ -67,6 +108,8 @@ export type ConversationV2NluSupplement = {
   };
   /** Trusted selection parsed against the currently awaited options. */
   selection?: SelectionUnderstanding;
+  /** Deterministic treatment-content evidence; never carries clinic facts or prose. */
+  semanticAnchor?: TrustedSemanticAnchor;
 };
 
 export type ConversationV2NluAdapterInput = {
@@ -91,7 +134,9 @@ type NormalizedSupplement = {
   booking?: BookingUnderstanding;
   clarification?: ClarificationNeed;
   hardDecision?: ConversationV2NluSupplement["hardDecision"];
+  negationGuard?: DeterministicNegationGuard;
   selection?: SelectionUnderstanding;
+  semanticAnchor?: TrustedSemanticAnchor;
   valid: boolean;
 };
 
@@ -354,22 +399,170 @@ function normalizeHardDecision(value: unknown) {
   };
 }
 
+function normalizeSemanticAnchorKeys(value: unknown, allowedKeys: Set<string>) {
+  if (!Array.isArray(value)) return { valid: false, value: [] as string[] };
+  const normalized = value.map((item) => cleanRequiredString(item));
+  if (normalized.some((item) => !item || !allowedKeys.has(item))) {
+    return { valid: false, value: [] as string[] };
+  }
+  return {
+    valid: true,
+    value: uniqueStrings(normalized as string[]),
+  };
+}
+
+function normalizeSemanticAnchor(value: unknown, registry: EntityRegistry) {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: undefined as TrustedSemanticAnchor | undefined,
+    };
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !SEMANTIC_ANCHOR_KEYS.has(key))
+  ) {
+    return { valid: false, value: undefined };
+  }
+
+  const areaKeys = normalizeSemanticAnchorKeys(value.areaKeys, registry.areaKeys);
+  const concernKeys = normalizeSemanticAnchorKeys(value.concernKeys, registry.concernKeys);
+  const treatmentKeys = normalizeSemanticAnchorKeys(value.treatmentKeys, registry.treatmentKeys);
+  const conversationMove = cleanRequiredString(value.conversationMove);
+  const dialogueReference = cleanRequiredString(value.dialogueReference);
+  const questionAspect = cleanRequiredString(value.questionAspect);
+  const replyAssetId = value.replyAssetId === undefined
+    ? undefined
+    : cleanRequiredString(value.replyAssetId);
+  const source = cleanRequiredString(value.source);
+  const speechAct = cleanRequiredString(value.speechAct);
+  const hasEntityEvidence =
+    areaKeys.value.length + concernKeys.value.length + treatmentKeys.value.length > 0;
+  const hasValidAssetBinding = source === "approved_asset"
+    ? Boolean(replyAssetId)
+    : ["active_subject_query", "exact_ontology"].includes(source ?? "") &&
+      replyAssetId === undefined;
+
+  if (
+    !areaKeys.valid ||
+    !concernKeys.valid ||
+    !treatmentKeys.valid ||
+    !hasEntityEvidence ||
+    !conversationMove ||
+    !CONVERSATION_MOVE_KEYS.has(conversationMove) ||
+    !dialogueReference ||
+    !DIALOGUE_REFERENCE_KEYS.has(dialogueReference) ||
+    !questionAspect ||
+    !QUESTION_ASPECT_KEYS.has(questionAspect) ||
+    !source ||
+    !SEMANTIC_ANCHOR_SOURCES.has(source as TrustedSemanticAnchor["source"]) ||
+    !speechAct ||
+    !SEMANTIC_ANCHOR_SPEECH_ACTS.has(speechAct as TrustedSemanticAnchor["speechAct"]) ||
+    !hasValidAssetBinding
+  ) {
+    return { valid: false, value: undefined };
+  }
+
+  return {
+    valid: true,
+    value: {
+      areaKeys: areaKeys.value,
+      concernKeys: concernKeys.value,
+      conversationMove: conversationMove as TrustedSemanticAnchor["conversationMove"],
+      dialogueReference: dialogueReference as TrustedSemanticAnchor["dialogueReference"],
+      questionAspect: questionAspect as TrustedSemanticAnchor["questionAspect"],
+      ...(replyAssetId ? { replyAssetId } : {}),
+      source: source as TrustedSemanticAnchor["source"],
+      speechAct: speechAct as TrustedSemanticAnchor["speechAct"],
+      treatmentKeys: treatmentKeys.value,
+    },
+  };
+}
+
+function normalizeNegationGuard(value: unknown, registry: EntityRegistry) {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: undefined as DeterministicNegationGuard | undefined,
+    };
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !NEGATION_GUARD_KEYS.has(key))
+  ) {
+    return { valid: false, value: undefined };
+  }
+  const areaKeys = normalizeSemanticAnchorKeys(value.areaKeys, registry.areaKeys);
+  const concernKeys = normalizeSemanticAnchorKeys(value.concernKeys, registry.concernKeys);
+  const treatmentKeys = normalizeSemanticAnchorKeys(value.treatmentKeys, registry.treatmentKeys);
+  const affirmedAreaKeys = normalizeSemanticAnchorKeys(
+    value.affirmedAreaKeys,
+    registry.areaKeys,
+  );
+  const affirmedConcernKeys = normalizeSemanticAnchorKeys(
+    value.affirmedConcernKeys,
+    registry.concernKeys,
+  );
+  const affirmedTreatmentKeys = normalizeSemanticAnchorKeys(
+    value.affirmedTreatmentKeys,
+    registry.treatmentKeys,
+  );
+  if (
+    !areaKeys.valid ||
+    !concernKeys.valid ||
+    !treatmentKeys.valid ||
+    !affirmedAreaKeys.valid ||
+    !affirmedConcernKeys.valid ||
+    !affirmedTreatmentKeys.valid
+  ) {
+    return { valid: false, value: undefined };
+  }
+  return {
+    valid: true,
+    value: {
+      affirmedAreaKeys: affirmedAreaKeys.value,
+      affirmedConcernKeys: affirmedConcernKeys.value,
+      affirmedTreatmentKeys: affirmedTreatmentKeys.value,
+      areaKeys: areaKeys.value,
+      concernKeys: concernKeys.value,
+      treatmentKeys: treatmentKeys.value,
+    },
+  };
+}
+
 function normalizeSupplement(value: unknown, registry: EntityRegistry): NormalizedSupplement {
   if (value === undefined) return { valid: true };
   if (!isRecord(value)) return { valid: false };
-  if (Object.keys(value).some((key) => !["booking", "clarification", "hardDecision", "selection"].includes(key))) {
+  if (Object.keys(value).some((key) => ![
+    "booking",
+    "clarification",
+    "hardDecision",
+    "negationGuard",
+    "selection",
+    "semanticAnchor",
+  ].includes(key))) {
     return { valid: false };
   }
   const booking = normalizeBooking(value.booking, registry);
   const clarification = normalizeClarification(value.clarification);
   const hardDecision = normalizeHardDecision(value.hardDecision);
+  const negationGuard = normalizeNegationGuard(value.negationGuard, registry);
   const selection = normalizeSelection(value.selection);
+  const semanticAnchor = normalizeSemanticAnchor(value.semanticAnchor, registry);
   return {
     ...(booking.value ? { booking: booking.value } : {}),
     ...(clarification.value ? { clarification: clarification.value } : {}),
     ...(hardDecision.value ? { hardDecision: hardDecision.value } : {}),
+    ...(negationGuard.value ? { negationGuard: negationGuard.value } : {}),
     ...(selection.value ? { selection: selection.value } : {}),
-    valid: booking.valid && clarification.valid && hardDecision.valid && selection.valid,
+    ...(semanticAnchor.value ? { semanticAnchor: semanticAnchor.value } : {}),
+    valid:
+      booking.valid &&
+      clarification.valid &&
+      hardDecision.valid &&
+      negationGuard.valid &&
+      selection.valid &&
+      semanticAnchor.valid,
   };
 }
 
@@ -550,6 +743,80 @@ function adaptEntities(frame: NluFrame, registry: EntityRegistry): EntityAdaptat
   };
 }
 
+function adaptSemanticAnchorEntities(
+  anchor: TrustedSemanticAnchor,
+  registry: EntityRegistry,
+): EntityAdaptation {
+  const mention = (key: string, label?: string): EntityMention => ({
+    confidence: 1,
+    key,
+    ...(label ? { label } : {}),
+    polarity: "affirmed",
+    resolution: "resolved",
+  });
+  return {
+    areas: anchor.areaKeys.map((key) => mention(key, registry.areaLabels.get(key))),
+    concerns: anchor.concernKeys.map((key) => mention(key)),
+    treatments: anchor.treatmentKeys.map((key) =>
+      mention(key, registry.treatmentLabels.get(key))),
+    valid: true,
+  };
+}
+
+function adaptNegationGuardEntities(
+  guard: DeterministicNegationGuard,
+  registry: EntityRegistry,
+): EntityAdaptation {
+  const mention = (
+    key: string,
+    polarity: EntityMention["polarity"],
+    label?: string,
+  ): EntityMention => ({
+    confidence: 1,
+    key,
+    ...(label ? { label } : {}),
+    polarity,
+    resolution: "resolved",
+  });
+  const areas = new Map<string, EntityMention>();
+  const concerns = new Map<string, EntityMention>();
+  const treatments = new Map<string, EntityMention>();
+  for (const key of guard.affirmedAreaKeys) {
+    addMention(areas, mention(key, "affirmed", registry.areaLabels.get(key)));
+  }
+  for (const key of guard.affirmedConcernKeys) {
+    addMention(concerns, mention(key, "affirmed"));
+  }
+  for (const key of guard.affirmedTreatmentKeys) {
+    addMention(treatments, mention(key, "affirmed", registry.treatmentLabels.get(key)));
+  }
+  for (const key of guard.areaKeys) {
+    addMention(areas, mention(key, "negated", registry.areaLabels.get(key)));
+  }
+  for (const key of guard.concernKeys) {
+    addMention(concerns, mention(key, "negated"));
+  }
+  for (const key of guard.treatmentKeys) {
+    addMention(treatments, mention(key, "negated", registry.treatmentLabels.get(key)));
+  }
+  return {
+    areas: [...areas.values()],
+    concerns: [...concerns.values()],
+    treatments: [...treatments.values()],
+    valid: true,
+  };
+}
+
+function negationGuardSpeechAct(guard: DeterministicNegationGuard): TurnSpeechAct {
+  if (guard.affirmedConcernKeys.length + guard.affirmedAreaKeys.length > 0) {
+    return "ask_concern";
+  }
+  if (guard.affirmedTreatmentKeys.length === 1) {
+    return "learn_treatment";
+  }
+  return "unknown";
+}
+
 function hasUsefulBookingFields(booking: BookingUnderstanding | undefined) {
   const fields = booking?.fields;
   if (!fields) return false;
@@ -699,6 +966,70 @@ function resolveV2SpeechAct(input: {
   }
 }
 
+function shouldUseSemanticAnchor(input: {
+  entities: EntityAdaptation;
+  frame: NluFrame;
+  supplemental: NormalizedSupplement;
+}) {
+  const anchor = input.supplemental.semanticAnchor;
+  const hasAffirmedTreatmentOutsideAnchor = anchor && input.entities.treatments.some(
+    (mention) =>
+      mention.polarity === "affirmed" && !anchor.treatmentKeys.includes(mention.key),
+  );
+  const hasAffirmedOutsideAnchor = anchor && [
+    [input.entities.areas, new Set(anchor.areaKeys)],
+    [input.entities.concerns, new Set(anchor.concernKeys)],
+    [input.entities.treatments, new Set(anchor.treatmentKeys)],
+  ].some(([mentions, keys]) =>
+    (mentions as EntityMention[]).some((mention) =>
+      mention.polarity === "affirmed" && !(keys as Set<string>).has(mention.key)),
+  );
+  return Boolean(
+    anchor &&
+    (
+      // These anchors are not merely entity corrections. An approved asset is
+      // exact reviewed content, while an active-subject query has already
+      // proven its aspect from the current text and consumed all residual
+      // wording. Preserve that content capability even when a confident model
+      // repeats the same owner or assigns a different focus; otherwise the
+      // downstream facts/asset obligation silently disappears into a generic
+      // reply. Hard-domain, safety, booking, multi-treatment and explicit
+      // owner conflicts were rejected before an anchor can be created.
+      ["active_subject_query", "approved_asset"].includes(anchor.source) ||
+      // An explicit treatment plus a fully deterministic current-text aspect
+      // (brand/risk/symptom grammar) must also correct a confident but
+      // contradictory model focus. Bare treatment names do not satisfy this:
+      // their anchor aspect simply mirrors the model and therefore does not
+      // differ here.
+      (
+        anchor.source === "exact_ontology" &&
+        anchor.speechAct === "ask_treatment_detail" &&
+        !["none", "overview"].includes(anchor.questionAspect) &&
+        anchor.questionAspect !== input.frame.dialogue.focus
+      ) ||
+      // Exact current-message ontology evidence owns entity provenance even
+      // when the model is confident *and* the model supplied an entity outside
+      // that anchor. This removes a stale active-treatment echo on a clean
+      // topic switch without replacing a valid contextual follow-up merely
+      // because the model omitted its already-known owner.
+      (anchor.source === "exact_ontology" && hasAffirmedOutsideAnchor) ||
+      // For a fully consumed active-subject/approved-asset question, the
+      // current text proves which treatment owns the follow-up. A confident
+      // model may still echo or hallucinate another treatment that the
+      // customer never named; discard only that treatment mismatch. Concern
+      // and area ownership remain contextual unless exact ontology evidence
+      // above proves a clean current-text switch.
+      (
+        ["active_subject_query", "approved_asset"].includes(anchor.source) &&
+        hasAffirmedTreatmentOutsideAnchor
+      ) ||
+      input.frame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE ||
+      input.frame.dialogue.speechAct === "unknown" ||
+      !input.entities.valid
+    ),
+  );
+}
+
 function resolveSpeechAct(input: {
   entities: EntityAdaptation;
   frame: NluFrame;
@@ -740,6 +1071,21 @@ function resolveSpeechAct(input: {
       return { needsClarification: false, speechAct: "select_options" };
     }
     return { needsClarification: true, speechAct: "unknown" };
+  }
+  // Current customer text is stronger evidence than an NLU entity echo. A
+  // pure rejection remains unknown, while an independent positive clause may
+  // keep its deterministically resolved treatment/concern as the content task.
+  if (input.supplemental.negationGuard) {
+    return {
+      needsClarification: false,
+      speechAct: negationGuardSpeechAct(input.supplemental.negationGuard),
+    };
+  }
+  if (shouldUseSemanticAnchor(input)) {
+    return {
+      needsClarification: false,
+      speechAct: input.supplemental.semanticAnchor!.speechAct,
+    };
   }
   if (input.frame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE) {
     return { needsClarification: true, speechAct: "unknown" };
@@ -791,32 +1137,78 @@ export function adaptNluFrameToConversationV2Turn(
   const supplemental = normalizeSupplement(input.supplemental, registry);
 
   if (!parsedFrame) {
-    const deterministicSpeechAct = supplemental.valid
-      ? trustedBookingSpeechAct(supplemental.booking) ??
-        (supplemental.selection ? "select_options" as const : null)
+    const trustedBooking = supplemental.valid
+      ? trustedBookingSpeechAct(supplemental.booking)
       : null;
+    const hasSafetyPriority = Boolean(
+      supplemental.hardDecision || hasAnySafetySignal(safetySignals),
+    );
+    const selectedNegationGuard = supplemental.valid &&
+      supplemental.negationGuard &&
+      !hasSafetyPriority &&
+      !trustedBooking &&
+      !supplemental.selection
+        ? supplemental.negationGuard
+        : undefined;
+    const selectedSemanticAnchor = supplemental.valid &&
+      supplemental.semanticAnchor &&
+      !hasSafetyPriority &&
+      !trustedBooking &&
+      !supplemental.selection &&
+      !selectedNegationGuard
+        ? supplemental.semanticAnchor
+        : undefined;
+    const deterministicSpeechAct = trustedBooking ??
+      (supplemental.valid && supplemental.selection ? "select_options" as const : null) ??
+      (selectedNegationGuard ? negationGuardSpeechAct(selectedNegationGuard) : null) ??
+      selectedSemanticAnchor?.speechAct ??
+      null;
     const safetySpeechAct: TurnSpeechAct = supplemental.hardDecision?.speechAct ??
       (safetySignals.postTreatmentRisk
         ? "urgent_safety"
         : hasAnySafetySignal(safetySignals)
           ? "request_handoff"
           : deterministicSpeechAct ?? "unknown");
+    const deterministicEntities = selectedNegationGuard
+      ? adaptNegationGuardEntities(selectedNegationGuard, registry)
+      : selectedSemanticAnchor
+      ? adaptSemanticAnchorEntities(selectedSemanticAnchor, registry)
+      : { areas: [], concerns: [], treatments: [], valid: true };
+    const hasResolvedNegation = Boolean(
+      selectedNegationGuard &&
+      selectedNegationGuard.areaKeys.length +
+        selectedNegationGuard.concernKeys.length +
+        selectedNegationGuard.treatmentKeys.length > 0,
+    );
+    const hasResolvedAffirmation = Boolean(
+      selectedNegationGuard &&
+      selectedNegationGuard.affirmedAreaKeys.length +
+        selectedNegationGuard.affirmedConcernKeys.length +
+        selectedNegationGuard.affirmedTreatmentKeys.length > 0,
+    );
     return {
-      areas: [],
+      areas: deterministicEntities.areas,
       ...(supplemental.valid && supplemental.booking ? { booking: supplemental.booking } : {}),
       ...(supplemental.valid && supplemental.clarification ? { clarification: supplemental.clarification } : {}),
-      conversationMove: "none",
-      concerns: [],
-      confidence: deterministicSpeechAct ? 1 : 0,
-      dialogueReference: "none",
-      questionAspect: "none",
+      conversationMove: selectedSemanticAnchor?.conversationMove ??
+        (hasResolvedAffirmation ? "start" : hasResolvedNegation ? "reject" : "none"),
+      concerns: deterministicEntities.concerns,
+      confidence: deterministicSpeechAct || selectedNegationGuard ? 1 : 0,
+      dialogueReference: selectedSemanticAnchor?.dialogueReference ??
+        (hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"),
+      questionAspect: selectedSemanticAnchor?.questionAspect ??
+        (hasResolvedAffirmation ? "overview" : "none"),
       receivedAt: input.receivedAt,
+      ...(selectedSemanticAnchor?.replyAssetId
+        ? { replyAssetId: selectedSemanticAnchor.replyAssetId }
+        : {}),
       safetySignals,
       ...(supplemental.valid && supplemental.selection ? { selection: supplemental.selection } : {}),
+      ...(selectedSemanticAnchor ? { semanticEvidence: selectedSemanticAnchor.source } : {}),
       sourceIntents: [],
       speechAct: safetySpeechAct,
       text: input.text,
-      treatments: [],
+      treatments: deterministicEntities.treatments,
       turnId: input.turnId,
     };
   }
@@ -840,26 +1232,71 @@ export function adaptNluFrameToConversationV2Turn(
     hasDeterministicExplicitPriceSubject(input.text)
       ? { needsClarification: false, speechAct: "ask_price" as const }
       : resolved;
+  const selectedNegationGuard =
+    supplemental.valid &&
+    supplemental.negationGuard &&
+    resolution.speechAct === negationGuardSpeechAct(supplemental.negationGuard) &&
+    !resolution.needsClarification
+      ? supplemental.negationGuard
+      : undefined;
+  const selectedSemanticAnchor =
+    !selectedNegationGuard &&
+    supplemental.valid &&
+    supplemental.semanticAnchor &&
+    shouldUseSemanticAnchor({ entities, frame: parsedFrame, supplemental }) &&
+    resolution.speechAct === supplemental.semanticAnchor.speechAct
+      ? supplemental.semanticAnchor
+      : undefined;
+  const effectiveEntities = selectedNegationGuard
+    ? adaptNegationGuardEntities(selectedNegationGuard, registry)
+    : selectedSemanticAnchor
+    ? adaptSemanticAnchorEntities(selectedSemanticAnchor, registry)
+    : entities;
+  const hasResolvedNegation = Boolean(
+    selectedNegationGuard &&
+    selectedNegationGuard.areaKeys.length +
+      selectedNegationGuard.concernKeys.length +
+      selectedNegationGuard.treatmentKeys.length > 0,
+  );
+  const hasResolvedAffirmation = Boolean(
+    selectedNegationGuard &&
+    selectedNegationGuard.affirmedAreaKeys.length +
+      selectedNegationGuard.affirmedConcernKeys.length +
+      selectedNegationGuard.affirmedTreatmentKeys.length > 0,
+  );
   const sourceIntents = parsedFrame.intents.filter((intent) => INTENT_KEYS.has(intent));
   return {
-    areas: makeMentionsConservative(entities.areas, resolution.needsClarification),
+    areas: makeMentionsConservative(effectiveEntities.areas, resolution.needsClarification),
     ...(supplemental.booking ? { booking: supplemental.booking } : {}),
     ...(supplemental.clarification ? { clarification: supplemental.clarification } : {}),
-    conversationMove: parsedFrame.dialogue.move,
-    concerns: makeMentionsConservative(entities.concerns, resolution.needsClarification),
-    confidence: trustedBookingSpeechAct(supplemental.booking)
+    conversationMove: selectedSemanticAnchor?.conversationMove ??
+      (selectedNegationGuard
+        ? hasResolvedAffirmation ? "start" : hasResolvedNegation ? "reject" : "none"
+        : parsedFrame.dialogue.move),
+    concerns: makeMentionsConservative(effectiveEntities.concerns, resolution.needsClarification),
+    confidence: selectedSemanticAnchor || selectedNegationGuard || trustedBookingSpeechAct(supplemental.booking)
       ? 1
       : parsedFrame.confidence,
-    dialogueReference: parsedFrame.dialogue.reference,
-    questionAspect: parsedFrame.dialogue.focus,
+    dialogueReference: selectedSemanticAnchor?.dialogueReference ??
+      (selectedNegationGuard
+        ? hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"
+        : parsedFrame.dialogue.reference),
+    questionAspect: selectedSemanticAnchor?.questionAspect ??
+      (selectedNegationGuard
+        ? hasResolvedAffirmation ? "overview" : "none"
+        : parsedFrame.dialogue.focus),
     receivedAt: input.receivedAt,
+    ...(selectedSemanticAnchor?.replyAssetId
+      ? { replyAssetId: selectedSemanticAnchor.replyAssetId }
+      : {}),
     safetySignals,
     ...(supplemental.selection ? { selection: supplemental.selection } : {}),
+    ...(selectedSemanticAnchor ? { semanticEvidence: selectedSemanticAnchor.source } : {}),
     sourceIntents,
     speechAct: resolution.speechAct,
     text: input.text,
     treatments: makeMentionsConservative(
-      entities.treatments,
+      effectiveEntities.treatments,
       resolution.needsClarification,
     ),
     turnId: input.turnId,

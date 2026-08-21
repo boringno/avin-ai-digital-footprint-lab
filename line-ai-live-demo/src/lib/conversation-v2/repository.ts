@@ -194,6 +194,15 @@ function isSelection(value: unknown) {
   return value.mode === "keys" && isStringArray(value.keys) && value.keys.length > 0;
 }
 
+function hasValidSemanticEvidence(value: JsonRecord) {
+  // Schema v2 replay records do not carry a snapshot/catalog identity. A
+  // runtime semantic anchor is therefore not independently verifiable during
+  // replay, even when its id has the right shape. Reject it instead of letting
+  // an injected or stale asset mutate canonical state. A future replay schema
+  // may accept this evidence only together with its pinned snapshot catalog.
+  return value.semanticEvidence === undefined && value.replyAssetId === undefined;
+}
+
 export function parseConversationV2Turn(value: unknown): TurnUnderstanding | null {
   if (!isRecord(value)
     || !isEntityMentionArray(value.areas)
@@ -209,7 +218,8 @@ export function parseConversationV2Turn(value: unknown): TurnUnderstanding | nul
     || !QUESTION_ASPECT_KEYS.has(String(value.questionAspect))
     || (value.booking !== undefined && !isBookingUnderstanding(value.booking))
     || (value.clarification !== undefined && !isClarification(value.clarification))
-    || (value.selection !== undefined && !isSelection(value.selection))) {
+    || (value.selection !== undefined && !isSelection(value.selection))
+    || !hasValidSemanticEvidence(value)) {
     return null;
   }
   return structuredClone(value) as TurnUnderstanding;
