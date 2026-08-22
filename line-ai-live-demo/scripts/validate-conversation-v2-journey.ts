@@ -2141,6 +2141,148 @@ async function validatePricingOwnership() {
   console.log("PASS: J2 pricing ownership");
 }
 
+/**
+ * Production keeps one durable context per LINE user. A returning customer can
+ * therefore name the same treatment a day later while the stored task still holds
+ * yesterday's concern. That explicit overview must start a fresh consultation
+ * episode instead of returning a context-only fallback.
+ */
+async function validateStaleOverviewStartsFreshEpisode() {
+  let context = createEmptyConversationContext(USER_ID);
+  const oldIntro = await routeTurn({
+    context,
+    frame: frame(),
+    message: "我想了解 ONDA",
+    turnIndex: 201,
+  });
+  context = oldIntro.decision.nextContext;
+  const oldConcern = await routeTurn({
+    context,
+    frame: frame({
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+      dialogue: { focus: "overview", move: "continue", reference: "active_subject", speechAct: "ask_concern" },
+      treatments: [],
+    }),
+    message: "雙下巴",
+    turnIndex: 202,
+  });
+  context = oldConcern.decision.nextContext;
+  assert(context.conversationV2State, "J3 setup must persist V2 state");
+
+  const immediateExplicitRestart = await routeTurn({
+    context,
+    frame: frame(),
+    message: "我想了解 ONDA",
+    turnIndex: 205,
+  });
+  assert.match(
+    immediateExplicitRestart.decision.replyText,
+    /ONDA Pro|ONDA PRO/u,
+    "J3: an explicit overview request must be answerable immediately",
+  );
+  assert.deepEqual(
+    immediateExplicitRestart.decision.nextContext.conversationV2State?.knowledge.concernKeys,
+    [],
+    "J3: an explicit overview request must clear the stale concern without an idle wait",
+  );
+
+  const immediateBareContinuation = await routeTurn({
+    context,
+    frame: frame(),
+    message: "ONDA",
+    turnIndex: 206,
+  });
+  assert.ok(
+    immediateBareContinuation.decision.nextContext.conversationV2State?.knowledge.concernKeys.includes("jawline_looseness"),
+    "J3: a bare active treatment name must not erase the current concern",
+  );
+
+  const stalePriceOwner = await routeTurn({
+    context,
+    frame: frame({
+      dialogue: { focus: "price_unspecified", move: "continue", reference: "active_subject", speechAct: "ask_price" },
+      intents: ["pricing"],
+      treatments: [],
+    }),
+    message: "體驗價是多少呢",
+    turnIndex: 207,
+  });
+  context = stalePriceOwner.decision.nextContext;
+  assert.equal(
+    context.conversationV2State?.activeTask.kind,
+    "pricing",
+    "J3: setup must also cover a stale episode whose last task was pricing",
+  );
+
+  context = {
+    ...context,
+    conversationV2State: {
+      ...context.conversationV2State,
+      activeTask: {
+        ...context.conversationV2State.activeTask,
+        startedAt: "2026-08-23T10:00:00+08:00",
+      },
+      updatedAt: "2026-08-23T10:05:00+08:00",
+    },
+  };
+
+  const restarted = await routeTurn({
+    context,
+    frame: frame(),
+    message: "我想了解 ONDA",
+    turnIndex: 203,
+  });
+  summarize("J3-1", "隔日再次想了解 ONDA", restarted.decision);
+  assert.match(
+    restarted.decision.replyText,
+    /ONDA Pro|ONDA PRO/u,
+    `J3: a stale explicit overview must return approved treatment content: ${restarted.decision.replyText}`,
+  );
+  assert.doesNotMatch(
+    restarted.decision.replyText,
+    /目前的療程脈絡我有保留|想先了解這個部位可評估的方向/u,
+    "J3: a new episode must not return a context-only fallback",
+  );
+  assert.deepEqual(
+    restarted.decision.nextContext.conversationV2State?.knowledge.concernKeys,
+    [],
+    "J3: a stale concern must not leak into the restarted treatment overview",
+  );
+  assert.deepEqual(
+    restarted.decision.nextContext.activeFocus?.concernKeys ?? [],
+    [],
+    "J3: the projected legacy focus must also clear the stale concern",
+  );
+  assert.equal(
+    restarted.decision.nextContext.conversationV2State?.activeTask.startedAt,
+    NOW.toISOString(),
+    "J3: restarting the same subject must refresh the task timestamp",
+  );
+
+  const selectedConcern = await routeTurn({
+    context: restarted.decision.nextContext,
+    frame: frame({
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+      dialogue: { focus: "overview", move: "continue", reference: "active_subject", speechAct: "ask_concern" },
+      treatments: [],
+    }),
+    message: "雙下巴",
+    turnIndex: 204,
+  });
+  summarize("J3-2", "新回合選擇雙下巴", selectedConcern.decision);
+  assert.match(
+    selectedConcern.decision.replyText,
+    /雙下巴|下顎/u,
+    `J3: the next short answer must receive a grounded concern response: ${selectedConcern.decision.replyText}`,
+  );
+  assert.doesNotMatch(
+    selectedConcern.decision.replyText,
+    /目前的療程脈絡我有保留|我會直接承接這一輪的新問題/u,
+    "J3: a selected concern must not degrade to process narration",
+  );
+  console.log("PASS: J3 stale overview starts a fresh episode");
+}
+
 async function main() {
   await validateSixTurnJourney();
   await validateLowConfidenceSemanticAnchorJourney();
@@ -2148,6 +2290,7 @@ async function main() {
   await validateActiveSubjectFactObligationsAndTopicSwitch();
   await validateCurrentTextNegationOwnsPolarity();
   await validatePricingOwnership();
+  await validateStaleOverviewStartsFreshEpisode();
   console.log("Conversation V2 journey validation passed");
 }
 
