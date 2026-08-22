@@ -1,6 +1,18 @@
 export type LineTextMessage = {
+  quickReply?: {
+    items: LineQuickReplyItem[];
+  };
   text: string;
   type: "text";
+};
+
+export type LineQuickReplyItem = {
+  action: {
+    label: string;
+    text: string;
+    type: "message";
+  };
+  type: "action";
 };
 
 export type LineImageMessage = {

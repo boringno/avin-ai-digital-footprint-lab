@@ -689,6 +689,70 @@ async function validateRendererTelemetryContract() {
   );
 }
 
+async function validateApprovedQuickReplyUx() {
+  const ctaPlan = treatmentPlan(
+    "😊 接下來您可以選擇：\n📅 預約免費諮詢\n👩‍💼 真人客服協助\n💬 繼續詢問",
+  );
+  ctaPlan.renderMode = "deterministic";
+  ctaPlan.deterministicReply = ctaPlan.fallbackText;
+  const cta = await renderReplyPlan({
+    customerMessage: "我只做 ONDA 可以嗎",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: ctaPlan,
+    recentTurns: [],
+  });
+  const ctaText = cta.messages.find((message) => message.type === "text");
+  assert.deepEqual(
+    ctaText?.type === "text" ? ctaText.quickReply?.items.map((item) => item.action.text) : undefined,
+    ["我要預約免費諮詢", "我要找真人客服", "繼續詢問"],
+    "RR9: approved consultation CTA must be available as LINE quick replies",
+  );
+
+  for (const [prompt, expected] of [
+    ["請問較方便前往哪個館別？", ["高雄館", "台中館", "桃園館", "林口館"]],
+    ["請問這次是初診還是複診呢？", ["初診", "複診"]],
+  ] as const) {
+    const bookingPlan = treatmentPlan(prompt);
+    bookingPlan.dialogueAct = "collect_booking";
+    bookingPlan.renderMode = "deterministic";
+    bookingPlan.deterministicReply = prompt;
+    const booking = await renderReplyPlan({
+      customerMessage: "我要預約諮詢",
+      dialogueState: dialogueState(),
+      footer: FOOTER,
+      generator: async () => { throw new Error("must not run"); },
+      plan: bookingPlan,
+      recentTurns: [],
+    });
+    const textMessage = booking.messages.find((message) => message.type === "text");
+    assert.deepEqual(
+      textMessage?.type === "text" ? textMessage.quickReply?.items.map((item) => item.action.text) : undefined,
+      expected,
+      `RR9: booking prompt must expose only its approved choices: ${prompt}`,
+    );
+  }
+
+  const ordinaryPlan = treatmentPlan("🌿 ONDA Pro 可從局部脂肪與緊實方向評估。");
+  ordinaryPlan.renderMode = "deterministic";
+  ordinaryPlan.deterministicReply = ordinaryPlan.fallbackText;
+  const ordinary = await renderReplyPlan({
+    customerMessage: "ONDA 是什麼",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: ordinaryPlan,
+    recentTurns: [],
+  });
+  const ordinaryText = ordinary.messages.find((message) => message.type === "text");
+  assert.equal(
+    ordinaryText?.type === "text" ? ordinaryText.quickReply : undefined,
+    undefined,
+    "RR9: ordinary content must not receive unrelated quick replies",
+  );
+}
+
 async function main() {
   await validateDeterministicBypass();
   await validateGeneratedReplyAndContext();
@@ -705,7 +769,8 @@ async function main() {
   await validateSafeNonPriceNumbersAndFooterControl();
   await validateGroundingProvenanceAndMedicalScope();
   await validateRendererTelemetryContract();
-  console.log("reply renderer validation passed (12 scenario families, no live model calls)");
+  await validateApprovedQuickReplyUx();
+  console.log("reply renderer validation passed (13 scenario families, no live model calls)");
 }
 
 main().catch((error) => {

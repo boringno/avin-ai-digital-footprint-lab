@@ -526,6 +526,33 @@ async function validateMondayConsultationCtaJourneys() {
     /ONDA Pro 是非侵入式/u,
     "J6a: ONDA CTA turn must not replay the opening introduction",
   );
+  const booksFromQuickReply = await routeTurn({
+    context: ondaCta.decision.nextContext,
+    frame: null,
+    message: "我要預約免費諮詢",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(
+    booksFromQuickReply.decision.nextContext.conversationV2State?.bookingTask.status,
+    "collecting",
+    "J6a: the consultation quick reply text must enter booking collection",
+  );
+  const handsOffFromQuickReply = await routeTurn({
+    context: ondaCta.decision.nextContext,
+    frame: null,
+    message: "我要找真人客服",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(
+    handsOffFromQuickReply.decision.decisionType,
+    "handoff_pending",
+    "J6a: the human-service quick reply text must enter the persisted handoff path",
+  );
+  assert.equal(
+    handsOffFromQuickReply.decision.nextContext.conversationV2State?.control.mode,
+    "handoff_pending",
+    "J6a: the human-service quick reply text must persist handoff ownership",
+  );
 
   let botoxContext = createEmptyConversationContext("U-monday-botox-cta");
   for (const message of ["肉毒", "皺眉紋"] as const) {

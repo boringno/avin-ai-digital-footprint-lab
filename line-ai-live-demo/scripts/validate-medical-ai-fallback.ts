@@ -515,6 +515,33 @@ async function main() {
   assert(deterministicTexts.length === 1, `M10: deterministic text must not be artificially split: ${JSON.stringify(deterministicPayload.messages)}`);
   assert(deterministicTexts.some((text) => getVisibleReplyLength(text) > 100), "M10: deterministic text must not be truncated to the old limit");
 
+  const consultationCta = "😊 接下來您可以選擇：\n📅 預約免費諮詢\n👩‍💼 真人客服協助\n💬 繼續詢問";
+  const consultationPayload = buildReplyPayload("cta-reply-token", consultationCta, false);
+  const consultationMessage = consultationPayload.messages.find((message) => message.type === "text");
+  assert(
+    consultationMessage?.type === "text" &&
+      consultationMessage.quickReply?.items.map((item) => item.action.text).join("|") ===
+        "我要預約免費諮詢|我要找真人客服|繼續詢問",
+    "M11: final LINE payload must expose the three approved consultation actions as quick replies",
+  );
+
+  const branchPayload = buildReplyPayload("branch-reply-token", "請問較方便前往哪個館別？", false);
+  const branchMessage = branchPayload.messages.find((message) => message.type === "text");
+  assert(
+    branchMessage?.type === "text" &&
+      branchMessage.quickReply?.items.map((item) => item.action.text).join("|") ===
+        "高雄館|台中館|桃園館|林口館",
+    "M11: final LINE payload must expose only the four approved branch choices",
+  );
+
+  const firstVisitPayload = buildReplyPayload("first-visit-reply-token", "請問這次是初診還是複診呢？", false);
+  const firstVisitMessage = firstVisitPayload.messages.find((message) => message.type === "text");
+  assert(
+    firstVisitMessage?.type === "text" &&
+      firstVisitMessage.quickReply?.items.map((item) => item.action.text).join("|") === "初診|複診",
+    "M11: final LINE payload must expose only the approved first-visit choices",
+  );
+
   await assertReplyGeneratorsTimeOut();
   await assertOfficialSearchIsConstrained();
   await assertOfficialSearchWebhookFlow();

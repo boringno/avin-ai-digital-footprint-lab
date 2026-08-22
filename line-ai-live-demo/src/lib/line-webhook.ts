@@ -12,6 +12,7 @@ import { appendRecentConversationTurns, createEmptyConversationContext, loadConv
 import { commitDialogueRouteSelection, hydrateDialogueState } from "@/lib/dialogue-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getHandoffPriority } from "@/lib/handoff-priority";
+import { attachApprovedQuickReplies } from "@/lib/line-quick-replies";
 import {
   getRepeatedHandoffAcknowledgement,
   isPendingMedicalContinuation,
@@ -456,11 +457,12 @@ export function buildReplyPayload(
         ...(!suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_REPLY_FOOTER) } satisfies LineTextMessage] : []),
       ]
     : buildTextReplyMessages(finalText);
-  const messages: LineReplyMessage[] = replyMessages?.length
+  const messagesWithoutQuickReplies: LineReplyMessage[] = replyMessages?.length
     ? baseMessages.flatMap((message): LineReplyMessage[] =>
         message.type === "text" ? buildTextReplyMessages(message.text) : [message],
       )
     : baseMessages;
+  const messages = attachApprovedQuickReplies(messagesWithoutQuickReplies, replyText);
 
   return {
     replyToken,
