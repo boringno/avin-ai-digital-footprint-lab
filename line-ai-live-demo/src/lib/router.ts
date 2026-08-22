@@ -1861,6 +1861,9 @@ const CONSULTATION_OPTION_MARKERS = [
   ["2", "②", "選2", "選②", "第二個", "第二項"],
   ["3", "③", "選3", "選③", "第三個", "第三項"],
   ["4", "④", "選4", "選④", "第四個", "第四項"],
+  ["5", "⑤", "選5", "選⑤", "第五個", "第五項"],
+  ["6", "⑥", "選6", "選⑥", "第六個", "第六項"],
+  ["7", "⑦", "選7", "選⑦", "第七個", "第七項"],
 ] as const;
 
 function matchesConsultationOption(message: string, optionIndex: number, selectionTerms: string[] = []) {

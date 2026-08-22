@@ -890,7 +890,7 @@ export const CONVERSATION_V2_GOLDEN_JOURNEYS: GoldenJourney[] = [
         text: "這個多少錢？",
         expect: {
           action: "answer_price",
-          booking: { status: "suspended" },
+          booking: { status: "collecting" },
           priceTreatmentKeys: ["botox"],
           pricingSubjectTreatmentKeys: ["botox"],
         },

@@ -9,13 +9,13 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 const EXPECTED_COUNTS = {
-  concern: 7,
-  detail: 10,
+  concern: 9,
+  detail: 18,
   discovery: 3,
   discovery_fallback: 1,
   feature: 3,
   intro: 42,
-  quick: 8,
+  quick: 10,
   related: 1,
 } as const;
 

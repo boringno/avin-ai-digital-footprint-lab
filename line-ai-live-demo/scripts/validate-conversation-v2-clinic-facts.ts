@@ -305,6 +305,10 @@ async function validateUnmodeledTreatmentAspectsFailClosed() {
         hydrated.toolRequest.reason.includes(aspect),
       `CF-T7 ${aspect}: unmodeled aspect did not request fact confirmation`,
     );
+    assert(
+      hydrated.treatmentResolution?.customerAspectReplies.length === 0,
+      `CF-T7 ${aspect}: an unrelated approved brand reply leaked into another aspect`,
+    );
   }
 
   const brandsTurn = turn({
@@ -333,6 +337,17 @@ async function validateUnmodeledTreatmentAspectsFailClosed() {
     "CF-T8 brands: modeled static brand facts regressed into a data gap",
   );
   assert(!hydratedBrands.toolRequest, "CF-T8 brands: modeled brand facts requested human confirmation");
+  assert(
+    hydratedBrands.treatmentResolution?.customerAspectReplies.some((reply) =>
+      /奇蹟肉毒/u.test(reply) && /經典肉毒/u.test(reply) && /皇家肉毒/u.test(reply)),
+    "CF-T8 brands: approved customer-visible brand copy was not resolved",
+  );
+  assert(
+    /奇蹟肉毒/u.test(hydratedBrands.rendererPlan?.fallbackText ?? "") &&
+      /經典肉毒/u.test(hydratedBrands.rendererPlan?.fallbackText ?? "") &&
+      /皇家肉毒/u.test(hydratedBrands.rendererPlan?.fallbackText ?? ""),
+    "CF-T8 brands: approved brand copy did not reach the final customer fallback",
+  );
 }
 
 async function validatePriceStateMachine() {
@@ -638,7 +653,12 @@ async function validateRealSeedPriceOwnership() {
     treatmentKeys: ["onda_pro", "botox"],
   });
   assert(onda.status === "approved_current" && onda.customerPriceText.includes("16,888"), "CF-P12: real ONDA seed owner failed");
-  assert(botox.status === "approved_current" && botox.customerPriceText === "999", "CF-P12: Botox picked combination price");
+  assert(
+    botox.status === "approved_current" &&
+      /12U\s*999/u.test(botox.customerPriceText) &&
+      !/(?:奇蹟肉毒|經典肉毒|皇家肉毒|Neuronox|BOTOX|Dysport)/iu.test(botox.customerPriceText),
+    "CF-P12: generic Botox pricing must use the approved unbranded 12U offer",
+  );
   assert(combination.status === "approved_current" && combination.customerPriceText.includes("12,999"), "CF-P12: exact combination price failed");
 
   const afterCombination = await loadClinicFactsSnapshot(

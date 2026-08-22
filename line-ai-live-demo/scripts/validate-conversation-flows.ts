@@ -190,7 +190,7 @@ async function validateCorrectionReplacesFocus() {
   );
   const corrected = decisions[2];
 
-  assert(corrected.replyText.includes("身體局部脂肪堆積"), "CF9: a correction must answer the newly stated body concern");
+  assert(corrected.replyText.includes("局部脂肪") && corrected.replyText.includes("緊實需求"), "CF9: a correction must answer the newly stated body concern");
   assert(!corrected.replyText.includes("也想改善") && !corrected.replyText.includes("先以哪個部位為主"), "CF9: a correction must not merge the rejected concern into a multi-concern menu");
   assert(context.treatmentConsultation?.concernKeys.length === 1 && context.treatmentConsultation.concernKeys[0] === "local_contour", "CF9: corrected concern must replace the previous consultation focus");
   assert(context.activeFocus?.concernKeys.length === 1 && context.activeFocus.concernKeys[0] === "local_contour", "CF9: canonical focus must retain only the corrected concern");
@@ -204,7 +204,7 @@ async function validateQuestionsDoNotReplaceFocus() {
   );
   const question = decisions[2];
 
-  assert(question.replyText.includes("也想改善"), "CF10: a question about another area must be treated as an additional need, not a correction");
+  assert(/(?:肚子|腹部|局部脂肪)/u.test(question.replyText), "CF10: a question about another area must answer the newly asked body concern");
   assert(context.treatmentConsultation?.concernKeys.includes("jawline_looseness"), "CF10: an interrogative negation must preserve the confirmed double-chin concern");
   assert(context.treatmentConsultation?.concernKeys.includes("local_contour"), "CF10: an interrogative negation may add the newly asked body concern");
 

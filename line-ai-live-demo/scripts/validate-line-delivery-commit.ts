@@ -32,6 +32,7 @@ function resultFixture(id: string, hasPayload = true): ProcessedWebhookResult {
         }
       : null,
     replyToken: `reply-${id}`,
+    routeVersion: "v2",
     sourceGroupId: "",
     sourceRoomId: "",
     sourceType: "user",

@@ -255,6 +255,25 @@ function hasFields(fields: Partial<BookingDraft>) {
   );
 }
 
+function singleActiveBookingTreatment(state: ConversationV2State) {
+  if (state.activeTask.kind === "pricing") {
+    return state.pricingSubjectTreatmentKeys.length === 1
+      ? state.pricingSubjectTreatmentKeys[0]
+      : undefined;
+  }
+  if (!["learn_treatment", "answer_concern"].includes(state.activeTask.kind)) {
+    return undefined;
+  }
+  const subjectKey = state.activeTask.subjectKey;
+  const subjectTreatmentKeys = subjectKey?.startsWith("treatment:")
+    ? subjectKey.slice("treatment:".length).split("+").filter(Boolean)
+    : [];
+  if (subjectTreatmentKeys.length === 1) return subjectTreatmentKeys[0];
+  return state.knowledge.treatmentKeys.length === 1
+    ? state.knowledge.treatmentKeys[0]
+    : undefined;
+}
+
 /**
  * Deterministic adapter for booking mutations and sensitive contact fields.
  * The LLM may understand the conversation, but it is never the source of the
@@ -279,6 +298,14 @@ export function buildConversationV2BookingUnderstanding(input: {
     input.allowBareExpectedName,
     Boolean(explicitIntent),
   );
+
+  if (
+    explicitIntent === "create" &&
+    !fields.treatmentKeys?.length
+  ) {
+    const activeTreatmentKey = singleActiveBookingTreatment(input.state);
+    if (activeTreatmentKey) fields.treatmentKeys = [activeTreatmentKey];
+  }
 
   if (intent === "none") return undefined;
   if (

@@ -19,14 +19,16 @@ async function route(
 async function main() {
   const intro = await route("想了解 ONDA");
   assert(intro.matchedKey === "treatment_intro:onda_pro", "X1: ONDA must use the approved introduction");
-  assert(intro.replyText.includes("新一代高頻能量 Coolwaves® 技術"), "X1: intro must use Xiaoying technology copy");
-  assert(intro.replyText.includes("全程無痛、舒適體驗"), "X1: intro must preserve clinic-approved Xiaoying wording");
-  assert(intro.replyText.includes("①雙下巴／嘴邊肉") && intro.replyText.includes("②身體局部脂肪堆積"), "X1: intro must ask the two approved needs-discovery choices");
+  assert(intro.replyText.includes("Coolwaves®") && intro.replyText.includes("局部脂肪"), "X1: intro must use the current approved ONDA technology copy");
+  assert(intro.replyText.includes("冷卻控溫"), "X1: intro must preserve the approved comfort wording");
+  assert(!/(?:全程無痛|安全無副作用)/u.test(intro.replyText), "X1: intro must not make absolute safety or pain claims");
+  assert(intro.replyText.includes("雙下巴／嘴邊肉") && intro.replyText.includes("身體局部脂肪"), "X1: intro must ask the two approved needs-discovery choices");
   assert(intro.nextContext.lastIntent !== "booking_intake", "X1: introduction alone must not start booking");
 
   const face = await route("①", intro.nextContext);
   assert(face.matchedKey === "treatment_consult:onda_pro", "X2: choice one must select the ONDA face scenario");
-  assert(face.replyText.includes("ONDA Pro 超微波6分鐘"), "X2: face scenario must use the approved ONDA copy");
+  assert(face.replyText.includes("ONDA Pro") && face.replyText.includes("脂肪肉感"), "X2: face scenario must use the current approved ONDA copy");
+  assert(!face.replyText.includes("6分鐘"), "X2: face scenario must not invent an unapproved duration");
   assert(!face.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "X2: face selection alone must not hard-sell Botox");
   assert(!face.replyText.includes("12,999元"), "X2: selecting a concern must not quote before a price question");
   assert(face.nextContext.lastIntent === "treatment_consult:onda_pro", "X2: an understood face need must remain consultation");
@@ -46,23 +48,23 @@ async function main() {
 
   const body = await route("②", intro.nextContext);
   assert(body.matchedKey === "treatment_consult:onda_pro", "X4: choice two must select the ONDA body scenario");
-  assert(body.replyText.includes("破壞頑固脂肪／減少脂肪厚度"), "X4: body scenario must preserve Xiaoying copy");
-  assert(body.replyText.includes("安全無副作用"), "X4: body scenario must preserve clinic-approved wording");
+  assert(body.replyText.includes("身體局部脂肪") && body.replyText.includes("脂肪厚度"), "X4: body scenario must preserve the current approved ONDA copy");
+  assert(!body.replyText.includes("安全無副作用"), "X4: body scenario must not make an absolute safety claim");
   assert(!body.replyText.includes("體驗價 16,888"), "X4: body concern must not quote before a price question");
   assert(!body.nextContext.bookingDraft.treatment, "X4: body consultation must not start booking");
 
   const naturalFace = await route("我有肉肉的雙下巴");
-  assert(naturalFace.replyText.includes("ONDA Pro 超微波6分鐘"), "X5: a natural face concern must use the approved scenario");
+  assert(naturalFace.replyText.includes("ONDA Pro") && naturalFace.replyText.includes("脂肪肉感"), "X5: a natural face concern must use the approved scenario");
   assert(!naturalFace.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "X5: a natural face concern alone must not hard-sell Botox");
   assert(!naturalFace.replyText.includes("12,999元"), "X5: a natural face concern must not quote without a price question");
   const naturalBody = await route("蝴蝶袖想改善");
-  assert(naturalBody.replyText.includes("身體局部脂肪堆積"), "X5: a natural body concern must use the approved scenario");
+  assert(naturalBody.replyText.includes("身體局部脂肪") && naturalBody.replyText.includes("脂肪厚度"), "X5: a natural body concern must use the approved scenario");
   assert(!naturalBody.replyText.includes("體驗價 16,888"), "X5: a natural body concern must not quote without a price question");
 
   const botox = await route("肉毒功效是什麼", face.nextContext);
   assert(botox.matchedKey === "treatment_consult:onda_pro:related:botox_small_face:botox", `X6: ONDA combo context must use the related Botox reply with its knowledge owner, got ${botox.matchedKey}`);
-  assert(botox.replyText.includes("韓國原廠 Neuronox 肉毒桿菌"), "X6: related Botox reply must use Xiaoying copy");
-  assert(botox.replyText.includes("約2～4週效果逐漸明顯"), "X6: related Botox reply must preserve approved timing copy");
+  assert(botox.replyText.includes("肉毒小臉") && botox.replyText.includes("咀嚼肌"), "X6: related Botox reply must use approved combination guidance");
+  assert(!/(?:Neuronox|2[～~-]4週)/iu.test(botox.replyText), "X6: related education must not invent brand or timing details");
   assert(!botox.replyText.includes("12,999元"), "X6: related treatment education must not quote without a price question");
 
   const directPrice = await route("ONDA 多少錢");
@@ -73,13 +75,13 @@ async function main() {
   const facePriceFollowup = await route("多少錢", face.nextContext);
   assert(facePriceFollowup.replyText.includes("16,888"), "X8: a face concern must still show the standalone ONDA price");
   assert(facePriceFollowup.replyText.includes("12,999"), "X8: a face concern price question must also explain the approved combination option");
-  assert(facePriceFollowup.replyText.includes("內容不同"), "X8: two approved amounts must be explicitly distinguished");
+  assert(facePriceFollowup.replyText.includes("ONDA＋肉毒小臉組合"), "X8: the two approved amounts must be labeled as standalone and combination offers");
 
   const multiIntentPrice = await route("有活動嗎？我在意肉肉臉", intro.nextContext);
   assert(multiIntentPrice.replyText.includes("16,888"), "X8a: same-turn price plus concern must answer the standalone price");
   assert(
-    multiIntentPrice.replyText.includes("12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）"),
-    "X8a: same-turn price plus concern must preserve the complete approved combination content",
+    /ONDA＋肉毒小臉組合\s*12,999/u.test(multiIntentPrice.replyText),
+    "X8a: same-turn price plus concern must preserve the approved generic combination content",
   );
   assert(
     (multiIntentPrice.replyText.match(/？/gu) ?? []).length === 1,
@@ -138,7 +140,7 @@ async function main() {
   for (const bodyTerm of bodyTerms) {
     const restartedBody = await route(bodyTerm, restartedIntro.nextContext);
     assert(
-      restartedBody.replyText.includes("身體局部脂肪堆積"),
+      restartedBody.replyText.includes("局部脂肪") && restartedBody.replyText.includes("緊實需求"),
       `X11: body term ${bodyTerm} after restart must use the ONDA body scenario`,
     );
     assert(

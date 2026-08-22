@@ -85,13 +85,13 @@ export function priceGapReply(resolution: PriceFactResolution) {
     return "這筆核准價格只適用特定館別，請先告訴我想前往的館別，我再確認是否適用，避免把別館價格報給您。";
   }
   if (resolution.reason === "applicability_required") {
-    return "這筆核准價格有指定方案、規格或堂數，請先告訴我您詢問的方案內容，我再確認正確價格。";
+    return "這筆核准價格有指定品牌、規格或堂數，請先告訴我您詢問的內容；也可以先安排免費諮詢，真人客服會在上班時間協助確認報價。";
   }
   if (resolution.reason === "applicability_mismatch") {
-    return "目前核准價格不適用您詢問的館別或方案規格，我先不套用其他方案的價格；真人客服會再協助確認。";
+    return "目前沒有您詢問品牌或規格的核准價格，我先不套用其他方案；可以先安排免費諮詢，真人客服會在上班時間協助確認報價。";
   }
   if (resolution.reason === "expired" || resolution.reason === "not_yet_effective") {
     return "目前沒有可直接提供的有效核准價格，我先不沿用舊活動或尚未生效的內容；真人客服確認後會再協助您。";
   }
-  return "目前這項療程還沒有可直接提供的核准價格，我先不猜價；可以先幫您整理需求，再請真人客服確認。";
+  return "目前這項療程還沒有可直接提供的核准價格，我先不猜價；可以先安排免費諮詢，真人客服會在上班時間協助確認報價。";
 }

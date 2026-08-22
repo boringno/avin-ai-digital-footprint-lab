@@ -95,6 +95,16 @@ function treatmentMissingFields(
     : ["requested_content"];
 }
 
+function approvedCustomerAspectReplies(
+  treatment: TreatmentKnowledge,
+  questionAspect: QuestionAspect | undefined,
+) {
+  if (questionAspect === "brands" || questionAspect === "brand_difference") {
+    return unique(treatment.brandReplies);
+  }
+  return [];
+}
+
 export function resolveTreatmentFact(
   snapshot: ClinicFactsSnapshot,
   key: string,
@@ -142,9 +152,22 @@ export function resolveTreatmentFact(
   }
 
   const branchAvailability = resolveBranchAvailability(snapshot, treatment);
+  const customerAspectReplies = treatment.educationMode === "human_only"
+    ? []
+    : approvedCustomerAspectReplies(treatment, questionAspect);
   const rawFacts = treatment.educationMode === "human_only"
     ? []
-    : buildTreatmentApprovedFactsForMode(treatment, mode);
+    : [
+        ...buildTreatmentApprovedFactsForMode(treatment, mode),
+        ...(questionAspect === "brands" || questionAspect === "brand_difference"
+          ? [
+              ...(treatment.availableBrands.length > 0
+                ? [`院內可評估品牌：${treatment.availableBrands.join("、")}`]
+                : []),
+              ...treatment.brandReplies,
+            ]
+          : []),
+      ];
   const facts = unique(rawFacts);
   const factIds = facts.map((_, index) =>
     `treatment:${treatment.key}:${treatment.contentVersion}:fact:${index + 1}`);
@@ -154,6 +177,7 @@ export function resolveTreatmentFact(
     : unique(treatment.approvedIntroReplies);
   return {
     branchAvailability,
+    customerAspectReplies,
     customerIntroReplies,
     facts,
     factIds,
@@ -253,6 +277,7 @@ export function resolveTreatmentKnowledge(
   });
 
   return {
+    customerAspectReplies: unique(offered.flatMap((item) => item.customerAspectReplies)),
     customerConcernReplies: unique(customerConcernReplies),
     customerIntroReplies: unique(offered.flatMap((item) => item.customerIntroReplies)),
     factIds,

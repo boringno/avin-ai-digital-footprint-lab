@@ -66,6 +66,16 @@ export type TreatmentConfig = {
   };
   availableBranchNames?: string[];
   availableBrands?: string[];
+  /**
+   * Clinic-approved brand identities. Aliases are recognition-only; `name` and
+   * `customerReply` are the only values that may be rendered to customers.
+   */
+  brandOptions?: Array<{
+    aliases: string[];
+    customerReply: string;
+    key: string;
+    name: string;
+  }>;
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
   educationMode?: "general_education" | "human_only";
@@ -88,7 +98,20 @@ export type ConcernConfig = {
   summary: string;
 };
 
-export type TreatmentAreaKey = "face" | "jawline" | "skin" | "body" | "arm" | "abdomen" | "flank" | "thigh";
+export type TreatmentAreaKey =
+  | "face"
+  | "jawline"
+  | "skin"
+  | "body"
+  | "arm"
+  | "abdomen"
+  | "flank"
+  | "thigh"
+  | "buttock"
+  | "shoulder"
+  | "calf"
+  | "armpit"
+  | "hand";
 
 export type TreatmentAreaConfig = {
   key: TreatmentAreaKey;
@@ -179,6 +202,9 @@ function withApprovedContent(treatments: RawTreatmentConfig[]): TreatmentConfig[
     },
   }));
 }
+
+const CONSULTATION_NEXT_STEP_PROMPT =
+  "😊 接下來您可以選擇：\n📅 預約免費諮詢\n👩‍💼 真人客服協助\n💬 繼續詢問";
 
 export const clinicConfig: ClinicConfig = {
   aiName: "順順",
@@ -291,12 +317,17 @@ export const clinicConfig: ClinicConfig = {
     { key: "abdomen", keywords: ["腹部", "小腹", "小肚肚", "肚子", "肚皮", "腰腹"], label: "腹部" },
     { key: "flank", keywords: ["腰側", "側腰"], label: "腰側" },
     { key: "thigh", keywords: ["大腿", "腿部"], label: "大腿" },
+    { key: "buttock", keywords: ["臀部", "屁股", "臀腿"], label: "臀部" },
+    { key: "shoulder", keywords: ["肩頸", "肩膀", "斜方肌"], label: "肩頸／斜方肌" },
+    { key: "calf", keywords: ["小腿", "蘿蔔腿", "小腿肌"], label: "小腿" },
+    { key: "armpit", keywords: ["腋下", "腋窩"], label: "腋下" },
+    { key: "hand", keywords: ["手掌", "手汗"], label: "手掌" },
   ],
   concernList: [
     {
       areaKeys: ["face"],
       key: "dynamic_wrinkles",
-      keywords: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "皺眉", "眉間紋", "川字紋", "動態紋", "表情紋"],
+      keywords: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "皺眉", "眉間紋", "眉間那條", "眉心紋", "川字紋", "動態紋", "表情紋"],
       label: "魚尾紋／抬頭紋／皺眉紋（動態紋）",
       informationalReply:
       "魚尾紋常見和表情活動形成的動態紋路有關。肉毒常見用於動態紋路的改善與評估，包含魚尾紋這類表情紋；實際施作部位、劑量與是否適合，仍要由醫師現場評估。",
@@ -312,6 +343,22 @@ export const clinicConfig: ClinicConfig = {
       summary: "這類通常會先從咀嚼肌活動與臉部輪廓方向了解。",
     },
     {
+      areaKeys: ["shoulder", "calf"],
+      key: "muscle_contour",
+      keywords: ["肩頸線條", "斜方肌", "小腿線條", "小腿肌", "蘿蔔腿", "肌肉線條"],
+      label: "肩頸／小腿肌肉線條",
+      recommendedTreatmentKeys: ["botox"],
+      summary: "這類通常會先了解在意的是肌肉線條，還是伴隨明顯緊繃或疼痛。",
+    },
+    {
+      areaKeys: ["armpit", "hand"],
+      key: "localized_sweating",
+      keywords: ["腋下多汗", "腋下流汗", "手汗", "手掌多汗", "多汗問題"],
+      label: "腋下／手掌多汗",
+      recommendedTreatmentKeys: ["botox"],
+      summary: "這類通常會先了解出汗部位與對衣物、工作或日常活動的影響。",
+    },
+    {
       areaKeys: ["jawline", "face"],
       key: "jawline_looseness",
       keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "雙下八", "下巴肉", "肉肉下巴", "肉肉臉", "下巴線條", "臉部鬆弛"],
@@ -320,10 +367,10 @@ export const clinicConfig: ClinicConfig = {
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
     },
     {
-      areaKeys: ["body", "arm", "abdomen", "flank", "thigh"],
+      areaKeys: ["body", "arm", "abdomen", "flank", "thigh", "buttock"],
       key: "local_contour",
-      keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "肚子", "肚皮", "腰腹", "手臂", "蝴蝶袖", "掰掰袖", "大腿", "腰側", "側腰", "橘皮", "體態", "身體線條", "贅肉"],
-      label: "手臂、腹部或大腿等身體局部",
+      keywords: ["局部脂肪", "脂肪感", "小腹", "腹部", "肚子", "肚皮", "腰腹", "手臂", "蝴蝶袖", "掰掰袖", "大腿", "臀部", "屁股", "臀腿", "腰側", "側腰", "橘皮", "體態", "身體線條", "贅肉"],
+      label: "手臂、腹部、腰側、大腿或臀部等身體局部",
       recommendedTreatmentKeys: ["onda_pro"],
       summary: "這類可先從局部線條、脂肪型困擾與緊實需求整理諮詢方向。",
     },
@@ -378,17 +425,17 @@ export const clinicConfig: ClinicConfig = {
           {
             concernKey: "jawline_looseness",
             discoveryLabel: "雙下巴／嘴邊肉（輪廓線提升）",
-            reply: "①雙下巴／嘴邊肉（輪廓線提升）\n\n🟢【ONDA Pro 超微波6分鐘】\n\n✅ 幫助減少局部脂肪\n✅ 改善雙下巴線條\n✅ 讓下顎輪廓更俐落\n\n若同時在意咀嚼肌造成的臉寬，再一起比較肉毒小臉的搭配方向。",
-            followupPrompt: "😊 您比較在意雙下巴的脂肪厚度、下顎線鬆弛，還是咀嚼肌造成的臉寬呢？",
+            reply: "🌿 如果雙下巴或嘴邊肉主要是脂肪肉感，ONDA Pro 可以從局部脂肪與輪廓緊實方向評估。\n若同時在意咀嚼肌造成的臉寬，才會一起比較肉毒小臉的搭配方向。",
+            followupPrompt: "😊 您比較像脂肪肉感、下顎線鬆弛，還是咀嚼肌造成的臉寬呢？",
             selectionTerms: ["①", "選1", "第一個", "臉部", "臉部輪廓"],
             pricingCampaignId: "promo-2026-08-face-contour-combo",
           },
           {
             concernKey: "local_contour",
-            discoveryLabel: "身體局部脂肪堆積（手臂／肚子／橘皮）",
-            reply: "②身體局部脂肪堆積（手臂／肚子／橘皮）\n\n🟥 很多在意身體局部脂肪堆積、產後腹部鬆弛等等困擾都可以由醫師評估是否適合\n\n🔥 破壞頑固脂肪／減少脂肪厚度\n\n🔥 改善橘皮組織／凹凸不平\n👉 減少橘皮紋路，皮膚更平滑\n\n❄️ 超舒適、無傷口\n❄️ 無需敷麻、幾乎無修復期\n❄️ 療程快速、立即有感\n❄️ 安全無副作用\n\n😊 由於每個人的脂肪分布、厚度及鬆弛狀況不同，建議您預約現場諮詢，由醫師親自評估後，才能為您規劃較適合的施作部位與療程次數唷🤍",
-            followupPrompt: "您主要在意手臂、腹部、腰側，還是大腿／橘皮呢？😊",
-            selectionTerms: ["②", "選2", "第二個", "身體", "身體局部", "手臂", "蝴蝶袖", "掰掰袖", "腹部", "小腹", "肚子", "肚皮", "腰腹", "腰側", "側腰", "大腿", "橘皮"],
+            discoveryLabel: "身體局部脂肪（手臂／腹部／腰側／大腿／臀部）",
+            reply: "🔥 如果主要在意身體局部脂肪或線條，ONDA Pro 可以從脂肪厚度與緊實需求方向評估。\n實際部位、療程次數與改善程度會依脂肪分布及個人狀況不同。",
+            followupPrompt: "😊 您主要在意手臂、腹部、腰側、大腿，還是臀部呢？",
+            selectionTerms: ["②", "選2", "第二個", "身體", "身體局部", "手臂", "蝴蝶袖", "掰掰袖", "腹部", "小腹", "肚子", "肚皮", "腰腹", "腰側", "側腰", "大腿", "臀部", "屁股", "臀腿", "橘皮"],
             pricingCampaignId: "promo-2026-08-05-onda-pro",
           },
         ],
@@ -400,7 +447,7 @@ export const clinicConfig: ClinicConfig = {
             terms: ["脂肪", "脂肪型", "厚度", "消除", "可以消", "能消", "改善嗎", "有效嗎"],
             reply:
               "🌿 了解😊 目前先記下是雙下巴的脂肪型困擾（肉感／厚度）。ONDA Pro 可從局部脂肪厚度與下顎線條方向評估。",
-            followupPrompt: "您想先了解單做 ONDA Pro，還是與肉毒小臉搭配的差異呢？😊",
+            followupPrompt: "😊 您想先了解單做 ONDA Pro，還是 ONDA＋肉毒小臉組合呢？",
           },
           {
             aspectKey: "jawline_intro",
@@ -418,13 +465,29 @@ export const clinicConfig: ClinicConfig = {
             terms: [],
             reply:
               "🟢 ONDA Pro 主要從雙下巴的局部脂肪與緊實方向評估；肉毒小臉則著重放鬆肥厚的咀嚼肌。若同時有脂肪感與肌肉型臉寬，才會一起比較搭配方向。",
-            followupPrompt: "😊 您比較在意雙下巴厚度，還是咬肌造成的臉寬呢？",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "jawline_single_treatment",
+            concernKey: "jawline_looseness",
+            terms: ["只做ONDA", "單做ONDA", "先做ONDA", "只要ONDA"],
+            reply:
+              "🟢 可以先以 ONDA Pro 作為諮詢方向，重點會放在雙下巴的局部脂肪感、下顎線與緊實需求；是否需要搭配肉毒，仍依咀嚼肌狀況評估，不會強制搭配。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "body_area_direction",
+            concernKey: "local_contour",
+            terms: ["手臂", "腹部", "小腹", "肚子", "腰側", "側腰", "大腿", "臀部", "屁股"],
+            reply:
+              "🔥 已記下您在意的身體部位。ONDA Pro 會依局部脂肪厚度、線條與緊實需求評估；實際規劃仍會看脂肪分布及部位狀況。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
           },
         ],
-        discoveryQuestion: "😊 請問您最想改善哪個部位呢",
+        discoveryQuestion: "😊 您比較想改善哪個部位呢？",
         featureSummary:
           "✨ 療程諮詢會依您在意的部位、脂肪型困擾與緊實需求來安排。",
-        followupPrompt: "如果有偏好的館別，也可以一併告訴我😊",
+        followupPrompt: "😊 您比較想改善雙下巴／嘴邊肉，還是身體局部脂肪呢？",
         quickReplies: [
           {
             key: "benefits",
@@ -442,7 +505,7 @@ export const clinicConfig: ClinicConfig = {
             key: "comfort_and_recovery",
             terms: ["會痛", "痛嗎", "敷麻", "修復期", "恢復期", "瘀青"],
             reply: "❄️ ONDA Pro 搭配冷卻控溫設計；施作感受與術後照護仍會依部位及個人狀況不同，現場會先由醫師評估並說明。",
-            followupPrompt: "您想改善哪個部位？我可協助安排免費諮詢😊",
+            followupPrompt: "😊 您比較在意疼痛感，還是術後恢復呢？",
           },
           {
             key: "cooling_control",
@@ -450,20 +513,26 @@ export const clinicConfig: ClinicConfig = {
             reply: "❄️ ONDA Pro 的內建冷卻控溫設計，是在能量作用時協助保護肌膚表面並提升施作舒適度；實際能量與感受仍會依部位及個人狀況調整。",
             followupPrompt: "您想了解施作感受，還是術後照護呢？😊",
           },
+          {
+            key: "continue_question",
+            terms: ["繼續詢問", "繼續問", "還想問", "其他問題"],
+            reply: "😊 可以，您想繼續了解 ONDA Pro 的改善方向、施作感受，還是價格呢？",
+            followupPrompt: "直接告訴我最想問的重點就可以。",
+          },
         ],
         relatedReplies: [
           {
             followupPrompt: "您比較在意咀嚼肌造成的臉寬，還是雙下巴與下顎線呢？😊",
             key: "botox_small_face",
             pricingCampaignId: "promo-2026-08-face-contour-combo",
-            reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與脂肪分布評估是否適合此療程，再提供最適合的建議",
+            reply: "✨ ONDA Pro 主要從局部脂肪與輪廓緊實方向評估；肉毒小臉則著重咀嚼肌與臉型線條。\n只有同時在意脂肪肉感與咀嚼肌型臉寬時，才會一起比較搭配方向。",
             terms: ["肉毒功效", "肉毒效果", "肉毒小臉", "咀嚼肌", "國字臉"],
             treatmentKey: "botox",
           },
         ],
       },
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
-      intro: "🟢 ONDA Pro超微波是目前醫美界非常熱門的新一代高頻能量 Coolwaves® 技術\n\n🟢 透過超高頻微波的頻率，透過專利科技精準加熱🔥「脂肪層」幫助脂肪細胞自然代謝，同時也有緊緻拉提肌膚的效果～屬於非侵入式療程，不需要動刀😊\n\n🔷 搭配內建冷卻控溫系統，全程無痛、舒適體驗❄️",
+      intro: "🌿 ONDA Pro 是非侵入式的 Coolwaves® 高頻能量療程，主要從局部脂肪與輪廓緊實方向評估。\n\n🔥 能量作用於脂肪層，協助改善雙下巴、嘴邊肉及身體局部脂肪困擾。\n❄️ 搭配冷卻控溫設計，提升施作舒適度。",
       key: "onda_pro",
       name: "ONDA PRO",
     },
@@ -574,27 +643,83 @@ export const clinicConfig: ClinicConfig = {
       name: "Q+音波",
     },
     {
-      aliases: ["肉毒", "肉毒桿菌", "botox", "neuronox", "dysport"],
+      aliases: [
+        "肉毒",
+        "肉毒桿菌",
+        "botox",
+        "neuronox",
+        "dysport",
+        "經典肉毒",
+        "经典肉毒",
+        "奇蹟肉毒",
+        "奇迹肉毒",
+        "奇績肉毒",
+        "皇家肉毒",
+        "優力柔",
+        "优力柔",
+        "儷緻",
+        "儷致",
+        "麗緻",
+        "麗致",
+        "neruonox",
+        "neuronx",
+        "dyspot",
+        "dysprot",
+      ],
       availableBrands: ["BOTOX", "Neuronox 優力柔", "Dysport 儷緻"],
+      brandOptions: [
+        {
+          aliases: ["BOTOX", "經典肉毒", "经典肉毒"],
+          customerReply: "🌿 經典肉毒是院內對 BOTOX 的稱呼。實際施打部位與劑量由醫師評估，價格則由真人客服於上班時間協助確認。",
+          key: "botox",
+          name: "BOTOX（經典肉毒）",
+        },
+        {
+          aliases: ["Neuronox", "優力柔", "优力柔", "奇蹟肉毒", "奇迹肉毒", "奇績肉毒", "neruonox", "neuronx"],
+          customerReply: "🌿 奇蹟肉毒是院內對 Neuronox 優力柔的稱呼。院內另有肉毒 12U 999 體驗方案，品牌與施打細節由真人客服依活動內容協助確認。",
+          key: "neuronox",
+          name: "Neuronox 優力柔（奇蹟肉毒）",
+        },
+        {
+          aliases: ["Dysport", "儷緻", "儷致", "麗緻", "麗致", "皇家肉毒", "dyspot", "dysprot"],
+          customerReply: "🌿 皇家肉毒是院內對 Dysport 儷緻的稱呼。實際施打部位與劑量由醫師評估，價格則由真人客服於上班時間協助確認。",
+          key: "dysport",
+          name: "Dysport 儷緻（皇家肉毒）",
+        },
+      ],
       brandReply:
-        "目前院內常見可評估的肉毒品牌包含 BOTOX、Neuronox 優力柔，以及 Dysport 儷緻；實際會依部位需求、醫師評估與現場安排為主。",
+        "🌿 奇蹟肉毒、經典肉毒及皇家肉毒都是院內可評估的品牌。\n適合哪一款，會依施打部位、肌肉狀況與需求建議。",
       category: "injectable",
       consultationGuide: {
         concernReplies: [
           {
             concernKey: "dynamic_wrinkles",
             discoveryLabel: "魚尾紋／抬頭紋／皺眉紋（動態紋）",
-            reply: "🌿 魚尾紋、抬頭紋、皺眉紋等動態紋路常會先從表情肌活動方向了解；肉毒可作為動態紋路改善與評估的選項之一，實際是否適合仍需醫師現場評估。",
-            followupPrompt: "您較在意魚尾紋、抬頭紋、皺眉紋，還是咀嚼肌／臉部輪廓呢？😊",
-            selectionTerms: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "眉間紋", "川字紋", "動態紋", "表情紋"],
+            reply: "✨ 如果主要困擾是抬頭紋、皺眉紋或魚尾紋，肉毒通常會從表情肌活動與動態紋路方向評估。\n實際施打位置與劑量仍會由醫師依表情活動判斷。",
+            followupPrompt: "😊 您是做表情時比較明顯，還是平時也看得到呢？",
+            selectionTerms: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "眉間紋", "眉間那條", "眉心紋", "川字紋", "動態紋", "表情紋"],
             pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
           },
           {
             concernKey: "masseter_contour",
             discoveryLabel: "咀嚼肌／臉部輪廓",
-            reply: "💎【肉毒小臉】\n\n🔹 放鬆長期咀嚼造成的肌肉肥厚\n🔹 韓國原廠 Neuronox 肉毒桿菌\n🔹 放鬆咀嚼肌、改善國字臉\n🔹 約2～4週效果逐漸明顯\n🔹 打造更自然的小臉輪廓\n\n😊 諮詢皆為免費，由醫師依您的臉型與肌肉狀況評估是否適合此療程，再提供較適合的建議",
-            followupPrompt: "😊 預約諮詢是免費的，可以先來了解看看適不適合自己～請問您平日還是假日比較方便呢？",
+            reply: "✨ 如果主要在意咀嚼肌或臉型偏寬，可以從肉毒小臉方向評估，協助調整下半臉線條。\n實際位置與劑量仍由醫師依肌肉狀況判斷。",
+            followupPrompt: "😊 您主要在意臉型偏寬，還是咬肌緊繃呢？",
             selectionTerms: ["咀嚼肌", "國字臉", "肉毒小臉", "肉毒瘦小臉", "瘦小臉", "小臉肉毒", "咬肌", "臉部輪廓"],
+          },
+          {
+            concernKey: "muscle_contour",
+            discoveryLabel: "肩頸／小腿肌肉線條",
+            reply: "✨ 如果主要在意肩頸或小腿肌肉線條，可以由醫師評估肉毒放鬆肌肉後的修飾方向。\n若伴隨明顯疼痛或功能問題，則需要先由醫師了解原因。",
+            followupPrompt: "😊 您主要想改善肩頸，還是小腿線條呢？",
+            selectionTerms: ["肩頸", "肩膀", "斜方肌", "小腿", "小腿肌", "蘿蔔腿", "肌肉線條"],
+          },
+          {
+            concernKey: "localized_sweating",
+            discoveryLabel: "腋下／手掌多汗",
+            reply: "🌿 肉毒也可以從局部多汗方向評估，通常會先了解出汗部位及對日常生活的影響程度。",
+            followupPrompt: "😊 您主要是腋下、手掌，還是其他部位呢？平常是否會影響衣物、工作或日常活動？",
+            selectionTerms: ["腋下", "腋窩", "手汗", "手掌", "多汗", "流汗"],
           },
         ],
         detailReplies: [
@@ -604,7 +729,7 @@ export const clinicConfig: ClinicConfig = {
             pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
             terms: ["魚尾紋"],
             reply: "🌿 已記下您主要在意魚尾紋這類動態紋路。肉毒通常會依眼周表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
+            followupPrompt: "😊 魚尾紋是做表情時較明顯，還是平時也看得到呢？",
           },
           {
             aspectKey: "dynamic_wrinkles_forehead",
@@ -612,15 +737,15 @@ export const clinicConfig: ClinicConfig = {
             pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
             terms: ["抬頭紋", "額頭紋"],
             reply: "🌿 已記下您主要在意抬頭紋（額頭動態紋）這類動態紋路。肉毒通常會依額頭表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
+            followupPrompt: "😊 抬頭紋是做表情時較明顯，還是平時也看得到呢？",
           },
           {
             aspectKey: "dynamic_wrinkles_frown_lines",
             concernKey: "dynamic_wrinkles",
             pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
-            terms: ["皺眉紋", "皺眉", "眉間紋", "川字紋"],
+            terms: ["皺眉紋", "皺眉", "眉間紋", "眉間那條", "眉心紋", "川字紋"],
             reply: "🌿 已記下您主要在意皺眉紋（眉間動態紋）這類動態紋路。肉毒通常會依眉間表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
-            followupPrompt: "您比較想了解作用方式、維持時間，還是施作感受呢？😊",
+            followupPrompt: "😊 皺眉紋是做表情時較明顯，還是平時也看得到呢？",
           },
           {
             aspectKey: "dynamic_wrinkles_intro",
@@ -633,8 +758,65 @@ export const clinicConfig: ClinicConfig = {
             aspectKey: "dynamic_wrinkles_evaluation",
             concernKey: "dynamic_wrinkles",
             terms: ["效果", "改善嗎", "適合", "可以做"],
-            reply: "🌿 是否適合肉毒會依紋路、肌肉活動與個人需求評估；可先讓醫師確認後再安排較適合的方向。",
-            followupPrompt: "您想先了解體驗方案，還是安排免費諮詢呢？😊",
+            reply: "✨ 肉毒常用於動態紋與肌肉線條評估，例如皺眉紋、魚尾紋或咀嚼肌明顯等困擾。\n效果與適合的劑量會依部位及肌肉狀況判斷。",
+            followupPrompt: "😊 您主要在意紋路，還是小臉線條呢？",
+          },
+          {
+            aspectKey: "dynamic_wrinkles_expression_only",
+            concernKey: "dynamic_wrinkles",
+            terms: [
+              "做表情時比較明顯",
+              "做表情比較明顯",
+              "表情時比較明顯",
+              "做表情",
+              "表情時",
+              "笑的時候",
+              "皺眉時",
+              "抬眉時",
+            ],
+            reply:
+              "✨ 如果主要在做表情時才明顯，通常會著重評估表情肌活動與動態紋位置；實際施打範圍仍由醫師依表情狀況判斷。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "dynamic_wrinkles_at_rest",
+            concernKey: "dynamic_wrinkles",
+            terms: ["平時也有", "平常也有", "平時看得到", "平常看得到", "不做表情也有", "靜態也有"],
+            reply:
+              "🌿 如果平時不做表情也看得到，除了肌肉活動，也需要由醫師一起評估紋路深度與皮膚狀況，再決定適合的處理方向。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "masseter_face_width",
+            concernKey: "masseter_contour",
+            terms: ["臉型偏寬", "臉比較寬", "國字臉", "下半臉寬", "想瘦小臉"],
+            reply:
+              "✨ 若主要是咀嚼肌造成的下半臉偏寬，肉毒小臉會從肌肉厚度與左右狀況評估，協助整理臉型線條。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "masseter_tightness",
+            concernKey: "masseter_contour",
+            terms: ["咬肌緊繃", "咬緊", "咀嚼肌緊", "容易咬牙", "緊繃感"],
+            reply:
+              "🌿 若主要在意咀嚼肌緊繃，醫師會先了解肌肉活動與日常困擾；若伴隨疼痛或功能問題，則需要進一步評估原因。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "muscle_contour_lines",
+            concernKey: "muscle_contour",
+            terms: ["肌肉線條", "肩膀線條", "小腿線條", "斜方肌明顯", "蘿蔔腿"],
+            reply:
+              "✨ 如果主要在意肩頸或小腿的肌肉線條，醫師會依肌肉厚度、左右狀況與希望改善的方向評估。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "localized_sweating_impact",
+            concernKey: "localized_sweating",
+            terms: ["影響衣物", "衣服濕", "影響工作", "影響生活", "很困擾", "出汗很多"],
+            reply:
+              "🌿 若腋下或手掌出汗已影響衣物、工作或日常活動，可以由醫師評估局部多汗的處理方向與適合部位。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
           },
         ],
         discoveryFallbackOption: {
@@ -642,15 +824,15 @@ export const clinicConfig: ClinicConfig = {
           label: "其他想改善的部位",
           selectionTerms: ["其他", "其他部位"],
         },
-        discoveryQuestion: "😊 您想先改善哪個方向呢？",
-        featureSummary: "肉毒可作為動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向的評估選項。",
-        followupPrompt: "您可以告訴我最在意的部位，我先幫您整理諮詢方向😊",
+        discoveryQuestion: "😊 您主要想改善哪個方向呢？",
+        featureSummary: "🌿 肉毒主要從肌肉活動與動態紋路方向評估，也能依部位協助調整肌肉線條。",
+        followupPrompt: "😊 您主要在意臉部動態紋、咀嚼肌／小臉、肩頸／小腿，還是多汗問題呢？",
         quickReplies: [
           {
             key: "features",
             terms: ["特色", "原理", "怎麼做", "功效"],
-            reply: "🟢 肉毒常會依部位需求討論動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向；實際規劃仍需醫師評估。",
-            followupPrompt: "您最在意的是表情紋，還是咀嚼肌／臉部輪廓呢？😊",
+            reply: "🌿 肉毒主要從肌肉活動與動態紋路方向評估，也能依部位協助調整肌肉線條。\n✨ 常見會評估抬頭紋、皺眉紋、魚尾紋、咀嚼肌、小腿、肩頸及多汗問題。",
+            followupPrompt: "😊 您主要想改善臉部動態紋、咀嚼肌／小臉、肩頸／小腿，還是多汗問題呢？",
           },
           {
             key: "comfort_and_recovery",
@@ -658,10 +840,16 @@ export const clinicConfig: ClinicConfig = {
             reply: "🌿 實際施作感受與術後照護會依部位及個人狀況不同，現場會先由醫師評估並說明。",
             followupPrompt: "您想先了解哪個部位？我可以協助安排免費諮詢😊",
           },
+          {
+            key: "continue_question",
+            terms: ["繼續詢問", "繼續問", "還想問", "其他問題"],
+            reply: "😊 可以，您想繼續了解肉毒的改善方向、品牌差異，還是價格呢？",
+            followupPrompt: "直接告訴我最想問的重點就可以。",
+          },
         ],
       },
       evaluationNote: "實際品項與劑量仍需依部位需求與醫師評估為主。",
-      intro: "肉毒通常會拿來討論動態紋路、咀嚼肌、輪廓線條或局部肌肉放鬆等方向，實際安排會依部位與需求評估。",
+      intro: "🌿 肉毒主要從肌肉活動與動態紋路方向評估，也能依部位協助調整肌肉線條。\n\n✨ 常見會評估抬頭紋、皺眉紋、魚尾紋、咀嚼肌、小腿、肩頸及多汗問題。",
       key: "botox",
       name: "肉毒",
     },
@@ -1056,6 +1244,40 @@ export function findAllTreatmentsByMessage(message: string) {
 
 export function findTreatmentByMessage(message: string) {
   return findAllTreatmentsByMessage(message)[0];
+}
+
+export function findTreatmentBrandInClinic(
+  clinic: Pick<ClinicConfig, "treatmentList">,
+  message: string,
+  treatmentKey?: string,
+) {
+  const normalizedMessage = normalizeClinicText(message);
+  if (!normalizedMessage) return null;
+  const candidates = clinic.treatmentList
+    .filter((treatment) => !treatmentKey || treatment.key === treatmentKey)
+    .flatMap((treatment) =>
+      (treatment.brandOptions ?? []).flatMap((brand) =>
+        [brand.name, ...brand.aliases].map((alias) => ({
+          aliasLength: normalizeClinicText(alias).length,
+          brand,
+          matched: normalizedMessage.includes(normalizeClinicText(alias)),
+          treatmentKey: treatment.key,
+        })),
+      ),
+    )
+    .filter((candidate) => candidate.matched && candidate.aliasLength > 0)
+    .sort((left, right) => right.aliasLength - left.aliasLength);
+  const first = candidates[0];
+  return first
+    ? { ...first.brand, treatmentKey: first.treatmentKey }
+    : null;
+}
+
+export function findTreatmentBrandByMessage(
+  message: string,
+  treatmentKey?: string,
+) {
+  return findTreatmentBrandInClinic(clinicConfig, message, treatmentKey);
 }
 
 export function getClinicOfferingNames() {

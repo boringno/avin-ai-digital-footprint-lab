@@ -191,8 +191,9 @@ function validateBookingFieldAndPricingOwnership() {
     ["onda_pro"],
   );
   const priced = apply(withTreatment, pricing);
-  assert.equal(priced.activeTask.kind, "pricing");
-  assert.equal(priced.bookingTask.status, "suspended");
+  assert.equal(priced.activeTask.kind, "booking");
+  assert.equal(priced.bookingTask.status, "collecting");
+  assert.equal(priced.bookingTask.expectedField, "branch");
   assert.deepEqual(priced.bookingTask.draft.treatmentKeys, ["onda_pro"]);
 
   const effectFollowup = evaluateDialoguePolicy(

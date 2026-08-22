@@ -14,7 +14,7 @@ import { findAllTreatmentsByMessage } from "../src/lib/clinic-config";
 
 const NOW = new Date("2026-08-12T11:17:00.000Z");
 const FOOTER = "以上為 AI 客服順順初步回覆。";
-const ONDA_INTRO_MARKER = "目前醫美界非常熱門";
+const ONDA_INTRO_MARKER = "ONDA Pro 是非侵入式的 Coolwaves®";
 
 type JourneyTurn = {
   context: ConversationContext;

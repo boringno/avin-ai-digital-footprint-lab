@@ -260,6 +260,17 @@ function validateDeterministicPriceShortcutRespectsSafety() {
     "a named treatment plus explicit price wording must survive low NLU confidence",
   );
 
+  const lowConfidenceContextualPrice = adapt(
+    frame({ confidence: 0.4, intents: ["pricing"] }),
+    undefined,
+    "那價格呢",
+  );
+  assert.equal(
+    lowConfidenceContextualPrice.speechAct,
+    "ask_price",
+    "clear price wording must reach policy so the active subject can own the follow-up",
+  );
+
   for (const clearPriceQuestion of ["那個肉毒多少錢", "我不確定肉毒多少錢"]) {
     const colloquialNamedPrice = adapt(
       frame({ confidence: 0.4, intents: ["pricing"] }),
@@ -868,6 +879,7 @@ function validateTrustedSemanticAnchors() {
     {
       aspect: "brands" as const,
       activeMessages: [
+        "有哪些品牌",
         "用的是哪個牌",
         "哪一品牌",
         "機台是哪個牌子",
