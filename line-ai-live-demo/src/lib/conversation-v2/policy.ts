@@ -287,6 +287,60 @@ function knowledgeModeForTurn(
     : "replace_active_subject" as const;
 }
 
+const CONVERSATION_EPISODE_IDLE_MS = 60 * 60 * 1000;
+const EXPLICIT_TREATMENT_OVERVIEW_PATTERN = /(?:想|希望|可以|要).{0,6}(?:了解|介紹|認識|問問|諮詢)/u;
+const EXPLICIT_TREATMENT_RESTART_PATTERN = /(?:重新|從頭).{0,6}(?:了解|介紹|認識|說明|問問|諮詢)|再(?:幫我)?(?:介紹|說明)/u;
+const TREATMENT_OVERVIEW_REAFFIRMATION_PATTERN = /(?:還是|只是|(?:我)?是想|其實)/u;
+
+/**
+ * A direct request for a treatment overview, or a named overview after a long idle
+ * period, starts a new consultation episode even when it names the stored subject.
+ * Without this boundary, a customer returning with "想了解 ONDA" inherits stale
+ * concerns and is answered as though they were continuing the old final question.
+ */
+function restartsTreatmentOverview(
+  state: ConversationV2State,
+  input: Parameters<typeof activeSubjectKey>[0],
+  responseContext: TreatmentResponseContext,
+  at: string,
+  text: string,
+) {
+  if (
+    input.taskKind !== "learn_treatment" ||
+    input.treatmentKeys.length === 0 ||
+    responseContext.conversationMove !== "start" ||
+    responseContext.questionAspect !== "overview"
+  ) {
+    return false;
+  }
+
+  const contextualTreatmentOwner = contextualTreatmentKeys(state, "active_subject");
+  const sameTreatmentOwner =
+    contextualTreatmentOwner.length === input.treatmentKeys.length &&
+    input.treatmentKeys.every((key) => contextualTreatmentOwner.includes(key));
+  if (!sameTreatmentOwner) return false;
+
+  // A direct restart phrase is always authoritative. A normal overview request
+  // restarts immediately only when the stored task already carries a narrower
+  // concern/area; repeating the same request right after a correct introduction
+  // must advance instead of replaying the introduction. A bare treatment name
+  // does not take this path, so short answers can still continue the active task.
+  if (EXPLICIT_TREATMENT_RESTART_PATTERN.test(text)) return true;
+  if (
+    EXPLICIT_TREATMENT_OVERVIEW_PATTERN.test(text) &&
+    !TREATMENT_OVERVIEW_REAFFIRMATION_PATTERN.test(text) &&
+    (state.knowledge.concernKeys.length > 0 || state.knowledge.areaKeys.length > 0)
+  ) {
+    return true;
+  }
+
+  const previousAt = Date.parse(state.activeTask.startedAt || state.updatedAt);
+  const currentAt = Date.parse(at);
+  return Number.isFinite(previousAt) &&
+    Number.isFinite(currentAt) &&
+    currentAt >= previousAt + CONVERSATION_EPISODE_IDLE_MS;
+}
+
 /**
  * A treatment subject we can act on without asking the customer again.
  *
@@ -509,6 +563,7 @@ function generatedPlan(
   const repeatedActiveOverview =
     action.responseContext.conversationMove === "start" &&
     action.responseContext.questionAspect === "overview" &&
+    !action.episodeRestart &&
     (state.activeTask.subjectKey === activeSubjectKey(action) || repeatsKnownTreatment);
   const dialogueAct: GeneratedReplyPlan["dialogueAct"] = ["prefer_single", "reject"].includes(
     action.responseContext.conversationMove,
@@ -1084,12 +1139,22 @@ export function evaluateDialoguePolicy(
           type: "fallback_clarify",
         };
       } else {
-        const knowledgeMode = knowledgeModeForTurn(state, {
+        const actionSubject = {
           areaKeys,
           concernKeys,
           taskKind,
           treatmentKeys,
-        }, responseContext);
+        };
+        const episodeRestart = restartsTreatmentOverview(
+            state,
+            actionSubject,
+            responseContext,
+            turn.receivedAt,
+            turn.text,
+          );
+        const knowledgeMode = episodeRestart
+          ? "replace_active_subject" as const
+          : knowledgeModeForTurn(state, actionSubject, responseContext);
         action = awaiting
           ? {
               at: turn.receivedAt,
@@ -1116,6 +1181,7 @@ export function evaluateDialoguePolicy(
               areaKeys,
               at: turn.receivedAt,
               concernKeys,
+              episodeRestart,
               knowledgeMode,
               responseContext,
               taskKind,

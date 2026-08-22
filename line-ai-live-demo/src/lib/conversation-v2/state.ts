@@ -443,7 +443,9 @@ export function reduceConversationV2State(
       return {
         ...next,
         ...common,
-        activeTask: nextTask(next, taskKind, action.at, action.turnId, subjectKey),
+        activeTask: action.episodeRestart
+          ? { id: `${next.episodeId}:${action.turnId}:${taskKind}`, kind: taskKind, startedAt: action.at, subjectKey }
+          : nextTask(next, taskKind, action.at, action.turnId, subjectKey),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
         knowledge,

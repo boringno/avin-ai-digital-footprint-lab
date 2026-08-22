@@ -262,6 +262,8 @@ type PolicyActionBase = {
 export type DialoguePolicyAction =
   | (PolicyActionBase & {
       type: "learn_treatment";
+      /** True only when this turn deliberately starts a fresh consultation episode. */
+      episodeRestart?: boolean;
       taskKind: "learn_treatment" | "compare_treatments" | "answer_concern";
       treatmentKeys: string[];
       concernKeys: string[];
