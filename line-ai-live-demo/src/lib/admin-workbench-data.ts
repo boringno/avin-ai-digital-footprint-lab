@@ -5,6 +5,10 @@ import { createEmptyConversationState } from "@/lib/conversation-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 import { hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
+import {
+  getConversationDecisionTrace,
+  type ConversationDecisionTrace,
+} from "@/lib/admin-conversation-decision-trace";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 export type WorkbenchQueueItem = {
@@ -44,6 +48,7 @@ export type WorkbenchLeadSummary = {
 export type WorkbenchMessage = {
   content: string;
   createdAt: string;
+  decisionTrace: ConversationDecisionTrace | null;
   direction: "ai" | "customer" | "staff" | "system";
   id: string;
   sendError: string | null;
@@ -204,6 +209,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
     messages: orderNewestMessagesChronologically((messages ?? []) as MessageRow[]).map((message) => ({
       content: message.content,
       createdAt: message.created_at,
+      decisionTrace: getConversationDecisionTrace(message.payload_json),
       direction: message.direction,
       id: message.id,
       sendError: message.send_error,
