@@ -45,6 +45,7 @@ import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 import {
   routeConversationV2Canary,
+  type ConversationV2NluTelemetry,
   type ConversationV2LiveRouteResult,
 } from "@/lib/conversation-v2/live-runtime";
 
@@ -124,11 +125,14 @@ type ClassifiedDecision = {
   };
   conversationV2SnapshotId?: string;
   conversationV2ToolRequestType?: "persist_booking_progress" | "queue_handoff" | "request_fact_confirmation";
+  conversationV2NluTelemetry?: ConversationV2NluTelemetry;
+  conversationV2PolicyAction?: string;
   decisionType: string;
   matchedKey: string;
   matchedType: string;
   nextContext: ConversationContext;
   rendererTelemetry?: ReplyRendererTelemetry;
+  routeVersion?: "preflight" | "v1" | "v2";
   replyMessages?: LineReplyMessage[];
   replyText: string;
   suppressAiFooter?: boolean;
@@ -346,6 +350,8 @@ export type ProcessedWebhookResult = {
   };
   conversationV2SnapshotId?: string;
   conversationV2ToolRequestType?: "persist_booking_progress" | "queue_handoff" | "request_fact_confirmation";
+  conversationV2NluTelemetry?: ConversationV2NluTelemetry;
+  conversationV2PolicyAction?: string;
   handoffReason: null | string;
   decision: {
     decisionType: string;
@@ -366,6 +372,7 @@ export type ProcessedWebhookResult = {
   };
   replyToken: string;
   rendererTelemetry?: ReplyRendererTelemetry;
+  routeVersion: "preflight" | "v1" | "v2";
   sourceGroupId: string;
   sourceRoomId: string;
   sourceType: string;
@@ -909,6 +916,8 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     aiTokensOut,
     conversationState: persistedConversationState,
     conversationV2DataStatus: conversationV2Route?.dataStatus,
+    conversationV2NluTelemetry: conversationV2Route?.nluTelemetry,
+    conversationV2PolicyAction: conversationV2Route?.policyAction,
     conversationV2FactConfirmation: conversationV2Route?.toolRequest?.type === "request_fact_confirmation"
       ? {
           domain: conversationV2Route.toolRequest.domain,
@@ -923,6 +932,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     matchedType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     rendererTelemetry,
+    routeVersion: usedConversationV2 ? "v2" : "v1",
     replyMessages,
     replyText,
     // Customer-visible generated messages already include the disclosure. A
@@ -973,6 +983,8 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       conversationStatus: decision.conversationState.status,
       conversationV2DataStatus: decision.conversationV2DataStatus,
       conversationV2FactConfirmation: decision.conversationV2FactConfirmation,
+      conversationV2NluTelemetry: decision.conversationV2NluTelemetry,
+      conversationV2PolicyAction: decision.conversationV2PolicyAction,
       conversationV2SnapshotId: decision.conversationV2SnapshotId,
       conversationV2ToolRequestType: decision.conversationV2ToolRequestType,
       handoffReason: decision.conversationState.handoffReason,
@@ -991,6 +1003,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       replyPayload,
       replyToken,
       rendererTelemetry: decision.rendererTelemetry,
+      routeVersion: decision.routeVersion ?? "preflight",
       sourceGroupId: event.source?.groupId ?? "",
       sourceRoomId: event.source?.roomId ?? "",
       sourceType: event.source?.type ?? "",

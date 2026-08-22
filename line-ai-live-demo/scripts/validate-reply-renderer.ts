@@ -78,6 +78,24 @@ async function validateDeterministicBypass() {
   assert.equal(result.handoffRequired, false, "RR1: deterministic replies must never request a renderer handoff");
   assert.equal(result.messages[0]?.type, "text");
   assert.match(result.messages[0]?.type === "text" ? result.messages[0].text : "", /16,888 元。\n\n以上為 AI 客服/u);
+
+  const mixedPricePlan = legacyDecisionToReplyPlan({
+    decisionType: "pricing_auto_reply",
+    matchedKey: "price:onda_pro",
+    matchedType: "pricing_campaign",
+    replyText: "ONDA Pro 體驗價 16,888 元，另外還有 30,000 元方案。",
+  });
+  mixedPricePlan.exactPriceFacts = ["16,888 元"];
+  const mixedPrice = await renderReplyPlan({
+    customerMessage: "多少錢",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: mixedPricePlan,
+    recentTurns: [],
+  });
+  assert.equal(mixedPrice.fallbackReason, "deterministic_rejected", "RR1: an extra unapproved price must fail closed");
+  assert.doesNotMatch(mixedPrice.replyText, /30,000/u, "RR1: an extra unapproved price must not reach LINE");
 }
 
 async function validateGeneratedReplyAndContext() {
@@ -274,6 +292,44 @@ async function validateFallbackLadderNeverBypassesGuard() {
   assert(!/(?:保證|一定有效|永久|完全無副作用)/u.test(result.replyText), "RR3c: fallback ladder must not leak a blocked claim");
   assert.notEqual(result.replyText, plan.fallbackText, "RR3c: an unsafe primary fallback must be rejected");
   assert.notEqual(result.replyText, plan.secondaryFallbackText, "RR3c: an unsafe secondary fallback must also be rejected");
+}
+
+async function validateSystemProcessNarrationNeverReachesCustomer() {
+  const processNarration = "目前的療程脈絡我有保留，我會直接承接這一輪的新問題。";
+  const deterministicPlan = treatmentPlan(processNarration);
+  deterministicPlan.renderMode = "deterministic";
+  deterministicPlan.deterministicReply = processNarration;
+
+  const deterministic = await renderReplyPlan({
+    customerMessage: "ONDA",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: deterministicPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    deterministic.fallbackReason,
+    "deterministic_rejected",
+    "RR3f: deterministic process narration must be rejected by the final renderer guard",
+  );
+  assert.equal(deterministic.guardReplacedText, true, "RR3f: deterministic guard replacement must be observable");
+  assert.equal(deterministic.generatorInvoked, false, "RR3f: deterministic rejection must not claim a model was invoked");
+  assert.equal(deterministic.replyTextSource, "approved_fallback", "RR3f: replacement must come from approved fallback copy");
+  assert.doesNotMatch(deterministic.replyText, /療程脈絡|承接這一輪/u, "RR3f: process narration must not reach LINE");
+
+  const generatedPlan = treatmentPlan(processNarration);
+  generatedPlan.secondaryFallbackText = "已保留您先前提到的需求，我會直接承接這一輪的新問題。";
+  const generatedFallback = await renderReplyPlan({
+    customerMessage: "ONDA",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => null,
+    plan: generatedPlan,
+    recentTurns: [],
+  });
+  assert.equal(generatedFallback.guardReplacedText, true, "RR3f: unsafe fallback-bank candidates must be observable");
+  assert.doesNotMatch(generatedFallback.replyText, /療程脈絡|已保留.*需求|承接這一輪/u, "RR3f: injected process fallback must fail closed");
 }
 
 async function validateActivityDatesStayInternalWithoutBlockingDurations() {
@@ -551,6 +607,8 @@ async function validateRendererTelemetryContract() {
   assert.equal(generatedTelemetry.renderMode, "generated", "RR8: successful generation must be tagged generated");
   assert.equal(generatedTelemetry.generatorInvoked, true, "RR8: successful generation must record model invocation");
   assert.equal(generatedTelemetry.generatedVisible, true, "RR8: successful generation must record customer visibility");
+  assert.equal(generatedTelemetry.guardReplacedText, false, "RR8: accepted generation must not report a guard replacement");
+  assert.equal(generatedTelemetry.replyTextSource, "grounded_generation", "RR8: generated copy source must be explicit");
   assert.equal(generatedTelemetry.fallbackReason, undefined, "RR8: successful generation must not invent a fallback reason");
   assert(generatedTelemetry.latencyMs >= 0, "RR8: telemetry latency must be non-negative");
 
@@ -566,6 +624,7 @@ async function validateRendererTelemetryContract() {
   assert.equal(fallbackTelemetry.renderMode, "fallback", "RR8: unavailable generator must be tagged fallback");
   assert.equal(fallbackTelemetry.generatorInvoked, true, "RR8: unavailable generation must still record the attempted model call");
   assert.equal(fallbackTelemetry.generatedVisible, false, "RR8: fallback must record that generated text was not customer-visible");
+  assert.equal(fallbackTelemetry.replyTextSource, "approved_fallback", "RR8: fallback source must be explicit");
   assert.equal(fallbackTelemetry.fallbackReason, "generator_unavailable", "RR8: fallback reason must be queryable");
   assert(fallbackTelemetry.latencyMs >= 0, "RR8: fallback latency must be non-negative");
 
@@ -586,6 +645,7 @@ async function validateRendererTelemetryContract() {
   assert.equal(deterministicTelemetry.renderMode, "deterministic", "RR8: hard price response must be tagged deterministic");
   assert.equal(deterministicTelemetry.generatorInvoked, false, "RR8: deterministic bypass must record that no generator was called");
   assert.equal(deterministicTelemetry.generatedVisible, false, "RR8: deterministic bypass has no customer-visible generated text");
+  assert.equal(deterministicTelemetry.replyTextSource, "approved_deterministic", "RR8: deterministic source must be explicit");
   assert.equal(deterministicTelemetry.fallbackReason, undefined, "RR8: deterministic bypass must not inflate fallback metrics");
 
   const rejected = await renderReplyPlan({
@@ -616,12 +676,17 @@ async function validateRendererTelemetryContract() {
     "renderer_fallback_variant",
     "renderer_generated_visible",
     "renderer_generator_invoked",
+    "renderer_guard_replaced_text",
     "renderer_latency_ms",
     "renderer_mode",
+    "renderer_reply_text_source",
   ], "RR8: internal persistence must use a narrow telemetry schema");
   const serialized = JSON.stringify(payload);
   assert(!serialized.includes("雙下巴呢") && !serialized.includes("本輪安全保底"), "RR8: telemetry payload must not persist message or full reply text");
-  assert(!serialized.includes("source"), "RR8: telemetry payload must not contain external source URLs");
+  assert(
+    !serialized.includes("official.example") && !serialized.includes("http://") && !serialized.includes("https://"),
+    "RR8: telemetry payload must not contain external source URLs",
+  );
 }
 
 async function main() {
@@ -631,6 +696,7 @@ async function main() {
   await validateGeneratorFailuresUsePlanFallback();
   await validateFallbackLadderAvoidsPreviousReply();
   await validateFallbackLadderNeverBypassesGuard();
+  await validateSystemProcessNarrationNeverReachesCustomer();
   await validateActivityDatesStayInternalWithoutBlockingDurations();
   await validateFallbackExhaustionNeverReplaysUncheckedText();
   await validateGuardRejectionUsesPlanFallback();

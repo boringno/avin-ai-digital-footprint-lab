@@ -6,7 +6,7 @@ import {
 } from "@/lib/clinic-config";
 import type { ConversationContext } from "@/lib/conversation-context";
 
-export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
+export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "收費", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
 
 /**
  * Hedged ways of naming a treatment ("我好像想問那個肉毒").
@@ -52,7 +52,7 @@ const ALTERNATE_PRICE_PATTERNS = [
 
 const CURRENT_OFFER_PATTERNS = [
   /(?:體驗價|活動價|優惠價|現價|目前價格|現在價格|現行價格|這個價格|方案價格)/u,
-  /(?:價格|價錢|價位|費用|多少錢|報價|折扣)/u,
+  /(?:價格|價錢|價位|費用|收費|多少錢|報價|折扣)/u,
   /(?:目前|現在|近期|最近)(?:活動|優惠|方案)/u,
   /(?:活動|優惠|方案)(?:是什麼|有哪些|內容|怎麼算|如何)/u,
   /這個(?:活動|方案).*(?:多少|價格|價錢|價位|費用|報價)/u,

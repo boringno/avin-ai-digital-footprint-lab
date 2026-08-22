@@ -560,7 +560,24 @@ export function reduceConversationV2State(
         bookingTask: suspendBooking(next),
       };
     }
-    case "answer_price":
+    case "answer_price": {
+      // Price is a common side question while a customer is completing a
+      // booking. Answering it must not abandon or suspend the booking owner;
+      // keep the same expected field so the next short answer continues the
+      // form instead of starting a new consultation episode.
+      if (next.bookingTask.status === "collecting") {
+        return {
+          ...next,
+          ...common,
+          activeTask: { ...next.activeTask },
+          awaiting: cloneAwaiting(next.awaiting),
+          bookingTask: {
+            ...next.bookingTask,
+            draft: cloneDraft(next.bookingTask.draft),
+          },
+          pricingSubjectTreatmentKeys: [...action.treatmentKeys],
+        };
+      }
       return {
         ...next,
         ...common,
@@ -569,6 +586,7 @@ export function reduceConversationV2State(
         bookingTask: suspendBooking(next),
         pricingSubjectTreatmentKeys: [...action.treatmentKeys],
       };
+    }
     case "queue_handoff":
       return {
         ...next,

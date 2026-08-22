@@ -234,18 +234,45 @@ function applicabilityState(
 
   const record = recordApplicability(campaign);
   const dimensions = ["dose", "package", "variant"] as const;
+  // A supplied qualifier must be checked for mismatch before missing fields.
+  // Otherwise `BOTOX 價格` could stop at a missing dose and accidentally reuse
+  // a Neuronox-only offer before the conflicting brand is examined.
   for (const dimension of dimensions) {
     const expected = normalizedDimension(record[dimension]);
     const requested = normalizedDimension(query?.[dimension]);
-    if (expected && !requested) return "required";
     if (requested && (!expected || requested !== expected)) return "mismatch";
   }
-  if (record.sessionCount && query?.sessionCount === undefined) return "required";
   if (
     query?.sessionCount !== undefined &&
     (!record.sessionCount || record.sessionCount !== query.sessionCount)
   ) return "mismatch";
+  for (const dimension of dimensions) {
+    if (normalizedDimension(record[dimension]) && !normalizedDimension(query?.[dimension])) {
+      return "required";
+    }
+  }
+  if (record.sessionCount && query?.sessionCount === undefined) return "required";
   return "match";
+}
+
+function customerTextSelfIdentifiesApplicability(
+  campaign: PriceCatalogEntry,
+  query: PriceApplicabilityDimensions | undefined,
+) {
+  const resolvedText = customerPriceText(campaign);
+  if (resolvedText.status !== "ok") return false;
+  const normalizedText = normalizeClinicText(resolvedText.text);
+  const record = recordApplicability(campaign);
+  for (const dimension of ["dose", "package", "variant"] as const) {
+    const expected = normalizedDimension(record[dimension]);
+    if (!expected || normalizedDimension(query?.[dimension])) continue;
+    if (!normalizedText.includes(expected)) return false;
+  }
+  if (record.sessionCount && query?.sessionCount === undefined) {
+    const count = String(record.sessionCount);
+    if (!new RegExp(`${count}(?:堂|次|組|入)`, "u").test(normalizedText)) return false;
+  }
+  return true;
 }
 
 type CustomerPriceTextResolution =
@@ -351,7 +378,15 @@ export function resolveApprovedPrice(
     );
   }
 
-  const applicable = current.filter((candidate) => candidate.applicability === "match");
+  let applicable = current.filter((candidate) => candidate.applicability === "match");
+  if (applicable.length === 0) {
+    // A generic price question may quote one fully self-identifying approved
+    // offer (for example brand + dose + amount in the reviewed customer copy).
+    // Explicitly mismatched brand/spec queries never enter this path.
+    applicable = current.filter((candidate) =>
+      candidate.applicability === "required" &&
+      customerTextSelfIdentifiesApplicability(candidate.campaign, query.applicability));
+  }
   if (applicable.length === 0) {
     const first = current[0];
     if (current.some((candidate) => candidate.applicability === "branch_required")) {

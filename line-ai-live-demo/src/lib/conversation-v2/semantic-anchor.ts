@@ -29,6 +29,7 @@ import {
   matchPositiveContentIntros,
   normalizeLeadingPositiveContentIntro,
 } from "./content-intro";
+import { isExplicitTreatmentOverviewRestart } from "./episode-policy";
 
 const CONTENT_SPEECH_ACTS = new Set<DialogueSpeechAct>([
   "ask_concern",
@@ -58,6 +59,9 @@ const CONSERVATIVE_NEGATION_TERMS = /(?:不是|不要|不想|不考慮|不需要
 const NON_CONTENT_INTENT_TERMS = /(?:收費|費用|價錢|價格|活動價|優惠價|可以約|能約|預約|約時間|還沒決定|尚未決定|沒決定|朋友|綽號)/u;
 const ENTITY_ONLY_FILLERS = [
   "我想了解",
+  "我想瞭解",
+  "我響了解",
+  "我向了解",
   "我想知道",
   "我比較在意",
   "我主要在意",
@@ -66,6 +70,9 @@ const ENTITY_ONLY_FILLERS = [
   "比較是",
   "想改善",
   "想了解",
+  "想瞭解",
+  "響了解",
+  "向了解",
   "想知道",
   "請問",
   "這個",
@@ -84,9 +91,20 @@ const CONTENT_QUESTION_FILLERS = [
   "有沒有什麼效果",
   "有何效果",
   "效果如何",
+  "主要改善啥",
+  "可以改善啥",
+  "能改善啥",
+  "改善啥",
+  "能幹嘛",
+  "可以幹嘛",
   "可以改善什麼",
   "能改善什麼",
   "改善什麼",
+  "可以打哪裡",
+  "能打哪裡",
+  "可以打哪些部位",
+  "能打哪些部位",
+  "適合哪些部位",
   "適合什麼",
   "適合誰",
   "適合我",
@@ -281,6 +299,7 @@ const BRAND_QUESTION_FILLERS = [
   "誰家",
   "哪間",
   "為何",
+  "有哪些",
 ] as const;
 const APPROVED_ASSET_NEUTRAL_FILLERS = [
   "我比較在意",
@@ -292,6 +311,12 @@ const APPROVED_ASSET_NEUTRAL_FILLERS = [
   "困擾",
   "問題",
   "堆積",
+  // A matched approved-content term may itself be phrased as a proposal
+  // (for example, `只做 <treatment>`).  Consume only the trailing yes/no
+  // morphology here; price, booking, clinic and safety wording has already
+  // been rejected by the hard-domain gate above.
+  "可以嗎",
+  "能嗎",
 ] as const;
 const CLAUSE_BOUNDARY = /(?:[，,。！!？?；;]+|但是|可是|不過|而是|改成|但)/u;
 const INTERROGATIVE_MODAL_ALTERNATIVE = /(?:有無|會否|是否|能否|可否)/gu;
@@ -589,6 +614,7 @@ function inferDeterministicContentQuestionAspect(
     return undefined;
   }
   const normalized = normalizeClinicText(message);
+  if (/(?:是什麼)/u.test(normalized)) return "overview";
   if (/(?:副作用|風險|安全)/u.test(normalized)) return "side_effects";
   if (/(?:品牌|牌子|廠牌|哪一牌|什麼牌|哪牌)/u.test(normalized)) return "brands";
   if (/(?:恢復|修復|敷麻|會痛|痛嗎|疼痛)/u.test(normalized)) return "comfort_recovery";
@@ -598,7 +624,7 @@ function inferDeterministicContentQuestionAspect(
   if (/(?:單做|搭配|一起做|差在哪|差別|有什麼不同)/u.test(normalized)) {
     return "general_difference";
   }
-  if (/(?:效果|功效|改善什麼|適合什麼|有什麼用|作用)/u.test(normalized)) {
+  if (/(?:效果|功效|改善(?:什麼|啥)|適合(?:什麼|哪些部位)|(?:可以|能)打(?:哪裡|哪些部位)|有什麼用|作用|幹嘛)/u.test(normalized)) {
     return "benefits";
   }
   return undefined;
@@ -872,6 +898,28 @@ export function resolveTrustedSemanticAnchor(
   const areaKeys = unique(ontologyMatch.areas.map((item) => item.key));
   if (treatmentKeys.length > 1 || concernKeys.length > 1 || areaKeys.length > 1) {
     return undefined;
+  }
+
+  // A direct request to hear one named treatment again owns the current-text
+  // dialogue move even when NLU echoes the old active subject and labels the
+  // turn as a continuation. It still passes through policy/state/hydration;
+  // this anchor only supplies deterministic current-message semantics.
+  if (
+    treatmentKeys.length === 1 &&
+    concernKeys.length === 0 &&
+    areaKeys.length === 0 &&
+    isExplicitTreatmentOverviewRestart(scopedMessage)
+  ) {
+    return {
+      areaKeys: [],
+      concernKeys: [],
+      conversationMove: "start",
+      dialogueReference: "explicit",
+      questionAspect: "overview",
+      source: "exact_ontology",
+      speechAct: "learn_treatment",
+      treatmentKeys,
+    };
   }
 
   const matchedTerms = [

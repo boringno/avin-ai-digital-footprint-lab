@@ -23,14 +23,23 @@ async function routeSemanticConcern(concern: "jawline_looseness" | "local_contou
 async function main() {
   const jawline = await routeSemanticConcern("jawline_looseness");
   assert(jawline.matchedKey === "treatment_consult:onda_pro:semantic:jawline_looseness", "S1: must use the approved ONDA jawline scenario");
-  assert(jawline.replyText.includes("ONDA Pro 超微波6分鐘"), "S1: must use approved ONDA face copy, not LLM-generated text");
+  assert(
+    jawline.replyText.includes("ONDA Pro") &&
+      jawline.replyText.includes("脂肪肉感") &&
+      jawline.replyText.includes("輪廓緊實"),
+    "S1: must use the current approved ONDA face copy, not LLM-generated text",
+  );
+  assert(!jawline.replyText.includes("6分鐘"), "S1: unapproved duration must stay out of customer-visible copy");
   assert(!jawline.replyText.includes("很多在意下顎線的客人都會選擇這個組合"), "S1: a double-chin concern alone must not hard-sell Botox");
   assert(!jawline.replyText.includes("12,999元"), "S1: semantic concern routing must not quote before a price question");
   assert(jawline.nextContext.lastIntent !== "booking_intake", "S1: semantic concern routing must remain consultation");
 
   const body = await routeSemanticConcern("local_contour");
   assert(body.matchedKey === "treatment_consult:onda_pro:semantic:local_contour", "S2: must use the approved ONDA body scenario");
-  assert(body.replyText.includes("身體局部脂肪堆積"), "S2: must use approved Xiaoying ONDA body copy");
+  assert(
+    body.replyText.includes("身體局部脂肪") && body.replyText.includes("脂肪厚度") && body.replyText.includes("緊實需求"),
+    "S2: must use the current approved ONDA body copy",
+  );
   assert(!body.replyText.includes("體驗價 16,888"), "S2: semantic concern routing must not quote before a price question");
 
   const pregnancy = await routeCustomerMessage({

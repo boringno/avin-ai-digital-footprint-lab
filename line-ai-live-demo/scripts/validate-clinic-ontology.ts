@@ -49,7 +49,7 @@ for (const treatment of clinicOntology.treatments) {
     assert(!packageOrDosePattern.test(alias), `public treatment alias must not contain SKU detail: ${alias}`);
   }
 }
-assert(clinicOntology.concerns.length === 9, "ontology must expose all 9 configured concerns");
+assert(clinicOntology.concerns.length === 11, "ontology must expose all 11 configured concerns");
 assert(clinicOntology.areas.some((area) => area.key === "arm" && area.keywords.includes("掰掰肉")), "arm aliases must be canonical");
 assert(clinicOntology.areas.some((area) => area.key === "abdomen" && area.keywords.includes("小肚肚")), "abdomen aliases must be canonical");
 assert(
@@ -59,6 +59,14 @@ assert(
 assert(
   clinicOntology.concerns.some((concern) => concern.key === "masseter_contour" && concern.keywords.includes("咀嚼肌")),
   "Botox masseter contour must be a canonical concern instead of a prompt-only option",
+);
+assert(
+  clinicOntology.concerns.some((concern) => concern.key === "muscle_contour" && concern.areaKeys.includes("shoulder")),
+  "Botox shoulder/calf contour must be canonical data",
+);
+assert(
+  clinicOntology.concerns.some((concern) => concern.key === "localized_sweating" && concern.areaKeys.includes("armpit")),
+  "Botox sweating concerns must be canonical data",
 );
 
 console.log("clinic ontology validation passed");

@@ -19,6 +19,8 @@ export type TreatmentBranchAvailability =
 
 export type OfferedTreatmentFact = {
   branchAvailability: TreatmentBranchAvailability;
+  /** Customer-visible approved copy for the exact requested aspect, when available. */
+  customerAspectReplies: string[];
   // Customer-visible approved copy. `facts` carries internal field labels such as
   // "療程名稱：X" and is only ever a knowledge base for the model; this list is the
   // only treatment copy that may reach the customer directly.
@@ -127,6 +129,8 @@ export type UnavailablePriceFact = {
 export type PriceFactResolution = ApprovedCurrentPriceFact | UnavailablePriceFact;
 
 export type TreatmentKnowledgeResolution = {
+  /** Customer-visible approved replies for the requested aspect (for example brands). */
+  customerAspectReplies: string[];
   // Customer-visible approved replies selected for the concerns in this turn.
   // These are distinct from the generic treatment introduction so a follow-up can
   // advance the consultation instead of replaying the first paragraph.

@@ -8,6 +8,7 @@ import {
 } from "@/lib/clinic-facts";
 import {
   findAllTreatmentsByMessage,
+  findTreatmentBrandInClinic,
   findTreatmentByKey,
   normalizeClinicText,
 } from "@/lib/clinic-config";
@@ -27,6 +28,7 @@ import {
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { reportOperationalError } from "@/lib/monitoring";
 import { requestNluFrame } from "@/lib/nlu-shadow";
+import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
 import type { RouterDecision } from "@/lib/router";
 import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
@@ -44,6 +46,8 @@ import {
 import { adaptNluFrameToConversationV2Turn } from "./nlu-adapter";
 import { resolveDeterministicNegationGuard } from "./deterministic-negation";
 import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
+import { resolveTreatmentClarification } from "./treatment-clarification";
+import { hasConversationEpisodeExpired } from "./episode-policy";
 import { routeConversationTurnV2 } from "./engine";
 import {
   cloneConversationV2State,
@@ -52,12 +56,117 @@ import {
   recordConversationV2TurnReceipt,
 } from "./state";
 import type {
+  BookingField,
   ConversationV2State,
   TurnUnderstanding,
 } from "./types";
 import type { ConversationV2ToolRequest } from "./data-gap-policy";
 
 const DEFAULT_TENANT_ID = "tenant_001";
+
+const BOOKING_FIELD_PROMPTS: Record<BookingField, string> = {
+  appointment_reference: "請提供原預約的姓名、電話或預約日期，方便真人客服查詢。",
+  branch: "請問較方便前往哪個館別？高雄、台中、桃園或林口都可以。",
+  change_request: "請告訴我想修改的日期、時段、館別或療程。",
+  first_visit: "請問這次是初診還是複診呢？",
+  name: "請留下方便聯絡的姓名。",
+  phone: "請留下聯絡電話。",
+  time_slots: "請提供 3 個方便的日期與時段。",
+  treatment: "想預約諮詢哪一項療程或主要困擾呢？",
+};
+
+const RESUME_BOOKING_PATTERN = /(?:繼續|接著|延續|回到).{0,8}(?:剛才|原本|之前)?(?:的)?(?:預約|資料|填寫)|繼續預約/u;
+const ASK_OTHER_FIRST_PATTERN = /(?:先|暫時).{0,6}(?:問|詢問|了解).{0,6}(?:其他|別的)|先詢問其他問題/u;
+
+function bookingProgressToolRequest(state: ConversationV2State): ConversationV2ToolRequest {
+  return {
+    bookingTask: {
+      draft: {
+        ...state.bookingTask.draft,
+        timeSlots: [...state.bookingTask.draft.timeSlots],
+        treatmentKeys: [...state.bookingTask.draft.treatmentKeys],
+      },
+      expectedField: state.bookingTask.expectedField,
+      id: state.bookingTask.id,
+      intent: state.bookingTask.intent,
+      status: state.bookingTask.status,
+    },
+    type: "persist_booking_progress",
+  };
+}
+
+function resolveBookingEpisodeBoundary(input: {
+  message: string;
+  now: Date;
+  state: ConversationV2State;
+  turnId: string;
+}) {
+  const normalized = normalizeClinicText(input.message);
+  const expiredWhileCollecting =
+    input.state.bookingTask.status === "collecting" &&
+    hasConversationEpisodeExpired(input.state, input.now.toISOString());
+  const resumesBooking =
+    input.state.bookingTask.status === "suspended" &&
+    RESUME_BOOKING_PATTERN.test(normalized);
+  const asksOtherFirst =
+    input.state.bookingTask.status === "suspended" &&
+    ASK_OTHER_FIRST_PATTERN.test(normalized);
+  if (!expiredWhileCollecting && !resumesBooking && !asksOtherFirst) return null;
+
+  let next = cloneConversationV2State(input.state);
+  if (expiredWhileCollecting) {
+    next.bookingTask = { ...next.bookingTask, status: "suspended" };
+  } else if (resumesBooking) {
+    next.bookingTask = { ...next.bookingTask, status: "collecting" };
+  }
+  next = recordConversationV2TurnReceipt(next, input.turnId, input.now.toISOString());
+
+  if (expiredWhileCollecting) {
+    return {
+      matchedKey: "conversation_v2:booking_resume_choice",
+      replyText: "😊 您要繼續剛才的預約資料，還是先詢問其他問題呢？",
+      state: next,
+    };
+  }
+  if (resumesBooking) {
+    const field = next.bookingTask.expectedField;
+    return {
+      matchedKey: "conversation_v2:booking_resumed",
+      replyText: field
+        ? `😊 好的，我們接著剛才的預約資料。\n\n${BOOKING_FIELD_PROMPTS[field]}`
+        : "😊 好的，預約資料已整理完成，真人客服會在上班時間接續確認。",
+      state: next,
+    };
+  }
+  return {
+    matchedKey: "conversation_v2:booking_suspended_for_question",
+    replyText: "😊 可以，您想先了解哪項療程、價格或其他問題呢？",
+    state: next,
+  };
+}
+
+function attachDeterministicPriceApplicability(
+  turn: TurnUnderstanding,
+  snapshot: ClinicFactsSnapshot,
+  message: string,
+): TurnUnderstanding {
+  if (turn.speechAct !== "ask_price") return turn;
+  const treatmentKeys = turn.treatments
+    .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
+    .map((mention) => mention.key);
+  const uniqueTreatmentKey = treatmentKeys.length === 1 ? treatmentKeys[0] : undefined;
+  const brand = findTreatmentBrandInClinic(snapshot.clinic, message, uniqueTreatmentKey);
+  const doseMatch = message.normalize("NFKC").match(/(\d+(?:\.\d+)?)\s*(?:u|單位)/iu);
+  const priceApplicability = {
+    ...(turn.priceApplicability ?? {}),
+    ...(brand ? { variant: brand.key } : {}),
+    ...(doseMatch?.[1] ? { dose: `${doseMatch[1]}U` } : {}),
+  };
+  if (Object.keys(priceApplicability).length === 0) return turn;
+  // Values come only from the pinned clinic snapshot's approved brand aliases
+  // or a deterministic unit parser; the NLU cannot invent a price identity.
+  return { ...turn, priceApplicability };
+}
 
 export type ConversationV2LiveRouteInput = {
   context: ConversationContext;
@@ -84,9 +193,19 @@ export type ConversationV2LiveRouteResult =
       decision: RouterDecision;
       gate: ConversationV2CanaryGate;
       kind: "routed";
+      nluTelemetry?: ConversationV2NluTelemetry;
+      policyAction?: string;
       snapshotId?: string;
       toolRequest?: ConversationV2ToolRequest;
     };
+
+export type ConversationV2NluTelemetry = {
+  confidence?: number;
+  errorCode?: string;
+  latencyMs?: number;
+  promptVersion?: string;
+  status: "error" | "not_invoked" | "success" | "unavailable";
+};
 
 export type ConversationV2LiveDependencies = {
   factsProvider?: ClinicFactsProvider;
@@ -99,6 +218,26 @@ export type ConversationV2LiveDependencies = {
 
 function opaqueTurnId(identity: string) {
   return `turn_${crypto.createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
+}
+
+function toConversationV2NluTelemetry(
+  result: Awaited<ReturnType<typeof requestNluFrame>>,
+): ConversationV2NluTelemetry {
+  if (!result) return { status: "unavailable" };
+  if (!result.frame) {
+    return {
+      ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+      latencyMs: result.latencyMs,
+      promptVersion: result.promptVersion,
+      status: "error",
+    };
+  }
+  return {
+    confidence: result.frame.confidence,
+    latencyMs: result.latencyMs,
+    promptVersion: result.promptVersion,
+    status: "success",
+  };
 }
 
 function newEpisodeId() {
@@ -696,6 +835,7 @@ export async function routeConversationV2Canary(
     };
   }
   const routingMessage = pendingTopicMessage ?? input.message;
+  let nluTelemetry: ConversationV2NluTelemetry = { status: "not_invoked" };
   try {
     const snapshot = await loadClinicFactsSnapshot(
       dependencies.factsProvider ?? runtimeClinicFactsProvider,
@@ -705,10 +845,52 @@ export async function routeConversationV2Canary(
         tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
       },
     );
+    const bookingEpisodeBoundary = resolveBookingEpisodeBoundary({
+      message: routingMessage,
+      now: input.now,
+      state,
+      turnId,
+    });
+    if (bookingEpisodeBoundary) {
+      const replyPlan = legacyDecisionToReplyPlan({
+        decisionType: "booking_intake_reply",
+        matchedKey: bookingEpisodeBoundary.matchedKey,
+        matchedType: "config",
+        replyText: bookingEpisodeBoundary.replyText,
+      }, {
+        dialogueAct: "collect_booking",
+        fallbackText: bookingEpisodeBoundary.replyText,
+        renderMode: "deterministic",
+        requiresHuman: false,
+      });
+      return {
+        dataStatus: "ready",
+        decision: {
+          decisionType: "booking_intake_reply",
+          matchedKey: bookingEpisodeBoundary.matchedKey,
+          matchedType: "config",
+          nextContext: projectStateToContext({
+            context: input.context,
+            matchedKey: bookingEpisodeBoundary.matchedKey,
+            snapshot,
+            state: bookingEpisodeBoundary.state,
+          }),
+          replyPlan,
+          replyText: bookingEpisodeBoundary.replyText,
+        },
+        gate,
+        kind: "routed",
+        nluTelemetry,
+        policyAction: "booking_episode_boundary",
+        snapshotId: snapshot.snapshotId,
+        toolRequest: bookingProgressToolRequest(bookingEpisodeBoundary.state),
+      };
+    }
     const nlu = await (dependencies.requestFrame ?? requestNluFrame)(routingMessage, {
       ontology: snapshot.ontology,
       recentTurns: input.recentTurns,
     });
+    nluTelemetry = toConversationV2NluTelemetry(nlu);
     if (!nlu?.frame) {
       // Booking intent is parsed deterministically, so it must survive an NLU
       // outage. Without this the customer saying "我要預約諮詢" is answered with
@@ -716,6 +898,7 @@ export async function routeConversationV2Canary(
       // The turn is still built through the adapter's frame-less contract and
       // decided by the V2 engine; no booking logic lives here.
       const deterministicBooking = buildConversationV2BookingUnderstanding({
+        allowBareExpectedName: state.bookingTask.expectedField === "name",
         message: routingMessage,
         state,
       });
@@ -728,7 +911,16 @@ export async function routeConversationV2Canary(
           snapshot.ontology,
         );
       const trustedDeterministicBooking =
-        deterministicBooking?.explicit || expectedBookingFieldProvided
+        deterministicBooking?.explicit ||
+        expectedBookingFieldProvided ||
+        (
+          state.bookingTask.status === "collecting" &&
+          isStrictBookingContactSubmission({
+            booking: deterministicBooking,
+            message: routingMessage,
+            state,
+          })
+        )
           ? deterministicBooking
           : undefined;
       const negationGuard = trustedDeterministicBooking
@@ -751,7 +943,24 @@ export async function routeConversationV2Canary(
             ontology: snapshot.ontology,
             state,
           });
-      if (!trustedDeterministicBooking && !negationGuard && !semanticAnchor) {
+      const deterministicPriceInquiry =
+        isPriceInquiry(routingMessage) &&
+        !isHedgedTreatmentReference(routingMessage);
+      const treatmentClarification =
+        trustedDeterministicBooking || negationGuard || semanticAnchor
+          ? undefined
+          : resolveTreatmentClarification({
+              message: routingMessage,
+              ontology: snapshot.ontology,
+              questionKind: deterministicPriceInquiry ? "price" : "content",
+            });
+      if (
+        !trustedDeterministicBooking &&
+        !negationGuard &&
+        !semanticAnchor &&
+        !treatmentClarification &&
+        !deterministicPriceInquiry
+      ) {
         return {
           aiModel: nlu?.model,
           aiTokensIn: nlu?.tokensIn,
@@ -766,21 +975,24 @@ export async function routeConversationV2Canary(
           ),
           gate,
           kind: "routed",
+          nluTelemetry,
+          policyAction: "runtime_fallback",
           snapshotId: snapshot.snapshotId,
         };
       }
-      const deterministicTurn = adaptNluFrameToConversationV2Turn({
+      const deterministicTurn = attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
         frame: null,
         ontology: snapshot.ontology,
         receivedAt: input.now.toISOString(),
         supplemental: {
           ...(trustedDeterministicBooking ? { booking: trustedDeterministicBooking } : {}),
+          ...(treatmentClarification ? { clarification: treatmentClarification } : {}),
           ...(negationGuard ? { negationGuard } : {}),
           ...(semanticAnchor ? { semanticAnchor } : {}),
         },
         text: routingMessage,
         turnId,
-      });
+      }), snapshot, routingMessage);
       const deterministicRouted = routeConversationTurnV2(state, deterministicTurn);
       if (deterministicRouted.result) {
         const deterministicHydrated = await hydrateConversationV2ReplyPlan({
@@ -821,6 +1033,8 @@ export async function routeConversationV2Canary(
             },
             gate,
             kind: "routed",
+            nluTelemetry,
+            policyAction: deterministicRouted.result.action.type,
             snapshotId: snapshot.snapshotId,
             ...(deterministicHydrated.toolRequest
               ? { toolRequest: deterministicHydrated.toolRequest }
@@ -842,6 +1056,8 @@ export async function routeConversationV2Canary(
         ),
         gate,
         kind: "routed",
+        nluTelemetry,
+        policyAction: "runtime_fallback",
         snapshotId: snapshot.snapshotId,
       };
     }
@@ -914,18 +1130,34 @@ export async function routeConversationV2Canary(
           state,
         })
       : undefined;
-    const turn: TurnUnderstanding = adaptNluFrameToConversationV2Turn({
+    const treatmentClarification =
+      !booking &&
+      !rejectedExpectedTreatmentCandidate &&
+      !negationGuard &&
+      !semanticAnchor &&
+      (
+        nlu.frame.confidence < 0.65 ||
+        nlu.frame.dialogue.speechAct === "unknown"
+      )
+        ? resolveTreatmentClarification({
+            message: routingMessage,
+            ontology: snapshot.ontology,
+            questionKind: isPriceInquiry(routingMessage) ? "price" : "content",
+          })
+        : undefined;
+    const turn: TurnUnderstanding = attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
       // A model-labelled booking action cannot turn a richer treatment
       // sentence into the expected short answer. Adapting it as frame-less
       // preserves the collecting task exactly as the NLU-outage path does,
       // rather than allowing positive model entities to suspend booking.
-      frame: rejectedExpectedTreatmentCandidate ? null : nlu.frame,
+      frame: rejectedExpectedTreatmentCandidate || treatmentClarification ? null : nlu.frame,
       ontology: snapshot.ontology,
       receivedAt: input.now.toISOString(),
-      ...(booking || negationGuard || semanticAnchor
+      ...(booking || treatmentClarification || negationGuard || semanticAnchor
         ? {
             supplemental: {
               ...(booking ? { booking } : {}),
+              ...(treatmentClarification ? { clarification: treatmentClarification } : {}),
               ...(negationGuard ? { negationGuard } : {}),
               ...(semanticAnchor ? { semanticAnchor } : {}),
             },
@@ -933,7 +1165,7 @@ export async function routeConversationV2Canary(
         : {}),
       text: routingMessage,
       turnId,
-    });
+    }), snapshot, routingMessage);
     const routed = routeConversationTurnV2(state, turn);
     if (routed.duplicate || !routed.result) {
       const replyText = "";
@@ -952,6 +1184,8 @@ export async function routeConversationV2Canary(
         },
         gate,
         kind: "routed",
+        nluTelemetry,
+        policyAction: "do_not_reply",
         snapshotId: snapshot.snapshotId,
       };
     }
@@ -988,6 +1222,8 @@ export async function routeConversationV2Canary(
         },
         gate,
         kind: "routed",
+        nluTelemetry,
+        policyAction: routed.result.action.type,
         snapshotId: snapshot.snapshotId,
         ...(hydrated.toolRequest ? { toolRequest: hydrated.toolRequest } : {}),
       };
@@ -1021,6 +1257,8 @@ export async function routeConversationV2Canary(
       },
       gate,
       kind: "routed",
+      nluTelemetry,
+      policyAction: routed.result.action.type,
       snapshotId: snapshot.snapshotId,
       ...(hydrated.toolRequest ? { toolRequest: hydrated.toolRequest } : {}),
     };
@@ -1041,6 +1279,8 @@ export async function routeConversationV2Canary(
       ),
       gate,
       kind: "routed",
+      nluTelemetry,
+      policyAction: "runtime_fallback",
     };
   }
 }

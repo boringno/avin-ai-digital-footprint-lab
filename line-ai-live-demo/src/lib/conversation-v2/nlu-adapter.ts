@@ -3,7 +3,7 @@ import {
   type ControlledIntent,
 } from "@/lib/ai-intent-classifier";
 import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
-import { findTreatmentByMessage } from "@/lib/clinic-config";
+import { matchClinicOntology } from "@/lib/clinic-ontology-matcher";
 import {
   parseNluFrame,
   type NluFrame,
@@ -83,12 +83,8 @@ const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);
 const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
 const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
 
-function hasDeterministicExplicitPriceSubject(text: string) {
-  return Boolean(
-    isPriceInquiry(text) &&
-    findTreatmentByMessage(text) &&
-    !isHedgedTreatmentReference(text),
-  );
+function hasDeterministicPriceInquiry(text: string) {
+  return Boolean(isPriceInquiry(text) && !isHedgedTreatmentReference(text));
 }
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
@@ -763,6 +759,32 @@ function adaptSemanticAnchorEntities(
   };
 }
 
+function adaptDeterministicPriceEntities(
+  text: string,
+  ontology: ClinicOntology,
+  registry: EntityRegistry,
+): EntityAdaptation {
+  const matched = matchClinicOntology(text, ontology);
+  if (matched.negated) {
+    return { areas: [], concerns: [], treatments: [], valid: true };
+  }
+  const treatmentKeys = Array.from(new Set(matched.treatments.map((item) => item.key)));
+  return {
+    areas: [],
+    concerns: [],
+    treatments: treatmentKeys.map((key) => ({
+      confidence: 1,
+      key,
+      ...(registry.treatmentLabels.get(key)
+        ? { label: registry.treatmentLabels.get(key) }
+        : {}),
+      polarity: "affirmed" as const,
+      resolution: "resolved" as const,
+    })),
+    valid: true,
+  };
+}
+
 function adaptNegationGuardEntities(
   guard: DeterministicNegationGuard,
   registry: EntityRegistry,
@@ -1007,6 +1029,20 @@ function shouldUseSemanticAnchor(input: {
         !["none", "overview"].includes(anchor.questionAspect) &&
         anchor.questionAspect !== input.frame.dialogue.focus
       ) ||
+      // "請重新介紹 ONDA" is an explicit customer reset. A confident model
+      // may still call it a continuation because the same treatment is active;
+      // deterministic current-text evidence must own start/overview semantics.
+      (
+        anchor.source === "exact_ontology" &&
+        anchor.speechAct === "learn_treatment" &&
+        anchor.conversationMove === "start" &&
+        anchor.questionAspect === "overview" &&
+        (
+          input.frame.dialogue.move !== "start" ||
+          input.frame.dialogue.focus !== "overview" ||
+          input.frame.dialogue.speechAct !== "learn_treatment"
+        )
+      ) ||
       // Exact current-message ontology evidence owns entity provenance even
       // when the model is confident *and* the model supplied an entity outside
       // that anchor. This removes a stale active-treatment echo on a clean
@@ -1158,10 +1194,19 @@ export function adaptNluFrameToConversationV2Turn(
       !selectedNegationGuard
         ? supplemental.semanticAnchor
         : undefined;
+    const deterministicPriceInquiry =
+      !hasSafetyPriority &&
+      !trustedBooking &&
+      !supplemental.selection &&
+      !supplemental.clarification &&
+      !selectedNegationGuard &&
+      !selectedSemanticAnchor &&
+      hasDeterministicPriceInquiry(input.text);
     const deterministicSpeechAct = trustedBooking ??
       (supplemental.valid && supplemental.selection ? "select_options" as const : null) ??
       (selectedNegationGuard ? negationGuardSpeechAct(selectedNegationGuard) : null) ??
       selectedSemanticAnchor?.speechAct ??
+      (deterministicPriceInquiry ? "ask_price" as const : null) ??
       null;
     const safetySpeechAct: TurnSpeechAct = supplemental.hardDecision?.speechAct ??
       (safetySignals.postTreatmentRisk
@@ -1173,6 +1218,8 @@ export function adaptNluFrameToConversationV2Turn(
       ? adaptNegationGuardEntities(selectedNegationGuard, registry)
       : selectedSemanticAnchor
       ? adaptSemanticAnchorEntities(selectedSemanticAnchor, registry)
+      : deterministicPriceInquiry
+      ? adaptDeterministicPriceEntities(input.text, ontology, registry)
       : { areas: [], concerns: [], treatments: [], valid: true };
     const hasResolvedNegation = Boolean(
       selectedNegationGuard &&
@@ -1194,8 +1241,13 @@ export function adaptNluFrameToConversationV2Turn(
         (hasResolvedAffirmation ? "start" : hasResolvedNegation ? "reject" : "none"),
       concerns: deterministicEntities.concerns,
       confidence: deterministicSpeechAct || selectedNegationGuard ? 1 : 0,
-      dialogueReference: selectedSemanticAnchor?.dialogueReference ??
-        (hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"),
+      dialogueReference: selectedSemanticAnchor?.dialogueReference ?? (
+        deterministicPriceInquiry && deterministicEntities.treatments.length > 0
+          ? "explicit"
+          : hasResolvedNegation || hasResolvedAffirmation
+            ? "explicit"
+            : "none"
+      ),
       questionAspect: selectedSemanticAnchor?.questionAspect ??
         (hasResolvedAffirmation ? "overview" : "none"),
       receivedAt: input.receivedAt,
@@ -1220,16 +1272,20 @@ export function adaptNluFrameToConversationV2Turn(
     safety: safetySignals,
     supplemental,
   });
-  // A low model confidence must not erase deterministic evidence present in the
-  // customer's own sentence: a named treatment plus explicit price wording is enough
-  // to reach the approved price resolver. This only rescues the low-confidence
+  // A low model confidence must not erase deterministic price wording present in the
+  // customer's own sentence. A named treatment can be resolved from this turn, while a
+  // short follow-up such as `那價格呢` is owned later by policy from the active subject.
+  // With no resolvable subject policy still asks a price-specific clarification; the
+  // adapter never chooses a treatment or an amount. This only rescues the low-confidence
   // "unknown" outcome. It must never outrank resolveSpeechAct's earlier conclusions --
   // urgent_safety, request_handoff, a hard decision or a selection answer -- because
   // "做完 ONDA 後臉腫得厲害，處理要多少錢" is a safety turn that also names a price.
   const resolution =
     resolved.speechAct === "unknown" &&
     resolved.needsClarification &&
-    hasDeterministicExplicitPriceSubject(input.text)
+    !supplemental.selection &&
+    !supplemental.clarification &&
+    hasDeterministicPriceInquiry(input.text)
       ? { needsClarification: false, speechAct: "ask_price" as const }
       : resolved;
   const selectedNegationGuard =

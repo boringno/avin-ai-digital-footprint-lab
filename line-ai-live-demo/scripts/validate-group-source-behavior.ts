@@ -1,4 +1,5 @@
 type RecordedCall = {
+  body?: unknown;
   op: "delete" | "insert" | "select" | "update" | "upsert";
   table: string;
 };
@@ -17,6 +18,16 @@ type WebhookResult = {
     treatment?: string;
   };
   conversationStatus: string;
+  conversationV2NluTelemetry?: {
+    confidence?: number;
+    errorCode?: string;
+    latencyMs?: number;
+    promptVersion?: string;
+    status: "error" | "not_invoked" | "success" | "unavailable";
+  };
+  conversationV2PolicyAction?: string;
+  conversationV2SnapshotId?: string;
+  conversationV2ToolRequestType?: "persist_booking_progress" | "queue_handoff" | "request_fact_confirmation";
   handoffReason: null | string;
   decision: { decisionType: string; matchedKey: string; matchedType: string; replyText: string };
   eventType: string;
@@ -24,6 +35,7 @@ type WebhookResult = {
   messageText: string;
   replyPayload: null;
   replyToken: string;
+  routeVersion: "preflight" | "v1" | "v2";
   sourceGroupId: string;
   sourceRoomId: string;
   sourceType: string;
@@ -58,6 +70,7 @@ function result(overrides: Partial<WebhookResult> = {}): WebhookResult {
     messageText: "測試訊息",
     replyPayload: null,
     replyToken: "reply-test",
+    routeVersion: "v1",
     sourceGroupId: "",
     sourceRoomId: "",
     sourceType: "user",
@@ -114,7 +127,16 @@ async function main() {
 
     if (url.hostname === "supabase.invalid") {
       const table = tableFor(url);
-      calls.push({ op: operationFor(request.method, request.headers), table });
+      const rawBody = await request.clone().text();
+      let body: unknown;
+      if (rawBody) {
+        try {
+          body = JSON.parse(rawBody) as unknown;
+        } catch {
+          body = rawBody;
+        }
+      }
+      calls.push({ body, op: operationFor(request.method, request.headers), table });
       return new Response(JSON.stringify(supabaseResponse(table, request.method)), {
         headers: { "content-type": "application/json" },
         status: 200,
@@ -178,6 +200,33 @@ async function main() {
   assert(tableHas("conversation_messages", ["insert"]), "B5: direct user did not insert customer message");
   console.log("PASS: B5 direct user remains eligible for conversation and message persistence");
 
+  resetCalls();
+  await sync([result({
+    conversationV2NluTelemetry: {
+      confidence: 0.91,
+      latencyMs: 417,
+      promptVersion: "nlu-v2-test",
+      status: "success",
+    },
+    conversationV2PolicyAction: "answer_treatment",
+    conversationV2SnapshotId: "snapshot-v2-test",
+    conversationV2ToolRequestType: "request_fact_confirmation",
+    routeVersion: "v2",
+  })]);
+  const messageInsert = calls.find((call) => call.table === "conversation_messages" && call.op === "insert");
+  const messageBody = messageInsert?.body as { payload_json?: Record<string, unknown> } | undefined;
+  assert(messageBody?.payload_json?.route_version === "v2", "B8: persisted decision path omitted V2 route version");
+  assert(messageBody.payload_json.conversation_v2_nlu_status === "success", "B8: persisted decision path omitted NLU status");
+  assert(messageBody.payload_json.conversation_v2_nlu_confidence === 0.91, "B8: persisted decision path omitted NLU confidence");
+  assert(messageBody.payload_json.conversation_v2_policy_action === "answer_treatment", "B8: persisted decision path omitted policy action");
+  assert(messageBody.payload_json.conversation_v2_snapshot_id === "snapshot-v2-test", "B8: persisted decision path omitted snapshot id");
+  assert(
+    messageBody.payload_json.conversation_v2_tool_request_type === "request_fact_confirmation",
+    "B8: persisted decision path omitted tool request type",
+  );
+  assert(!JSON.stringify(messageBody.payload_json).includes("測試訊息"), "B8: decision telemetry must not duplicate raw customer text");
+  console.log("PASS: B8 one persisted row reconstructs the V2 decision path without raw-text duplication");
+
   const mixed = filterDirectMessageResults([
     result({ sourceGroupId: "group-b6a", sourceType: "group" }),
     result({ sourceRoomId: "room-b6b", sourceType: "room" }),
@@ -193,7 +242,7 @@ async function main() {
   assert(groupsOnly.length === 0, "B7: all-group batch must produce an empty Sheets input");
   console.log("PASS: B7 all-group batch produces empty Sheets input without error");
 
-  console.log("Group source behavior validation passed: 7 cases");
+  console.log("Group source behavior validation passed: 8 cases");
 }
 
 main()

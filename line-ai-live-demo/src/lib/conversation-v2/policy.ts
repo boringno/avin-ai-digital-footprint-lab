@@ -6,6 +6,10 @@ import {
   isPureAwaitingSelectionAnswer,
   resolveAwaitingSelection,
 } from "./selection";
+import {
+  hasConversationEpisodeExpired,
+  isExplicitTreatmentOverviewRestart,
+} from "./episode-policy";
 import type {
   AwaitingState,
   BookingDraft,
@@ -287,9 +291,7 @@ function knowledgeModeForTurn(
     : "replace_active_subject" as const;
 }
 
-const CONVERSATION_EPISODE_IDLE_MS = 60 * 60 * 1000;
 const EXPLICIT_TREATMENT_OVERVIEW_PATTERN = /(?:想|希望|可以|要).{0,6}(?:了解|介紹|認識|問問|諮詢)/u;
-const EXPLICIT_TREATMENT_RESTART_PATTERN = /(?:重新|從頭).{0,6}(?:了解|介紹|認識|說明|問問|諮詢)|再(?:幫我)?(?:介紹|說明)/u;
 const TREATMENT_OVERVIEW_REAFFIRMATION_PATTERN = /(?:還是|只是|(?:我)?是想|其實)/u;
 
 /**
@@ -298,13 +300,32 @@ const TREATMENT_OVERVIEW_REAFFIRMATION_PATTERN = /(?:還是|只是|(?:我)?是�
  * Without this boundary, a customer returning with "想了解 ONDA" inherits stale
  * concerns and is answered as though they were continuing the old final question.
  */
-function restartsTreatmentOverview(
+function restartsConsultationEpisode(
   state: ConversationV2State,
   input: Parameters<typeof activeSubjectKey>[0],
   responseContext: TreatmentResponseContext,
   at: string,
   text: string,
 ) {
+  const hasCurrentSubject =
+    input.treatmentKeys.length + input.concernKeys.length + input.areaKeys.length > 0;
+  if (!hasCurrentSubject) return false;
+
+  // A direct restart is authoritative for one named treatment regardless of
+  // the model's move/reference labels or the prior active subject.
+  if (
+    input.taskKind === "learn_treatment" &&
+    input.treatmentKeys.length === 1 &&
+    isExplicitTreatmentOverviewRestart(text)
+  ) {
+    return true;
+  }
+
+  // After inactivity, the first grounded consultation subject starts fresh.
+  // Booking, handoff and safety actions are selected before this content path,
+  // so their lifecycle remains independently owned.
+  if (hasConversationEpisodeExpired(state, at)) return true;
+
   if (
     input.taskKind !== "learn_treatment" ||
     input.treatmentKeys.length === 0 ||
@@ -325,7 +346,6 @@ function restartsTreatmentOverview(
   // concern/area; repeating the same request right after a correct introduction
   // must advance instead of replaying the introduction. A bare treatment name
   // does not take this path, so short answers can still continue the active task.
-  if (EXPLICIT_TREATMENT_RESTART_PATTERN.test(text)) return true;
   if (
     EXPLICIT_TREATMENT_OVERVIEW_PATTERN.test(text) &&
     !TREATMENT_OVERVIEW_REAFFIRMATION_PATTERN.test(text) &&
@@ -334,11 +354,7 @@ function restartsTreatmentOverview(
     return true;
   }
 
-  const previousAt = Date.parse(state.activeTask.startedAt || state.updatedAt);
-  const currentAt = Date.parse(at);
-  return Number.isFinite(previousAt) &&
-    Number.isFinite(currentAt) &&
-    currentAt >= previousAt + CONVERSATION_EPISODE_IDLE_MS;
+  return false;
 }
 
 /**
@@ -1085,8 +1101,19 @@ export function evaluateDialoguePolicy(
       const responseContext = turnPreferenceContext;
       let taskKind: "learn_treatment" | "compare_treatments" | "answer_concern" = turn.speechAct === "compare_treatments"
         ? "compare_treatments" as const
+        // A concern remains the customer's requested task even when the turn also
+        // carries its treatment owner. Trusted semantic anchors intentionally add
+        // the active treatment so facts stay scoped; treating that contextual owner
+        // as a new introduction loses the approved concern reply and falls back to
+        // a generic menu after the customer already told us what bothers them.
         : (turn.speechAct === "ask_concern" || affirmedConcerns.length > 0) &&
-            affirmedTreatments.length === 0
+            (
+              affirmedTreatments.length === 0 ||
+              (
+                turn.semanticEvidence === "exact_ontology" &&
+                turn.dialogueReference === "active_subject"
+              )
+            )
           ? "answer_concern" as const
           : "learn_treatment" as const;
       // Only resolved, affirmed treatments may own pricing or comparison state.
@@ -1145,16 +1172,24 @@ export function evaluateDialoguePolicy(
           taskKind,
           treatmentKeys,
         };
-        const episodeRestart = restartsTreatmentOverview(
+        const episodeRestart = restartsConsultationEpisode(
             state,
             actionSubject,
             responseContext,
             turn.receivedAt,
             turn.text,
           );
+        const effectiveResponseContext = episodeRestart
+          ? {
+              ...responseContext,
+              conversationMove: "start" as const,
+              dialogueReference: "explicit" as const,
+              questionAspect: "overview" as const,
+            }
+          : responseContext;
         const knowledgeMode = episodeRestart
           ? "replace_active_subject" as const
-          : knowledgeModeForTurn(state, actionSubject, responseContext);
+          : knowledgeModeForTurn(state, actionSubject, effectiveResponseContext);
         action = awaiting
           ? {
               at: turn.receivedAt,
@@ -1167,11 +1202,11 @@ export function evaluateDialoguePolicy(
                   concernKeys: [...concernKeys],
                   treatmentKeys: [...treatmentKeys],
                 },
-                responseContext,
+                responseContext: effectiveResponseContext,
               },
               concernKeys,
               knowledgeMode,
-              responseContext,
+              responseContext: effectiveResponseContext,
               taskKind,
               treatmentKeys,
               turnId: turn.turnId,
@@ -1183,7 +1218,7 @@ export function evaluateDialoguePolicy(
               concernKeys,
               episodeRestart,
               knowledgeMode,
-              responseContext,
+              responseContext: effectiveResponseContext,
               taskKind,
               treatmentKeys,
               turnId: turn.turnId,

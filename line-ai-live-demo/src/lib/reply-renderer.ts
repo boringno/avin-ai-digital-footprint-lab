@@ -23,6 +23,7 @@ export type ReplyGenerator = (
 ) => Promise<GeneratedAiReply | null>;
 
 export type ReplyRendererFallbackReason =
+  | "deterministic_rejected"
   | "generation_disabled"
   | "generator_error"
   | "generator_rejected"
@@ -32,6 +33,11 @@ export type ReplyRendererFallbackReason =
 
 export type ReplyRendererMode = "deterministic" | "fallback" | "generated";
 export type ReplyRendererFallbackVariant = "primary" | "secondary" | "safe";
+export type ReplyTextSource =
+  | "approved_deterministic"
+  | "approved_fallback"
+  | "approved_terminal_fallback"
+  | "grounded_generation";
 
 export type ReplyRendererTelemetry = {
   dialogueAct: DialogueAct;
@@ -39,7 +45,9 @@ export type ReplyRendererTelemetry = {
   fallbackVariant?: ReplyRendererFallbackVariant;
   generatedVisible: boolean;
   generatorInvoked: boolean;
+  guardReplacedText: boolean;
   latencyMs: number;
+  replyTextSource: ReplyTextSource;
   renderMode: ReplyRendererMode;
 };
 
@@ -63,11 +71,13 @@ export type ReplyRendererResult = {
   fallbackVariant?: ReplyRendererFallbackVariant;
   generated: boolean;
   generatorInvoked: boolean;
+  guardReplacedText: boolean;
   handoffRequired: boolean;
   latencyMs: number;
   messages: LineReplyMessage[];
   model?: string;
   replyText: string;
+  replyTextSource: ReplyTextSource;
   renderMode: ReplyRendererMode;
   sourceUrl?: string;
   tokensIn?: number;
@@ -77,14 +87,21 @@ export type ReplyRendererResult = {
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 6_000;
 export const RENDERER_TERMINAL_SAFE_FALLBACK =
-  "😊 我剛剛沒有順利接上這題，請再告訴我想先確認的重點，我會重新幫您整理。";
+  "😊 您可以直接告訴我想了解的療程、部位或困擾，我會先依診所資料協助整理。";
 const BLOCKED_GENERATED_CLAIM_PATTERN =
   /(?:(?:保證|一定|必定|立即|馬上|立刻).{0,6}(?:有效|有感|改善|見效)|(?:每個人|人人).{0,10}(?:有效|有感|改善|效果)|永久|百分之百|100%|(?:完全|絕對|零|無|沒有|幾乎沒有|不會).{0,5}(?:風險|副作用|疼痛|痛|恢復期|修復期)|(?:安全).{0,5}(?:無副作用|沒有副作用|零風險)|(?:無痛|免恢復期|無恢復期|無修復期))/iu;
 const CUSTOMER_VISIBLE_URL_PATTERN = /(?:https?:\/\/|www\.)\S+/iu;
 const CUSTOMER_VISIBLE_ACTIVITY_DATE_PATTERN =
   /(?:(?:活動|優惠|方案|檔期|有效期間|活動期間).{0,16}(?:(?:20\d{2}[年/.\-])?\d{1,2}[月/.\-]\d{1,2}(?:日)?|\d{1,2}月底)|(?:20\d{2}[年/.\-])?\d{1,2}[月/.\-]\d{1,2}(?:日)?\s*(?:至|到|[-~～—])\s*(?:(?:20\d{2}[年/.\-])?\d{1,2}[月/.\-]\d{1,2}(?:日)?))/iu;
+const CUSTOMER_VISIBLE_PROCESS_NARRATION_PATTERN =
+  /(?:目前的療程脈絡我有保留|已保留您先前提到的需求|我會直接承接這一輪|這一輪不重複前面的介紹|前面的內容不用重說|剛剛沒有完整理解您的問題)/u;
 
-const SECONDARY_FALLBACKS: Record<DialogueAct, readonly string[]> = {
+/**
+ * Clinic-approved generic copy used only when a grounded answer cannot be
+ * delivered. Keeping this bank typed and centralized makes every fallback
+ * auditable; renderer call sites must not invent process narration.
+ */
+export const APPROVED_FALLBACK_COPY: Record<DialogueAct, readonly string[]> = {
   introduce_treatment: [
     "我先從這項療程的特色與改善方向幫您整理。您目前最在意哪個部位或困擾呢？",
     "這項療程可先依您的部位與困擾評估方向。您想優先改善哪一個問題呢？",
@@ -196,7 +213,9 @@ export function toReplyRendererTelemetry(result: ReplyRendererResult): ReplyRend
     fallbackVariant: result.fallbackVariant,
     generatedVisible: result.generated,
     generatorInvoked: result.generatorInvoked,
+    guardReplacedText: result.guardReplacedText,
     latencyMs: result.latencyMs,
+    replyTextSource: result.replyTextSource,
     renderMode: result.renderMode,
   };
 }
@@ -208,7 +227,9 @@ export function toReplyRendererPayloadJson(telemetry: ReplyRendererTelemetry | u
     renderer_fallback_variant: telemetry?.fallbackVariant ?? null,
     renderer_generated_visible: telemetry?.generatedVisible ?? null,
     renderer_generator_invoked: telemetry?.generatorInvoked ?? null,
+    renderer_guard_replaced_text: telemetry?.guardReplacedText ?? null,
     renderer_latency_ms: telemetry?.latencyMs ?? null,
+    renderer_reply_text_source: telemetry?.replyTextSource ?? null,
     renderer_mode: telemetry?.renderMode ?? null,
   };
 }
@@ -319,18 +340,24 @@ function renderDeterministic(
   usedGroundedKnowledge: boolean,
   startedAt: number,
 ): ReplyRendererResult {
-  const replyText = formatReplyText(addCustomerReplyTone(
+  const candidate = formatReplyText(addCustomerReplyTone(
     input.plan.deterministicReply ?? input.plan.fallbackText,
     { decisionType: input.plan.decisionType, matchedKey: input.plan.matchedKey },
   ));
+  const replyText = guardFallbackCandidate(input, candidate, usedGroundedKnowledge);
+  if (!replyText) {
+    return renderGuardedFallback(input, "deterministic_rejected", usedGroundedKnowledge, startedAt);
+  }
   return {
     dialogueAct: input.plan.dialogueAct,
     generated: false,
     generatorInvoked: false,
+    guardReplacedText: false,
     handoffRequired: false,
     latencyMs: Date.now() - startedAt,
     messages: buildMessages(replyText, input.plan, input.footer, input.includeFooter ?? true),
     replyText,
+    replyTextSource: "approved_deterministic",
     renderMode: "deterministic",
     usedGroundedKnowledge,
   };
@@ -346,12 +373,39 @@ function wasRejectedByExistingGuard(
   if (
     BLOCKED_GENERATED_CLAIM_PATTERN.test(generatedText) ||
     CUSTOMER_VISIBLE_URL_PATTERN.test(generatedText) ||
-    CUSTOMER_VISIBLE_ACTIVITY_DATE_PATTERN.test(generatedText)
+    CUSTOMER_VISIBLE_ACTIVITY_DATE_PATTERN.test(generatedText) ||
+    CUSTOMER_VISIBLE_PROCESS_NARRATION_PATTERN.test(generatedText)
   ) {
     return true;
   }
   const rejectionSentinel = constrainMedicalAiReply("", footer, options);
   return constrainedText === rejectionSentinel;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function maskApprovedPriceClaims(candidate: string, exactPriceFacts: readonly string[]) {
+  let masked = candidate;
+  let maskedAnyFact = false;
+  for (const fact of exactPriceFacts) {
+    const normalizedFact = formatReplyText(fact);
+    if (!normalizedFact) continue;
+    const next = masked.replace(new RegExp(escapeRegExp(normalizedFact), "gu"), "__APPROVED_PRICE_FACT__");
+    maskedAnyFact ||= next !== masked;
+    masked = next;
+  }
+  if (!maskedAnyFact) return candidate;
+
+  // An exact price fact can be an amount-only token (for example "16,888 元")
+  // while the approved customer copy adds its adjacent label. Mask only labels
+  // directly attached to the proven fact; unrelated campaign or price claims
+  // remain visible to the ordinary price guard and are rejected.
+  return masked.replace(
+    /(?:(?:目前)?(?:可先)?(?:參考)?(?:的)?\s*)?(?:體驗價|價格|價錢|費用|報價|活動參考)\s*__APPROVED_PRICE_FACT__/gu,
+    "__APPROVED_PRICE_FACT__",
+  );
 }
 
 function guardFallbackCandidate(
@@ -366,11 +420,12 @@ function guardFallbackCandidate(
   });
   const medical = input.medical ?? inferMedicalReply(input.plan, input.dialogueState);
   const guardOptions = { groundedByApprovedKnowledge: usedGroundedKnowledge, medical };
-  const constrained = constrainMedicalAiReply(toned, input.footer ?? "", guardOptions);
+  const guardCandidate = maskApprovedPriceClaims(toned, input.plan.exactPriceFacts);
+  const constrained = constrainMedicalAiReply(guardCandidate, input.footer ?? "", guardOptions);
   if (wasRejectedByExistingGuard(toned, constrained, input.footer ?? "", guardOptions)) {
     return null;
   }
-  const formatted = formatReplyText(constrained);
+  const formatted = formatReplyText(guardCandidate === toned ? constrained : toned);
   if (
     !formatted ||
     (options.checkRecentReplies !== false && repeatsPreviousAssistantReply(formatted, input.recentTurns, input.footer))
@@ -387,16 +442,17 @@ function renderGuardedFallback(
   startedAt: number,
   generationMetadata?: GeneratedAiReply,
 ): ReplyRendererResult {
+  const generatorInvoked = fallbackReason !== "deterministic_rejected";
   const dynamicSafeCandidates = [
     input.plan.nextQuestion,
     input.plan.treatmentKeys.length > 0 || input.plan.concernKeys.length > 0
-      ? "前面的介紹先不重複；您想接著問效果、價格、搭配，還是預約諮詢呢？"
+      ? "您想接著了解改善方向、核准價格，還是安排免費諮詢呢？"
       : "您可以直接補充最想先確認的療程、部位或問題。",
     input.plan.knownNeeds.length > 0
-      ? `已保留您先前提到的需求，我會直接承接這一輪的新問題。`
-      : "目前的療程脈絡我有保留，我會直接承接這一輪的新問題。",
-    "這一輪不重複前面的介紹，我們直接往您現在最在意的差異繼續。",
-    "前面的內容不用重說，您可以直接告訴我這次最想比較或確認的部分。",
+      ? "您可以直接補充目前最想確認的重點，我會接著協助。"
+      : "請告訴我這次最想確認的療程、部位或困擾。",
+    "您最想先比較改善方向、療程感受，還是核准價格呢？",
+    "請直接告訴我現在最想確認的部分，我會依核准資料回答。",
   ];
   // The per-act bank is written for a cold start: it asks the customer what they want
   // without using anything they already told us. Once we hold a planned next question,
@@ -411,8 +467,8 @@ function renderGuardedFallback(
   const secondaryCandidates = [
     input.plan.secondaryFallbackText,
     ...(hasConversationContext
-      ? [...dynamicSafeCandidates, ...SECONDARY_FALLBACKS[input.plan.dialogueAct]]
-      : [...SECONDARY_FALLBACKS[input.plan.dialogueAct], ...dynamicSafeCandidates]),
+      ? [...dynamicSafeCandidates, ...APPROVED_FALLBACK_COPY[input.plan.dialogueAct]]
+      : [...APPROVED_FALLBACK_COPY[input.plan.dialogueAct], ...dynamicSafeCandidates]),
   ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
   const candidates: Array<{ text: string; variant: ReplyRendererFallbackVariant }> = [
     { text: input.plan.fallbackText, variant: "primary" },
@@ -422,24 +478,33 @@ function renderGuardedFallback(
     })),
   ];
   const seen = new Set<string>();
+  let guardRejectedCandidate = false;
 
   for (const candidate of candidates) {
     const normalized = formatReplyText(candidate.text);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     const replyText = guardFallbackCandidate(input, normalized, usedGroundedKnowledge);
-    if (!replyText) continue;
+    if (!replyText) {
+      guardRejectedCandidate = true;
+      continue;
+    }
     return {
       dialogueAct: input.plan.dialogueAct,
       fallbackReason,
       fallbackVariant: candidate.variant,
       generated: false,
-      generatorInvoked: true,
+      generatorInvoked,
+      guardReplacedText: guardRejectedCandidate ||
+        fallbackReason === "deterministic_rejected" ||
+        fallbackReason === "generator_rejected" ||
+        fallbackReason === "repeated_previous_reply",
       handoffRequired: false,
       latencyMs: Date.now() - startedAt,
       messages: buildMessages(replyText, input.plan, input.footer, input.includeFooter ?? true),
       model: generationMetadata?.model,
       replyText,
+      replyTextSource: "approved_fallback",
       renderMode: "fallback",
       sourceUrl: generationMetadata?.sourceUrl,
       tokensIn: generationMetadata?.tokensIn,
@@ -466,7 +531,8 @@ function renderGuardedFallback(
     fallbackReason,
     fallbackVariant: "safe",
     generated: false,
-    generatorInvoked: true,
+    generatorInvoked,
+    guardReplacedText: true,
     handoffRequired: false,
     latencyMs: Date.now() - startedAt,
     // A terminal fallback must stay plain text. Reusing the
@@ -475,6 +541,7 @@ function renderGuardedFallback(
     messages: buildRendererTerminalFallbackMessages(input, terminalReply),
     model: generationMetadata?.model,
     replyText: terminalReply,
+    replyTextSource: "approved_terminal_fallback",
     renderMode: "fallback",
     sourceUrl: generationMetadata?.sourceUrl,
     tokensIn: generationMetadata?.tokensIn,
@@ -555,11 +622,13 @@ export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyR
     dialogueAct: input.plan.dialogueAct,
     generated: true,
     generatorInvoked: true,
+    guardReplacedText: false,
     handoffRequired: false,
     latencyMs: Date.now() - startedAt,
     messages: buildMessages(replyText, input.plan, input.footer, input.includeFooter ?? true),
     model: generatedReply.model,
     replyText,
+    replyTextSource: "grounded_generation",
     renderMode: "generated",
     sourceUrl: generatedReply.sourceUrl,
     tokensIn: generatedReply.tokensIn,

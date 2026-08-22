@@ -9,6 +9,7 @@ import {
   type PriceFactResolution,
   type TreatmentKnowledgeResolution,
 } from "@/lib/clinic-facts";
+import { findTreatmentBrandInClinic } from "@/lib/clinic-config";
 import {
   buildTreatmentReplyAssets,
   type TreatmentReplyAsset,
@@ -244,21 +245,40 @@ function approvedCustomerFallback(
   resolution: TreatmentKnowledgeResolution,
   nextQuestion: string | undefined,
   dialogueAct: GeneratedReplyPlan["dialogueAct"],
+  questionAspect: QuestionAspect,
 ) {
-  const approvedCopy = dialogueAct === "recommend_direction" && resolution.customerConcernReplies.length > 0
-    ? resolution.customerConcernReplies.slice(0, 2)
-    : resolution.customerIntroReplies.slice(0, 2);
+  const approvedCopy = resolution.customerAspectReplies.length > 0
+    ? resolution.customerAspectReplies.slice(0, 2)
+    : dialogueAct === "recommend_direction" && resolution.customerConcernReplies.length > 0
+      ? resolution.customerConcernReplies.slice(0, 2)
+      : resolution.customerIntroReplies.slice(0, 2);
   if (approvedCopy.length === 0) return treatmentGapReply(resolution);
   // The approved intro is the answer to "what is this treatment", so it belongs to the
   // introduction turn only. Replaying it on every follow-up produced the dead end the
   // customer hit: three turns in a row returned the same paragraph. Later turns keep
   // at most one line of context and lead with the next step instead.
   if (dialogueAct !== "introduce_treatment") {
+    if (resolution.customerAspectReplies.length > 0) {
+      return unique([...approvedCopy, nextQuestion ?? ""]).join("\n");
+    }
     // A concern-selection turn may use its approved explanation and follow-up. A
     // later restatement of the same treatment/concern should advance with the
     // planned question rather than replaying that explanation verbatim.
     if (dialogueAct === "recommend_direction" && resolution.customerConcernReplies.length > 0) {
       return unique([...approvedCopy, nextQuestion ?? ""]).join("\n");
+    }
+    // A direct benefits/mechanism question is a new information request, not
+    // an accidental restart. When the treatment profile has no dedicated
+    // aspect reply, answer from its approved intro before advancing instead
+    // of returning only a generic follow-up question.
+    if (
+      ["benefits", "mechanism"].includes(questionAspect) &&
+      resolution.customerIntroReplies.length > 0
+    ) {
+      return unique([
+        ...resolution.customerIntroReplies.slice(0, 2),
+        nextQuestion ?? "",
+      ]).join("\n");
     }
     const advance = nextQuestion?.trim() ||
       "您想先了解這個部位可評估的方向，還是安排免費諮詢由醫師現場確認呢？";
@@ -353,12 +373,36 @@ export async function hydrateConversationV2ReplyPlan(
   }
 
   if (replyPlan.mode === "generated") {
-    const treatmentResolution = resolveTreatmentKnowledge(input.snapshot, {
+    let treatmentResolution = resolveTreatmentKnowledge(input.snapshot, {
       excludedTreatmentKeys: replyPlan.responseContext.excludedTreatmentKeys,
       mode: treatmentFactMode(replyPlan),
       questionAspect: replyPlan.responseContext.questionAspect,
       query: replyPlan.knowledgeQuery,
     });
+    const explicitBrand = replyPlan.knowledgeQuery.treatmentKeys.length === 1
+      ? findTreatmentBrandInClinic(
+          input.snapshot.clinic,
+          input.turn.text,
+          replyPlan.knowledgeQuery.treatmentKeys[0],
+        )
+      : null;
+    if (explicitBrand) {
+      const brandCopy = explicitBrand.customerReply.trim();
+      treatmentResolution = {
+        ...treatmentResolution,
+        customerAspectReplies: unique([
+          brandCopy,
+          ...treatmentResolution.customerAspectReplies,
+        ]),
+        customerIntroReplies: replyPlan.responseContext.questionAspect === "overview"
+          ? unique([brandCopy, ...treatmentResolution.customerIntroReplies])
+          : treatmentResolution.customerIntroReplies,
+        facts: unique([
+          ...treatmentResolution.facts,
+          `核准品牌身分：${explicitBrand.name}`,
+        ]),
+      };
+    }
     const hasFacts = treatmentResolution.facts.length > 0;
     const hasResolutionGaps = treatmentResolution.gaps.length > 0;
     const hasUnknownGaps = treatmentResolution.gaps.some((gap) => gap.status === "unknown");
@@ -379,7 +423,9 @@ export async function hydrateConversationV2ReplyPlan(
     // A data gap changes what we say, never how we say it: the deterministic text is
     // always approved customer-facing copy plus the gap explanation. Labelled facts
     // stay in `approvedFacts` for the model only.
-    const gapCustomerCopy = replyPlan.dialogueAct === "recommend_direction" &&
+    const gapCustomerCopy = treatmentResolution.customerAspectReplies.length > 0
+      ? treatmentResolution.customerAspectReplies.slice(0, 1)
+      : replyPlan.dialogueAct === "recommend_direction" &&
         treatmentResolution.customerConcernReplies.length > 0
       ? treatmentResolution.customerConcernReplies.slice(0, 1)
       : replyPlan.dialogueAct === "introduce_treatment"
@@ -401,6 +447,7 @@ export async function hydrateConversationV2ReplyPlan(
         treatmentResolution,
         replyPlan.nextQuestion,
         replyPlan.dialogueAct,
+        replyPlan.responseContext.questionAspect,
       );
     const rendererPlan = legacyDecisionToReplyPlan(
       {
@@ -459,13 +506,27 @@ export async function hydrateConversationV2ReplyPlan(
 
   if (replyPlan.dialogueAct === "answer_price" && replyPlan.pricingQuery) {
     const priceResolution = resolveApprovedPrice(input.snapshot, replyPlan.pricingQuery);
+    const genericBotoxAlternative =
+      priceResolution.status !== "approved_current" &&
+      replyPlan.pricingQuery.treatmentKeys.length === 1 &&
+      replyPlan.pricingQuery.treatmentKeys[0] === "botox" &&
+      Boolean(replyPlan.pricingQuery.applicability?.variant)
+        ? resolveApprovedPrice(input.snapshot, {
+            kind: "unspecified",
+            treatmentKeys: ["botox"],
+          })
+        : undefined;
     const contextualCampaignId = contextualPriceCampaignId(input);
-    const alternativePriceResolution = contextualCampaignId
+    const contextualPriceResolution = contextualCampaignId
       ? resolveApprovedPrice(input.snapshot, {
           ...replyPlan.pricingQuery,
           campaignId: contextualCampaignId,
         })
       : undefined;
+    const alternativePriceResolution =
+      genericBotoxAlternative?.status === "approved_current"
+        ? genericBotoxAlternative
+        : contextualPriceResolution;
     const hasDistinctAlternative =
       priceResolution.status === "approved_current" &&
       alternativePriceResolution?.status === "approved_current" &&
@@ -478,7 +539,13 @@ export async function hydrateConversationV2ReplyPlan(
             priceConcernFollowup(input),
           ]).join("\n")
         : customerPriceReply(input.snapshot, priceResolution)
-      : priceGapReply(priceResolution);
+      : alternativePriceResolution?.status === "approved_current"
+        ? unique([
+            priceGapReply(priceResolution),
+            `💰 另有可直接參考的方案：${alternativePriceResolution.customerPriceText}。${alternativePriceResolution.branchScope ? `\n${alternativePriceResolution.branchScope}。` : ""}`,
+            "📅 如果您願意，我可以先幫您整理免費諮詢需求，品牌方案價格再由真人客服於上班時間確認。",
+          ]).join("\n\n")
+        : priceGapReply(priceResolution);
     return {
       ...(alternativePriceResolution ? { alternativePriceResolution } : {}),
       dataStatus: priceResolution.status === "approved_current" ? "ready" : "unresolved",

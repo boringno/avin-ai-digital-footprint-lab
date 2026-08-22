@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
 import { containsInternalFieldLabel } from "@/lib/conversation-v2/customer-text-guard";
+import { isExplicitTreatmentOverviewRestart } from "@/lib/conversation-v2/episode-policy";
 import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
 import {
   createEmptyConversationContext,
@@ -65,16 +66,31 @@ const ondaFaceCombinationCampaign = {
   booking_treatments: "ONDA PRO|肉毒",
   campaign_aliases: "臉部輪廓組合|ONDA雙下巴|ONDA嘴邊肉|雙下巴方案|嘴邊肉方案|12999|12,999",
   campaign_name: "2026 ONDA Pro＋肉毒小臉方案",
-  customer_price_text: "12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）",
+  customer_price_text: "ONDA＋肉毒小臉組合 12,999 元",
   end_date: "2026-08-31",
   id: "promo-2026-08-face-contour-combo",
-  price_text: "12,999元（ONDA Pro超微波6分鐘＋Neuronox肉毒小臉）",
+  price_text: "ONDA＋肉毒小臉組合 12,999 元",
   treatment_name: "臉部輪廓組合",
+};
+
+const botoxCampaign = {
+  ...ondaCampaign,
+  asset_urls: "https://line-ai-live-demo.vercel.app/demo/promotions/summer-2026-07-09-to-07-20/botox-wrinkle-999.png",
+  campaign_aliases: "肉毒|肉毒除皺|肉毒12U|12U999|999",
+  campaign_name: "2026 盛夏光采肉毒除皺",
+  customer_price_text: "肉毒 12U 999 元",
+  dose: "12U",
+  end_date: "2026-08-31",
+  id: "promo-2026-07-09-botox-wrinkle",
+  price_text: "肉毒12U 999元",
+  start_date: "2026-07-09",
+  treatment_name: "肉毒除皺",
+  variant_key: "",
 };
 
 function factsProvider() {
   return createStaticClinicFactsProvider({
-    pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign],
+    pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign, botoxCampaign],
   });
 }
 
@@ -125,13 +141,14 @@ async function routeTurn(input: {
   context: ConversationContext;
   frame: NluFrame | null;
   message: string;
+  now?: Date;
   turnIndex: number;
 }) {
   const result = await routeConversationV2Canary({
     context: input.context,
     eventIdentity: `journey-${input.turnIndex}`,
     message: input.message,
-    now: NOW,
+    now: input.now ?? NOW,
     sourceType: "user",
     sourceUserId: USER_ID,
   }, {
@@ -142,6 +159,689 @@ async function routeTurn(input: {
   assert.equal(result.kind, "routed", `turn ${input.turnIndex} must be routed by V2`);
   assert.ok("decision" in result && result.decision, `turn ${input.turnIndex} must produce a decision`);
   return result as Extract<typeof result, { kind: "routed" }>;
+}
+
+type AcceptanceTreatment = {
+  areaKey: string;
+  concernKey: string;
+  concernMessage: string;
+  key: "onda_pro" | "botox";
+  labelPattern: RegExp;
+  restartMessage: string;
+};
+
+const ACCEPTANCE_TREATMENTS: readonly AcceptanceTreatment[] = [
+  {
+    areaKey: "jawline",
+    concernKey: "jawline_looseness",
+    concernMessage: "雙下巴",
+    key: "onda_pro",
+    labelPattern: /ONDA Pro|ONDA PRO/u,
+    restartMessage: "請重新介紹 ONDA",
+  },
+  {
+    areaKey: "face",
+    concernKey: "dynamic_wrinkles",
+    concernMessage: "皺眉紋",
+    key: "botox",
+    labelPattern: /肉毒|BOTOX/u,
+    restartMessage: "請重新介紹肉毒",
+  },
+] as const;
+
+async function primeAcceptanceTreatment(
+  treatment: AcceptanceTreatment,
+  turnIndex: number,
+) {
+  const opening = await routeTurn({
+    context: createEmptyConversationContext(USER_ID),
+    frame: frame({ treatments: [treatment.key] }),
+    message: treatment.key === "onda_pro" ? "想了解 ONDA" : "想了解肉毒",
+    turnIndex,
+  });
+  const concern = await routeTurn({
+    context: opening.decision.nextContext,
+    frame: frame({
+      concerns: [{ area: treatment.areaKey, key: treatment.concernKey }],
+      dialogue: {
+        focus: "overview",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_concern",
+      },
+      treatments: [],
+    }),
+    message: treatment.concernMessage,
+    turnIndex: turnIndex + 1,
+  });
+  return concern.decision.nextContext;
+}
+
+/**
+ * Monday's two-treatment acceptance contract. A customer may explicitly ask
+ * to hear a treatment again even when the model calls it a continuation; the
+ * next short concern must then advance from the newly restarted overview.
+ */
+async function validateExplicitRestartForAcceptanceTreatments() {
+  console.log("### ONDA/Botox explicit overview restart");
+  let turnIndex = 700;
+  for (const treatment of ACCEPTANCE_TREATMENTS) {
+    const primedContext = await primeAcceptanceTreatment(treatment, turnIndex);
+    turnIndex += 10;
+    const variants: Array<{ frame: NluFrame | null; label: string }> = [
+      { frame: null, label: "frame-null" },
+      {
+        frame: frame({
+          confidence: 0.4,
+          dialogue: {
+            focus: "overview",
+            move: "continue",
+            reference: "active_subject",
+            speechAct: "unknown",
+          },
+          treatments: [treatment.key],
+        }),
+        label: "low-confidence continuation echo",
+      },
+      {
+        frame: frame({
+          confidence: 0.95,
+          dialogue: {
+            focus: "overview",
+            move: "continue",
+            reference: "active_subject",
+            speechAct: "learn_treatment",
+          },
+          treatments: [treatment.key],
+        }),
+        label: "high-confidence continuation echo",
+      },
+    ];
+
+    for (const variant of variants) {
+      const restarted = await routeTurn({
+        context: structuredClone(primedContext),
+        frame: variant.frame,
+        message: treatment.restartMessage,
+        turnIndex: turnIndex++,
+      });
+      summarize(
+        `J4-${treatment.key}-${variant.label}`,
+        treatment.restartMessage,
+        restarted.decision,
+      );
+      assert.match(
+        restarted.decision.replyText,
+        treatment.labelPattern,
+        `${treatment.key}/${variant.label}: explicit restart must return approved treatment content`,
+      );
+      assert.doesNotMatch(
+        restarted.decision.replyText,
+        /不重複前面的介紹|目前的療程脈絡我有保留|想先了解這個部位可評估的方向/u,
+        `${treatment.key}/${variant.label}: explicit restart must not return process narration or generic fallback`,
+      );
+      assert.deepEqual(
+        restarted.decision.nextContext.conversationV2State?.knowledge.concernKeys,
+        [],
+        `${treatment.key}/${variant.label}: explicit restart must clear the prior concern`,
+      );
+
+      const selectedConcern = await routeTurn({
+        context: restarted.decision.nextContext,
+        frame: null,
+        message: treatment.concernMessage,
+        turnIndex: turnIndex++,
+      });
+      assert.match(
+        selectedConcern.decision.replyText,
+        treatment.labelPattern,
+        `${treatment.key}/${variant.label}: the next short concern must retain the treatment owner`,
+      );
+      assert.match(
+        selectedConcern.decision.replyText,
+        treatment.key === "onda_pro" ? /雙下巴|下顎/u : /皺眉|眉間|動態紋/u,
+        `${treatment.key}/${variant.label}: the next short concern must receive grounded approved content`,
+      );
+      assert.doesNotMatch(
+        selectedConcern.decision.replyText,
+        /想先了解這個部位可評估的方向|目前的療程脈絡我有保留/u,
+        `${treatment.key}/${variant.label}: the next short concern must not degrade to generic fallback`,
+      );
+    }
+  }
+  console.log("PASS: J4 ONDA/Botox explicit overview restart");
+}
+
+async function validateThirtyMinuteEpisodeBoundary() {
+  console.log("### 30-minute consultation episode boundary");
+  let turnIndex = 800;
+  for (const treatment of ACCEPTANCE_TREATMENTS) {
+    const primedContext = await primeAcceptanceTreatment(treatment, turnIndex);
+    turnIndex += 10;
+    const treatmentMessage = treatment.key === "onda_pro" ? "ONDA" : "肉毒";
+    const beforeBoundary = await routeTurn({
+      context: structuredClone(primedContext),
+      frame: null,
+      message: treatmentMessage,
+      now: new Date(NOW.getTime() + 29 * 60 * 1000),
+      turnIndex: turnIndex++,
+    });
+    assert.ok(
+      beforeBoundary.decision.nextContext.conversationV2State?.knowledge.concernKeys.includes(
+        treatment.concernKey,
+      ),
+      `J5/${treatment.key}: 29 minutes of inactivity must not erase the active concern`,
+    );
+
+    const afterBoundary = await routeTurn({
+      context: structuredClone(primedContext),
+      frame: null,
+      message: treatmentMessage,
+      now: new Date(NOW.getTime() + 30 * 60 * 1000 + 1),
+      turnIndex: turnIndex++,
+    });
+    summarize(`J5-${treatment.key}`, `30 minutes later: ${treatmentMessage}`, afterBoundary.decision);
+    assert.match(
+      afterBoundary.decision.replyText,
+      treatment.labelPattern,
+      `J5/${treatment.key}: the first grounded subject after 30 minutes must restart with approved treatment content`,
+    );
+    assert.deepEqual(
+      afterBoundary.decision.nextContext.conversationV2State?.knowledge.concernKeys,
+      [],
+      `J5/${treatment.key}: the new consultation episode must not inherit the prior concern`,
+    );
+    assert.doesNotMatch(
+      afterBoundary.decision.replyText,
+      /目前的療程脈絡我有保留|想先了解這個部位可評估的方向/u,
+      `J5/${treatment.key}: the new consultation episode must not return a context-only fallback`,
+    );
+  }
+
+  assert.equal(
+    isExplicitTreatmentOverviewRestart("不要重新介紹 ONDA"),
+    false,
+    "J5: a negated restart phrase must not reset the consultation episode",
+  );
+
+  const bookingStart = await routeTurn({
+    context: createEmptyConversationContext("U-episode-booking"),
+    frame: null,
+    message: "我要預約諮詢",
+    turnIndex: turnIndex++,
+  });
+  const bookingAfterBoundary = await routeTurn({
+    context: bookingStart.decision.nextContext,
+    frame: null,
+    message: "ONDA",
+    now: new Date(NOW.getTime() + 31 * 60 * 1000),
+    turnIndex: turnIndex++,
+  });
+  assert.equal(
+    bookingAfterBoundary.decision.nextContext.conversationV2State?.bookingTask.status,
+    "suspended",
+    "J5: an incomplete booking must pause after the episode boundary",
+  );
+  assert.match(
+    bookingAfterBoundary.decision.replyText,
+    /繼續剛才的預約資料.*先詢問其他問題/su,
+    "J5: the first message after 30 minutes must ask whether to resume",
+  );
+  assert.deepEqual(
+    bookingAfterBoundary.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+    [],
+    "J5: the message that triggers the resume choice must not be silently stored as booking data",
+  );
+
+  const resumed = await routeTurn({
+    context: bookingAfterBoundary.decision.nextContext,
+    frame: null,
+    message: "繼續剛才的預約資料",
+    now: new Date(NOW.getTime() + 31 * 60 * 1000 + 1_000),
+    turnIndex: turnIndex++,
+  });
+  assert.equal(resumed.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.match(resumed.decision.replyText, /想預約諮詢哪一項療程/u);
+
+  const bookingTreatment = await routeTurn({
+    context: resumed.decision.nextContext,
+    frame: null,
+    message: "ONDA",
+    now: new Date(NOW.getTime() + 31 * 60 * 1000 + 2_000),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(
+    bookingTreatment.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys.includes(
+      "onda_pro",
+    ),
+    "J5: the resumed booking must accept the expected treatment field",
+  );
+  assert.equal(bookingTreatment.decision.nextContext.conversationV2State?.bookingTask.expectedField, "branch");
+  console.log("PASS: J5 30-minute consultation episode boundary");
+}
+
+/** The second Monday acceptance treatment must work as a full customer journey. */
+async function validateBotoxAcceptanceJourney() {
+  console.log("### Botox Monday acceptance journey");
+  let turnIndex = 900;
+  const opening = await routeTurn({
+    context: createEmptyConversationContext("U-monday-botox"),
+    frame: null,
+    message: "我想了解肉毒",
+    turnIndex: turnIndex++,
+  });
+  assert.match(opening.decision.replyText, /肉毒/u, "J6: Botox opening must use approved content");
+
+  const concern = await routeTurn({
+    context: opening.decision.nextContext,
+    frame: null,
+    message: "皺眉紋",
+    turnIndex: turnIndex++,
+  });
+  assert.match(
+    concern.decision.replyText,
+    /皺眉紋|眉間動態紋/u,
+    "J6: a short frown-line concern must receive approved Botox content",
+  );
+  assert.ok(
+    concern.decision.nextContext.conversationV2State?.knowledge.treatmentKeys.includes("botox"),
+    "J6: the short concern must retain Botox as its owner",
+  );
+
+  const brands = await routeTurn({
+    context: concern.decision.nextContext,
+    frame: null,
+    message: "肉毒有哪些品牌",
+    turnIndex: turnIndex++,
+  });
+  summarize("J6-3", "肉毒有哪些品牌", brands.decision);
+  assert.match(brands.decision.replyText, /奇蹟肉毒/u, "J6: approved miracle Botox alias must be returned");
+  assert.match(brands.decision.replyText, /經典肉毒/u, "J6: approved classic Botox alias must be returned");
+  assert.match(brands.decision.replyText, /皇家肉毒/u, "J6: approved royal Botox alias must be returned");
+  assert.doesNotMatch(brands.decision.replyText, /BOTOX|Neuronox|Dysport/u, "J6: generic brand answer should stop at approved customer aliases");
+
+  const price = await routeTurn({
+    context: brands.decision.nextContext,
+    frame: frame({
+      confidence: 0.4,
+      dialogue: {
+        focus: "price_unspecified",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_price",
+      },
+      treatments: [],
+    }),
+    message: "那價格呢",
+    turnIndex: turnIndex++,
+  });
+  summarize("J6-4", "那價格呢", price.decision);
+  assert.match(price.decision.replyText, /999/u, "J6: contextual Botox price must use the approved amount");
+  assert.doesNotMatch(
+    price.decision.replyText,
+    /16,888|12,999/u,
+    "J6: Botox price must not inherit an ONDA campaign",
+  );
+
+  const booking = await routeTurn({
+    context: price.decision.nextContext,
+    frame: null,
+    message: "我要預約肉毒諮詢",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(
+    booking.decision.nextContext.conversationV2State?.bookingTask.status,
+    "collecting",
+    "J6: explicit Botox booking must enter booking collection",
+  );
+  assert.ok(
+    booking.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys.includes("botox"),
+    "J6: explicit Botox booking must preserve its treatment",
+  );
+  console.log("PASS: J6 Botox Monday acceptance journey");
+}
+
+async function validateMondayConsultationCtaJourneys() {
+  console.log("### Monday 2-3 turn consultation CTA journeys");
+  let turnIndex = 980;
+
+  let ondaContext = createEmptyConversationContext("U-monday-onda-cta");
+  for (const message of ["ONDA", "雙下巴", "脂肪堆積"] as const) {
+    const routed = await routeTurn({ context: ondaContext, frame: null, message, turnIndex: turnIndex++ });
+    ondaContext = routed.decision.nextContext;
+  }
+  const ondaCta = await routeTurn({
+    context: ondaContext,
+    frame: null,
+    message: "我只做ONDA可以嗎",
+    turnIndex: turnIndex++,
+  });
+  assert.match(
+    ondaCta.decision.replyText,
+    /📅 預約免費諮詢[\s\S]*👩‍💼 真人客服協助[\s\S]*💬 繼續詢問/u,
+    "J6a: ONDA must offer the three approved next steps after substantive consultation",
+  );
+  assert.doesNotMatch(
+    ondaCta.decision.replyText,
+    /ONDA Pro 是非侵入式/u,
+    "J6a: ONDA CTA turn must not replay the opening introduction",
+  );
+
+  let botoxContext = createEmptyConversationContext("U-monday-botox-cta");
+  for (const message of ["肉毒", "皺眉紋"] as const) {
+    const routed = await routeTurn({ context: botoxContext, frame: null, message, turnIndex: turnIndex++ });
+    botoxContext = routed.decision.nextContext;
+  }
+  const botoxCta = await routeTurn({
+    context: botoxContext,
+    frame: null,
+    message: "做表情時比較明顯",
+    turnIndex: turnIndex++,
+  });
+  assert.match(
+    botoxCta.decision.replyText,
+    /📅 預約免費諮詢[\s\S]*👩‍💼 真人客服協助[\s\S]*💬 繼續詢問/u,
+    "J6a: Botox must offer the three approved next steps after the deeper answer",
+  );
+  assert.match(botoxCta.decision.replyText, /表情肌活動|動態紋/u);
+
+  const continues = await routeTurn({
+    context: botoxCta.decision.nextContext,
+    frame: null,
+    message: "繼續詢問",
+    turnIndex: turnIndex++,
+  });
+  assert.match(continues.decision.replyText, /改善方向.*品牌差異.*價格/su);
+
+  const declinesBooking = await routeTurn({
+    context: botoxCta.decision.nextContext,
+    frame: null,
+    message: "先不用，暫時不預約",
+    turnIndex: turnIndex++,
+  });
+  assert.notEqual(
+    declinesBooking.decision.nextContext.conversationV2State?.bookingTask.status,
+    "collecting",
+    "J6a: declining the invitation must not start booking collection",
+  );
+  const sameTopicFollowup = await routeTurn({
+    context: declinesBooking.decision.nextContext,
+    frame: null,
+    message: "平時也看得到",
+    turnIndex: turnIndex++,
+  });
+  assert.doesNotMatch(
+    sameTopicFollowup.decision.replyText,
+    /📅 預約免費諮詢/u,
+    "J6a: the same treatment episode must not repeat its booking invitation after a decline",
+  );
+  console.log("PASS: J6a Monday consultation CTA journeys");
+}
+
+/** Monday customers may start with natural questions, typos, aliases or terse follow-ups. */
+async function validateMondayNaturalInputFamilies() {
+  console.log("### Monday natural-language and alias families");
+  let turnIndex = 960;
+
+  for (const [message, expected] of [
+    ["響了解ONDA", /ONDA Pro|ONDA PRO/u],
+    ["ONDA主要改善啥", /ONDA Pro|ONDA PRO/u],
+    ["奇績肉毒是什麼", /Neuronox|奇蹟肉毒/u],
+    ["dyspot是什麼肉毒", /Dysport|皇家肉毒/u],
+  ] as const) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-natural-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(routed.decision.replyText, expected, `J7: ${message} must receive grounded approved content`);
+    assert.doesNotMatch(routed.decision.replyText, CLARIFY_PATTERN, `J7: ${message} must not ask which treatment`);
+  }
+
+  for (const [message, expectedBrand] of [
+    ["Neuronox是什麼", /Neuronox|奇蹟肉毒/u],
+    ["優力柔是什麼肉毒", /Neuronox|奇蹟肉毒/u],
+    ["neruonox可以改善什麼", /Neuronox|奇蹟肉毒/u],
+    ["BOTOX是什麼", /BOTOX|經典肉毒/u],
+    ["經典肉毒可以打哪裡", /BOTOX|經典肉毒/u],
+    ["Dysport是什麼", /Dysport|皇家肉毒/u],
+    ["儷緻肉毒可以改善什麼", /Dysport|皇家肉毒/u],
+    ["皇家肉毒是什麼", /Dysport|皇家肉毒/u],
+  ] as const) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-brand-alias-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(routed.decision.replyText, expectedBrand, `J7: ${message} must resolve to the approved clinic brand`);
+    assert.doesNotMatch(routed.decision.replyText, CLARIFY_PATTERN, `J7: ${message} must not ask which treatment`);
+  }
+
+  const ondaPrice = await routeTurn({
+    context: createEmptyConversationContext("U-natural-onda-price"),
+    frame: null,
+    message: "ONDA怎麼收費?",
+    turnIndex: turnIndex++,
+  });
+  assert.match(ondaPrice.decision.replyText, /16,888/u, "J7: a natural ONDA price opening must quote the approved offer");
+
+  let botoxContext = createEmptyConversationContext("U-natural-botox-short");
+  const botoxOpening = await routeTurn({
+    context: botoxContext,
+    frame: null,
+    message: "肉毒可以幹嘛",
+    turnIndex: turnIndex++,
+  });
+  botoxContext = botoxOpening.decision.nextContext;
+  const shortConcern = await routeTurn({
+    context: botoxContext,
+    frame: null,
+    message: "眉間那條呢",
+    turnIndex: turnIndex++,
+  });
+  assert.match(shortConcern.decision.replyText, /皺眉紋|眉間/u, "J7: a terse concern question must inherit Botox");
+  botoxContext = shortConcern.decision.nextContext;
+  const shortBrand = await routeTurn({
+    context: botoxContext,
+    frame: null,
+    message: "牌子呢",
+    turnIndex: turnIndex++,
+  });
+  assert.match(shortBrand.decision.replyText, /奇蹟肉毒.*經典肉毒.*皇家肉毒/su, "J7: a terse brand question must inherit Botox and use approved aliases");
+
+  for (const message of [
+    "肉毒多少錢",
+    "奇蹟肉毒多少錢",
+    "奇迹肉毒12u價格",
+    "Neuronox怎麼收費",
+    "優力柔12U多少錢",
+    "neruonox價錢",
+  ] as const) {
+    const quoted = await routeTurn({
+      context: createEmptyConversationContext(`U-price-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(quoted.decision.replyText, /12U\s*999/u, `J7: ${message} must quote only the approved 12U offer`);
+    assert.doesNotMatch(
+      quoted.decision.replyText,
+      /奇蹟肉毒[^\n。]*12U|Neuronox[^\n。]*12U|優力柔[^\n。]*12U/u,
+      `J7: ${message} must not attribute the generic offer to a brand`,
+    );
+  }
+
+  for (const message of [
+    "經典肉毒多少錢",
+    "BOTOX 12U多少錢",
+    "皇家肉毒價格",
+    "Dysport怎麼收費",
+    "儷緻肉毒價錢",
+    "dyspot 12U多少錢",
+  ] as const) {
+    const unquoted = await routeTurn({
+      context: createEmptyConversationContext(`U-unquoted-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(unquoted.decision.replyText, /12U\s*999/u, `J7: ${message} must proactively offer the generic approved alternative`);
+    assert.match(unquoted.decision.replyText, /真人客服|上班時間/u, `J7: ${message} must offer staff price confirmation`);
+    assert.equal(unquoted.toolRequest?.type, "request_fact_confirmation", `J7: ${message} must create a price confirmation obligation`);
+  }
+
+  for (const [label, candidateFrame] of [
+    ["frame-null", null],
+    [
+      "low-confidence",
+      frame({
+        confidence: 0.3,
+        dialogue: {
+          focus: "none",
+          move: "none",
+          reference: "unresolved",
+          speechAct: "unknown",
+        },
+        intents: ["unknown"],
+        treatments: [],
+      }),
+    ],
+  ] as const) {
+    const fuzzy = await routeTurn({
+      context: createEmptyConversationContext(`U-fuzzy-${label}`),
+      frame: candidateFrame,
+      message: "想了解ONAD",
+      turnIndex: turnIndex++,
+    });
+    assert.match(fuzzy.decision.replyText, /想確認一下.*ONDA/u, `J7: ${label} typo must propose ONDA`);
+    assert.deepEqual(
+      fuzzy.decision.nextContext.conversationV2State?.awaiting?.options.map((option) => option.value),
+      ["onda_pro"],
+      `J7: ${label} typo must stay pending instead of committing ONDA`,
+    );
+    assert.deepEqual(
+      fuzzy.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+      [],
+      `J7: ${label} typo must not become canonical knowledge before confirmation`,
+    );
+
+    const confirmed = await routeTurn({
+      context: fuzzy.decision.nextContext,
+      frame: null,
+      message: "ONDA",
+      turnIndex: turnIndex++,
+    });
+    assert.match(confirmed.decision.replyText, /ONDA Pro|ONDA PRO/u, `J7: ${label} confirmation must answer ONDA`);
+    assert.deepEqual(
+      confirmed.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+      ["onda_pro"],
+      `J7: ${label} confirmation must commit ONDA only after customer selection`,
+    );
+  }
+
+  const fuzzyPrice = await routeTurn({
+    context: createEmptyConversationContext("U-fuzzy-price"),
+    frame: null,
+    message: "Botx怎麼收費",
+    turnIndex: turnIndex++,
+  });
+  assert.match(fuzzyPrice.decision.replyText, /想確認一下.*BOTOX.*價格/u, "J7: a likely brand typo must receive a price-specific clarification");
+  assert.deepEqual(
+    fuzzyPrice.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+    [],
+    "J7: an unconfirmed price typo must not own pricing state",
+  );
+  const confirmedFuzzyPrice = await routeTurn({
+    context: fuzzyPrice.decision.nextContext,
+    frame: null,
+    message: "BOTOX價格",
+    turnIndex: turnIndex++,
+  });
+  assert.match(confirmedFuzzyPrice.decision.replyText, /12U\s*999/u, "J7: confirmed BOTOX may offer the generic approved alternative without attributing it to BOTOX");
+  assert.match(confirmedFuzzyPrice.decision.replyText, /真人客服|上班時間/u, "J7: confirmed BOTOX price must route to staff confirmation");
+
+  for (const message of ["不要ONAD", "哪間有ONAD", "做完ONAD後呼吸困難"] as const) {
+    const rejected = await routeTurn({
+      context: createEmptyConversationContext(`U-fuzzy-reject-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.doesNotMatch(rejected.decision.replyText, /是想(?:問|了解).*ONDA/u, `J7: ${message} must not receive a treatment typo suggestion`);
+  }
+  console.log("PASS: J7 natural openings, short questions, aliases, typos and brand-scoped prices");
+}
+
+async function validateMondayCompleteBookingJourneys() {
+  console.log("### Monday ONDA/Botox complete booking journeys");
+  let turnIndex = 1100;
+
+  for (const journey of [
+    { opening: "ONDA主要改善啥", treatmentKey: "onda_pro" },
+    { opening: "奇績肉毒是什麼", treatmentKey: "botox" },
+  ] as const) {
+    let context = createEmptyConversationContext(`U-full-booking-${journey.treatmentKey}`);
+    const opening = await routeTurn({
+      context,
+      frame: null,
+      message: journey.opening,
+      turnIndex: turnIndex++,
+    });
+    context = opening.decision.nextContext;
+
+    const booking = await routeTurn({
+      context,
+      frame: null,
+      message: "我要預約諮詢",
+      turnIndex: turnIndex++,
+    });
+    context = booking.decision.nextContext;
+    let state = context.conversationV2State;
+    assert.ok(state, `J8 ${journey.treatmentKey}: booking state must exist`);
+    assert.equal(state.bookingTask.status, "collecting");
+    assert.deepEqual(state.bookingTask.draft.treatmentKeys, [journey.treatmentKey]);
+    assert.equal(state.bookingTask.expectedField, "branch");
+
+    for (const [message, expectedField] of [
+      ["高雄館", "time_slots"],
+      ["平日上午、週三下午、週六上午", "first_visit"],
+      ["初診", "name"],
+      ["王小美", "phone"],
+    ] as const) {
+      const step = await routeTurn({
+        context,
+        frame: null,
+        message,
+        turnIndex: turnIndex++,
+      });
+      context = step.decision.nextContext;
+      state = context.conversationV2State;
+      assert.ok(state, `J8 ${journey.treatmentKey}: state missing after ${message}`);
+      assert.equal(state.bookingTask.status, "collecting", `J8 ${message}`);
+      assert.equal(state.bookingTask.expectedField, expectedField, `J8 ${message}`);
+      assert.equal(step.toolRequest?.type, "persist_booking_progress", `J8 ${message}`);
+    }
+
+    const completed = await routeTurn({
+      context,
+      frame: null,
+      message: "0912345678",
+      turnIndex: turnIndex++,
+    });
+    state = completed.decision.nextContext.conversationV2State;
+    assert.ok(state);
+    assert.equal(state.bookingTask.status, "completed");
+    assert.equal(state.bookingTask.expectedField, undefined);
+    assert.equal(state.bookingTask.draft.name, "王小美");
+    assert.equal(state.bookingTask.draft.phone, "0912345678");
+    assert.equal(state.bookingTask.draft.branch, "高雄館");
+    assert.equal(state.bookingTask.draft.timeSlots.length, 3);
+    assert.equal(completed.toolRequest?.type, "persist_booking_progress");
+    assert.match(completed.decision.replyText, /真人客服|接續確認/u);
+  }
+  console.log("PASS: J8 ONDA/Botox complete booking journeys");
 }
 
 function summarize(label: string, message: string, decision: { matchedKey: string; replyText: string }) {
@@ -2291,6 +2991,12 @@ async function main() {
   await validateCurrentTextNegationOwnsPolarity();
   await validatePricingOwnership();
   await validateStaleOverviewStartsFreshEpisode();
+  await validateExplicitRestartForAcceptanceTreatments();
+  await validateThirtyMinuteEpisodeBoundary();
+  await validateBotoxAcceptanceJourney();
+  await validateMondayConsultationCtaJourneys();
+  await validateMondayNaturalInputFamilies();
+  await validateMondayCompleteBookingJourneys();
   console.log("Conversation V2 journey validation passed");
 }
 
