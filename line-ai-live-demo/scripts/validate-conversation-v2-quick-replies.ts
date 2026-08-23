@@ -60,6 +60,13 @@ function validateOndaChoices() {
     treatmentKeys: ["onda_pro"],
   }), state);
   assert.deepEqual(labels(followup.quickReplyItems), ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"]);
+
+  state.knowledge.concernKeys = ["local_contour"];
+  const bodyFollowup = withConversationV2QuickReplies(plan({
+    dialogueAct: "answer_followup",
+    treatmentKeys: ["onda_pro"],
+  }), state);
+  assert.deepEqual(labels(bodyFollowup.quickReplyItems), ["手臂", "腹部／腰側", "大腿／臀部", "預約免費諮詢"]);
 }
 
 function validateBotoxChoices() {
@@ -73,7 +80,28 @@ function validateBotoxChoices() {
     dialogueAct: "answer_followup",
     treatmentKeys: ["botox"],
   }), state);
-  assert.deepEqual(labels(followup.quickReplyItems), ["品牌差異", "價格／活動", "預約免費諮詢", "真人客服協助"]);
+  assert.deepEqual(labels(followup.quickReplyItems), ["臉型偏寬", "咬肌緊繃", "價格／活動", "預約免費諮詢"]);
+
+  state.knowledge.concernKeys = ["dynamic_wrinkles"];
+  const wrinklesFollowup = withConversationV2QuickReplies(plan({
+    dialogueAct: "answer_followup",
+    treatmentKeys: ["botox"],
+  }), state);
+  assert.deepEqual(labels(wrinklesFollowup.quickReplyItems), ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"]);
+
+  state.knowledge.concernKeys = ["muscle_contour"];
+  const muscleFollowup = withConversationV2QuickReplies(plan({
+    dialogueAct: "answer_followup",
+    treatmentKeys: ["botox"],
+  }), state);
+  assert.deepEqual(labels(muscleFollowup.quickReplyItems), ["肌肉線條", "緊繃感", "價格／活動", "預約免費諮詢"]);
+
+  state.knowledge.concernKeys = ["localized_sweating"];
+  const sweatingFollowup = withConversationV2QuickReplies(plan({
+    dialogueAct: "answer_followup",
+    treatmentKeys: ["botox"],
+  }), state);
+  assert.deepEqual(labels(sweatingFollowup.quickReplyItems), ["腋下多汗", "手汗", "價格／活動", "預約免費諮詢"]);
 }
 
 function validateBookingChoicesAndPayload() {
@@ -267,6 +295,52 @@ async function validateFinalWebhookPayload() {
     quickReplyLabelsFromPayload(bookingPayload.messages),
     ["高雄館", "台中館", "桃園館", "林口館"],
     "booking branch choices must survive V2 route, renderer, and webhook formatting",
+  );
+
+  const followupUserId = `${userId}-followup`;
+  const botoxOverviewFrame: NluFrame = {
+    ...overviewFrame,
+    treatments: ["botox"],
+  };
+  const dynamicWrinklesFrame: NluFrame = {
+    areas: ["face"],
+    confidence: 0.99,
+    concerns: [{ area: "face", key: "dynamic_wrinkles" }],
+    dialogue: { focus: "benefits", move: "continue", reference: "explicit", speechAct: "ask_concern" },
+    intents: ["treatment_consultation"],
+    negated: [],
+    safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+    schemaVersion: 2,
+    treatments: ["botox"],
+  };
+  const routeFollowupJourney = async (input: Parameters<typeof routeConversationV2Canary>[0]) =>
+    routeConversationV2Canary(input, {
+      factsProvider: createStaticClinicFactsProvider(),
+      getCanarySettings: () => ({ allowlistedUserIds: [followupUserId], mode: "canary" as const }),
+      requestFrame: async (message) => ({
+        errorCode: null,
+        frame: message.includes("動態紋") ? dynamicWrinklesFrame : botoxOverviewFrame,
+        latencyMs: 1,
+        model: "fixture",
+        promptVersion: "fixture",
+        tokensIn: 1,
+        tokensOut: 1,
+      }),
+    });
+  await processWebhookRequestBody(
+    webhookEvent({ id: "v2-botox-open", message: "我想了解肉毒", userId: followupUserId }),
+    { includePending: false, routeConversationV2: routeFollowupJourney },
+  );
+  const dynamicWrinkles = await processWebhookRequestBody(
+    webhookEvent({ id: "v2-botox-wrinkles", message: "我想改善動態紋", userId: followupUserId }),
+    { includePending: false, routeConversationV2: routeFollowupJourney },
+  );
+  const dynamicPayload = dynamicWrinkles.results[0]?.replyPayload;
+  assert.ok(dynamicPayload, "the final webhook payload must exist for an understood Botox concern");
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(dynamicPayload.messages),
+    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+    "an understood Botox concern must receive its own state-driven next-step buttons in the final LINE payload",
   );
 
   const flexPlan = legacyDecisionToReplyPlan({

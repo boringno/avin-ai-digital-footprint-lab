@@ -54,10 +54,17 @@ export function conversationV2QuickReplyItems(
   const guide = findTreatmentByKey(treatmentKeys[0])?.consultationGuide;
   const customerChoices = guide?.customerQuickReplies ?? [];
   const stage = state.knowledge.concernKeys.length > 0 ? "followup" : "initial";
-  const actions = customerChoices.filter((choice) =>
-    choice.stage === stage &&
-    (!choice.concernKeys?.length || choice.concernKeys.some((key) => state.knowledge.concernKeys.includes(key))),
+  const stagedChoices = customerChoices.filter((choice) => choice.stage === stage);
+  const concernChoices = stagedChoices.filter((choice) =>
+    choice.concernKeys?.some((key) => state.knowledge.concernKeys.includes(key)),
   );
+  // Once the customer has told us their concern, offer the next useful
+  // decision for that concern.  Generic choices remain the fallback for an
+  // unqualified treatment question, rather than crowding out this turn's
+  // follow-up question on a small LINE screen.
+  const actions = concernChoices.length > 0
+    ? concernChoices
+    : stagedChoices.filter((choice) => !choice.concernKeys?.length);
   return lineQuickReplyItems(actions.slice(0, 4));
 }
 
