@@ -1,4 +1,4 @@
-import type { LineReplyMessage } from "@/lib/treatment-carousel";
+import type { LineQuickReplyItem, LineReplyMessage } from "@/lib/treatment-carousel";
 import {
   cloneResponseContractAttachment,
   createOffResponseContract,
@@ -57,6 +57,7 @@ export type ReplyPlan = {
   knownNeeds: string[];
   knowledgeSource: ReplyKnowledgeSource;
   prohibitedClaims: string[];
+  quickReplyItems: LineQuickReplyItem[];
   recommendationReasons: string[];
   renderMode: ReplyRenderMode;
   responseContract: ResponseContractAttachment;
@@ -91,6 +92,7 @@ export type LegacyReplyPlanOptions = {
   knownNeeds?: readonly string[];
   knowledgeSource?: ReplyKnowledgeSource;
   prohibitedClaims?: readonly string[];
+  quickReplyItems?: readonly LineQuickReplyItem[];
   recommendationReasons?: readonly string[];
   renderMode?: ReplyRenderMode;
   responseContract?: ResponseContractAttachment;
@@ -251,6 +253,7 @@ export function legacyDecisionToReplyPlan(
     knownNeeds: normalizeStrings(options.knownNeeds),
     knowledgeSource: options.knowledgeSource ?? "legacy_catalog",
     prohibitedClaims: normalizeStrings(options.prohibitedClaims ?? DEFAULT_PROHIBITED_CLAIMS),
+    quickReplyItems: [...(options.quickReplyItems ?? [])],
     recommendationReasons: normalizeStrings(options.recommendationReasons),
     renderMode: hardDeterministic ? "deterministic" : options.renderMode ?? "generated",
     responseContract: cloneResponseContractAttachment(

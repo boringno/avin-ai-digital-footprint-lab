@@ -48,6 +48,7 @@ import { adaptNluFrameToConversationV2Turn } from "./nlu-adapter";
 import { resolveDeterministicNegationGuard } from "./deterministic-negation";
 import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { resolveTreatmentClarification } from "./treatment-clarification";
+import { withConversationV2QuickReplies } from "./quick-replies";
 import { hasConversationEpisodeExpired } from "./episode-policy";
 import { routeConversationTurnV2 } from "./engine";
 import {
@@ -951,7 +952,7 @@ export async function routeConversationV2Canary(
       turnId,
     });
     if (bookingEpisodeBoundary) {
-      const replyPlan = legacyDecisionToReplyPlan({
+      const replyPlan = withConversationV2QuickReplies(legacyDecisionToReplyPlan({
         decisionType: "booking_intake_reply",
         matchedKey: bookingEpisodeBoundary.matchedKey,
         matchedType: "config",
@@ -961,7 +962,7 @@ export async function routeConversationV2Canary(
         fallbackText: bookingEpisodeBoundary.replyText,
         renderMode: "deterministic",
         requiresHuman: false,
-      });
+      }), bookingEpisodeBoundary.state);
       return {
         dataStatus: "ready",
         decision: {
@@ -1103,7 +1104,9 @@ export async function routeConversationV2Canary(
           resolveDoctorSchedule: ({ message, now }) =>
             resolveDoctorScheduleDecision({ fallbackReply: "", message, today: now }),
         });
-        const deterministicPlan = deterministicHydrated.rendererPlan;
+        const deterministicPlan = deterministicHydrated.rendererPlan
+          ? withConversationV2QuickReplies(deterministicHydrated.rendererPlan, deterministicRouted.nextState)
+          : null;
         if (deterministicPlan) {
           return {
             aiModel: nlu?.model,
@@ -1301,7 +1304,9 @@ export async function routeConversationV2Canary(
     const committedState = hydrated.stateCommit === "commit"
       ? routed.nextState
       : recordConversationV2TurnReceipt(state, turn.turnId, turn.receivedAt);
-    const rendererPlan = hydrated.rendererPlan;
+    const rendererPlan = hydrated.rendererPlan
+      ? withConversationV2QuickReplies(hydrated.rendererPlan, committedState)
+      : null;
     if (!rendererPlan) {
       return {
         aiModel: nlu.model,

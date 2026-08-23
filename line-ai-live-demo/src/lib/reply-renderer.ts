@@ -322,6 +322,7 @@ function buildMessages(
   return attachApprovedQuickReplies(
     appendFooter(baseMessages, footer, includeFooter, plan.suppressAiFooter),
     replyText,
+    plan.quickReplyItems,
   );
 }
 
