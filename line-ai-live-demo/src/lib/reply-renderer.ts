@@ -15,6 +15,7 @@ import {
 } from "@/lib/reply-plan";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { addCustomerReplyTone } from "@/lib/reply-tone";
+import { attachApprovedQuickReplies } from "@/lib/line-quick-replies";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 
 export type ReplyGenerator = (
@@ -318,7 +319,10 @@ function buildMessages(
   const baseMessages = plan.richMessages.length > 0
     ? formatReplyMessages(plan.richMessages)
     : [{ type: "text", text: replyText } satisfies LineTextMessage];
-  return appendFooter(baseMessages, footer, includeFooter, plan.suppressAiFooter);
+  return attachApprovedQuickReplies(
+    appendFooter(baseMessages, footer, includeFooter, plan.suppressAiFooter),
+    replyText,
+  );
 }
 
 export function buildRendererTerminalFallbackMessages(

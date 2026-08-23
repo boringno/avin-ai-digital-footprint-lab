@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { ConversationInboxData, ConversationInboxItem } from "@/lib/admin-conversation-inbox-data";
+import type { WorkbenchConversationDetail } from "@/lib/admin-workbench-data";
 import { useChatTimelineScroll } from "@/hooks/use-chat-timeline-scroll";
 
 type ControlAction = "" | "mark_human_active" | "resume_ai";
@@ -216,6 +217,19 @@ export function ConversationInboxClient({ initialData, staffName }: { initialDat
                   <article key={message.id} style={{ ...messageStyle, ...(message.direction === "customer" ? customerMessageStyle : message.direction === "staff" ? staffMessageStyle : aiMessageStyle) }}>
                     <strong>{message.direction === "customer" ? "客人" : message.direction === "staff" ? message.staffName ? `真人客服・${message.staffName}` : "真人客服" : message.direction === "ai" ? "AI 客服" : "系統"}</strong>
                     <span style={{ whiteSpace: "pre-wrap" }}>{message.content}</span>
+                    {message.decisionTrace ? (
+                      <details style={decisionTraceStyle}>
+                        <summary style={decisionTraceSummaryStyle}>{formatDecisionTraceSummary(message.decisionTrace)}</summary>
+                        <dl style={decisionTraceGridStyle}>
+                          {decisionTraceRows(message.decisionTrace).map(([label, value]) => (
+                            <div key={label} style={decisionTraceRowStyle}>
+                              <dt style={decisionTraceLabelStyle}>{label}</dt>
+                              <dd style={decisionTraceValueStyle}>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </details>
+                    ) : null}
                     <small>{formatTime(message.createdAt)}</small>
                   </article>
                 ))}
@@ -258,6 +272,38 @@ function maskLineUserId(lineUserId: string) {
   return lineUserId.length <= 8 ? "LINE 身分：已同步" : `LINE ID：${lineUserId.slice(0, 2)}…${lineUserId.slice(-4)}`;
 }
 
+function formatDecisionTraceSummary(trace: NonNullable<WorkbenchConversationDetail["messages"][number]["decisionTrace"]>) {
+  const route = trace.routeVersion?.toUpperCase() ?? "未標記版本";
+  const action = trace.policyAction ?? trace.decisionType ?? trace.matchedKey ?? "未記錄 action";
+  return `決策路徑 · ${route} · ${action}`;
+}
+
+function decisionTraceRows(trace: NonNullable<WorkbenchConversationDetail["messages"][number]["decisionTrace"]>) {
+  const rows: Array<[string, string]> = [];
+  addDecisionTraceRow(rows, "路由", trace.routeVersion?.toUpperCase());
+  addDecisionTraceRow(rows, "Policy action", trace.policyAction);
+  addDecisionTraceRow(rows, "Decision", trace.decisionType);
+  addDecisionTraceRow(rows, "Matched key", trace.matchedKey);
+  addDecisionTraceRow(rows, "NLU", formatNluTrace(trace.nluStatus, trace.nluConfidence));
+  addDecisionTraceRow(rows, "Tool", trace.toolRequestType);
+  addDecisionTraceRow(rows, "Renderer", trace.rendererMode);
+  addDecisionTraceRow(rows, "文字來源", trace.replyTextSource);
+  addDecisionTraceRow(rows, "Fallback", trace.fallbackReason);
+  if (trace.guardReplacedText !== null) {
+    rows.push(["Guard 替換", trace.guardReplacedText ? "是" : "否"]);
+  }
+  return rows;
+}
+
+function addDecisionTraceRow(rows: Array<[string, string]>, label: string, value: string | null | undefined) {
+  if (value) rows.push([label, value]);
+}
+
+function formatNluTrace(status: string | null, confidence: number | null) {
+  const confidenceText = confidence === null ? "" : ` ${(confidence * 100).toFixed(0)}%`;
+  return status ? `${status}${confidenceText}` : confidence === null ? null : confidenceText.trim();
+}
+
 const panelStyle = { background: "#fff", border: "1px solid #d4e2dc", borderRadius: 18, padding: 16 } satisfies React.CSSProperties;
 const layoutStyle = { alignItems: "start", display: "grid", gap: 14, gridTemplateColumns: "minmax(280px, 0.7fr) minmax(0, 1.5fr)" } satisfies React.CSSProperties;
 const searchPanelStyle = { alignItems: "center", background: "#fff", border: "1px solid #d4e2dc", borderRadius: 16, display: "flex", flexWrap: "wrap", gap: 8, padding: 12 } satisfies React.CSSProperties;
@@ -287,3 +333,9 @@ const aiMessageStyle = { background: "#e6f1f8", justifySelf: "start" } satisfies
 const composerStyle = { borderTop: "1px solid #dce9e3", display: "grid", gap: 8, paddingTop: 14 } satisfies React.CSSProperties;
 const errorStyle = { background: "#fff0ef", border: "1px solid #f3b8b3", borderRadius: 10, color: "#9f3025", padding: 12 } satisfies React.CSSProperties;
 const compactBackButtonStyle = { alignItems: "center", background: "transparent", border: 0, color: "#176d49", cursor: "pointer", display: "inline-flex", font: "inherit", fontWeight: 700, justifySelf: "start", minHeight: 40, padding: "4px 0" } satisfies React.CSSProperties;
+const decisionTraceStyle = { background: "rgba(255,255,255,0.7)", border: "1px solid rgba(70,105,94,0.18)", borderRadius: 8, fontSize: 12, padding: "6px 8px" } satisfies React.CSSProperties;
+const decisionTraceSummaryStyle = { color: "#365f52", cursor: "pointer", fontWeight: 700 } satisfies React.CSSProperties;
+const decisionTraceGridStyle = { display: "grid", gap: 4, margin: "8px 0 0" } satisfies React.CSSProperties;
+const decisionTraceRowStyle = { display: "grid", gap: 8, gridTemplateColumns: "88px minmax(0, 1fr)" } satisfies React.CSSProperties;
+const decisionTraceLabelStyle = { color: "#647b73", margin: 0 } satisfies React.CSSProperties;
+const decisionTraceValueStyle = { color: "#183c31", margin: 0, overflowWrap: "anywhere" } satisfies React.CSSProperties;
