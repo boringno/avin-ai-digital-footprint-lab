@@ -175,6 +175,170 @@ async function validateHydratedFallbackIsCustomerSafe() {
   );
 }
 
+/** A combination relationship needs one approved explanation, not duplicate copy on both packs. */
+async function validateApprovedCombinationDoesNotBecomeADataGap() {
+  const now = new Date("2026-08-24T12:00:00+08:00");
+  const at = now.toISOString();
+  const snapshot = await createStaticClinicFactsProvider({
+    pricingCampaigns: [{
+      approval_status: "approved",
+      asset_urls: "",
+      booking_treatments: "ONDA PRO|肉毒",
+      branch_scope: "all",
+      campaign_aliases: "ONDA雙下巴|ONDA嘴邊肉|12,999",
+      campaign_name: "臉部輪廓組合",
+      customer_price_approval_status: "approved",
+      customer_price_text: "ONDA＋肉毒小臉組合 12,999 元",
+      end_date: "2026-08-31",
+      fallback_message: "",
+      id: "promo-2026-08-face-contour-combo",
+      is_active: "true",
+      notes: "validator",
+      price_text: "internal",
+      start_date: "2026-08-01",
+      treatment_name: "臉部輪廓組合",
+    }],
+  })
+    .loadSnapshot({ now, tenantId: "tenant_001" });
+  const state = createConversationV2State({ episodeId: "episode-combination", now: at });
+  state.knowledge.treatmentKeys = ["onda_pro"];
+  state.knowledge.concernKeys = ["jawline_looseness"];
+  state.activeTask = {
+    id: "episode-combination:seed",
+    kind: "learn_treatment",
+    startedAt: at,
+    subjectKey: "treatment:onda_pro",
+  };
+  const turn: TurnUnderstanding = {
+    areas: [],
+    concerns: [],
+    confidence: 0.99,
+    conversationMove: "compare",
+    dialogueReference: "active_subject",
+    questionAspect: "single_vs_combination",
+    receivedAt: at,
+    speechAct: "ask_treatment_detail",
+    text: "ONDA＋肉毒小臉組合呢",
+    treatments: [
+      { confidence: 0.99, key: "onda_pro", polarity: "affirmed", resolution: "resolved" },
+      { confidence: 0.99, key: "botox", polarity: "affirmed", resolution: "resolved" },
+    ],
+    turnId: "combination-1",
+  };
+  const routed = routeConversationTurnV2(state, turn);
+  assert.ok(routed.result, "an approved combination selection must route");
+  const hydrated = await hydrateConversationV2ReplyPlan({
+    nextState: routed.nextState,
+    result: routed.result,
+    snapshot,
+    turn,
+  });
+  assert.equal(
+    hydrated.treatmentResolution?.requestedDataGaps.length,
+    0,
+    "approved guidance from one side of a combination must satisfy the relationship",
+  );
+  assert.equal(
+    hydrated.toolRequest,
+    undefined,
+    "an approved ONDA plus Botox combination must not request fact confirmation",
+  );
+  assert.doesNotMatch(
+    hydrated.rendererPlan?.fallbackText ?? "",
+    /目前核准資料還沒有|搭配差異/u,
+    "customer-visible combination copy must not claim approved guidance is missing",
+  );
+  assert.match(
+    hydrated.rendererPlan?.fallbackText ?? "",
+    /12,999/u,
+    "an approved combination selection must include its current approved plan price",
+  );
+  assert.ok(hydrated.rendererPlan, "an approved combination must produce a renderer plan");
+  const rendered = await renderReplyPlan({
+    customerMessage: turn.text,
+    dialogueState: {
+      answeredTopics: [],
+      areaKeys: ["jawline"],
+      bookingAction: null,
+      bookingIntent: "none",
+      concernKeys: ["jawline_looseness"],
+      dialogueAct: "compare_options",
+      episodeId: state.episodeId,
+      handoffStatus: "ai_active",
+      knownNeeds: [{ key: "jawline_looseness", kind: "concern", source: "explicit" }],
+      lastTransitionAt: at,
+      primaryConcernKey: "jawline_looseness",
+      schemaVersion: 1,
+      topic: "treatment",
+      treatmentKeys: ["onda_pro", "botox"],
+    },
+    generator: async () => null,
+    includeFooter: false,
+    plan: hydrated.rendererPlan,
+    recentTurns: [],
+  });
+  assert.match(
+    rendered.replyText,
+    /12,999/u,
+    "the final renderer guard must preserve the approved combination price",
+  );
+}
+
+/** An explicit new treatment owns the answer; the previous treatment must not leak into it. */
+async function validateExplicitTreatmentSwitchScopesBrandAnswer() {
+  const now = new Date("2026-08-24T12:05:00+08:00");
+  const at = now.toISOString();
+  const snapshot = await createStaticClinicFactsProvider()
+    .loadSnapshot({ now, tenantId: "tenant_001" });
+  const state = createConversationV2State({ episodeId: "episode-brand-switch", now: at });
+  state.knowledge.treatmentKeys = ["onda_pro"];
+  state.knowledge.concernKeys = ["jawline_looseness"];
+  state.activeTask = {
+    id: "episode-brand-switch:onda",
+    kind: "learn_treatment",
+    startedAt: at,
+    subjectKey: "treatment:onda_pro",
+  };
+  const turn: TurnUnderstanding = {
+    areas: [],
+    concerns: [],
+    confidence: 0.99,
+    conversationMove: "continue",
+    dialogueReference: "active_subject",
+    questionAspect: "brands",
+    receivedAt: at,
+    speechAct: "ask_treatment_detail",
+    text: "肉毒有哪些品牌",
+    treatments: [
+      { confidence: 0.99, key: "botox", polarity: "affirmed", resolution: "resolved" },
+    ],
+    turnId: "brand-switch-1",
+  };
+  const routed = routeConversationTurnV2(state, turn);
+  assert.ok(routed.result, "an explicit Botox brand question must route");
+  assert.deepEqual(
+    routed.nextState.knowledge.treatmentKeys,
+    ["botox"],
+    "an explicit treatment switch must replace the active treatment owner",
+  );
+  assert.deepEqual(
+    routed.nextState.knowledge.concernKeys,
+    [],
+    "the previous ONDA concern must not contaminate a new Botox brand question",
+  );
+  const hydrated = await hydrateConversationV2ReplyPlan({
+    nextState: routed.nextState,
+    result: routed.result,
+    snapshot,
+    turn,
+  });
+  assert.doesNotMatch(
+    `${hydrated.rendererPlan?.fallbackText ?? ""}\n${hydrated.rendererPlan?.approvedFacts.join("\n") ?? ""}`,
+    /ONDA/u,
+    "the Botox brand answer contract must not include the previous ONDA topic",
+  );
+}
+
 /**
  * C: booking intent is parsed deterministically, so it must not depend on the model.
  * "我要預約諮詢" has to be an explicit create; "怎麼預約" is only a question and must
@@ -187,6 +351,9 @@ function validateBookingSpeechActIsDeterministic() {
     ["怎麼預約", "inquiry"],
     ["怎麼取消", "inquiry"],
     ["我要改預約", "modify"],
+    ["先不用預約", "decline"],
+    ["先不用字約", "decline"],
+    ["我們重新跑一次預約流程", "create"],
     ["我只是想了解，不是要預約", "none"],
   ];
   for (const [message, expected] of cases) {
@@ -266,6 +433,8 @@ async function main() {
       throw error;
     }
   })();
+  await validateApprovedCombinationDoesNotBecomeADataGap();
+  await validateExplicitTreatmentSwitchScopesBrandAnswer();
   await (async () => {
     try {
       await validateHydratedFallbackIsCustomerSafe();

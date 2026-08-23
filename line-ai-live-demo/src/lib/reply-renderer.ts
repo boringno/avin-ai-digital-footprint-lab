@@ -393,8 +393,12 @@ function escapeRegExp(value: string) {
 function maskApprovedPriceClaims(candidate: string, exactPriceFacts: readonly string[]) {
   let masked = candidate;
   let maskedAnyFact = false;
-  for (const fact of exactPriceFacts) {
-    const normalizedFact = formatReplyText(fact);
+  const approvedForms = Array.from(new Set(exactPriceFacts.flatMap((fact) => {
+    const normalized = formatReplyText(fact);
+    const customerValue = normalized.replace(/^核准價格\s*[：:]\s*/u, "");
+    return [normalized, customerValue].filter(Boolean);
+  })));
+  for (const normalizedFact of approvedForms) {
     if (!normalizedFact) continue;
     const next = masked.replace(new RegExp(escapeRegExp(normalizedFact), "gu"), "__APPROVED_PRICE_FACT__");
     maskedAnyFact ||= next !== masked;

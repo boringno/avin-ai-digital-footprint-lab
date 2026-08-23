@@ -317,7 +317,7 @@ function bookingFieldPrompt(field: BookingField) {
     change_request: "這次想更改哪項內容？例如日期時段、館別或療程。",
     first_visit: "請問是第一次到診嗎？",
     name: "請問怎麼稱呼您？",
-    phone: "請留下方便聯絡的電話。",
+    phone: "請留下台灣手機號碼，例如：0912-345-678。",
     time_slots: "請提供三個方便的日期與時段。",
     treatment: "想預約了解哪一項療程或困擾呢？",
   };
