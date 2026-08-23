@@ -49,6 +49,7 @@ import { resolveDeterministicNegationGuard } from "./deterministic-negation";
 import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { resolveTreatmentClarification } from "./treatment-clarification";
 import { withConversationV2QuickReplies } from "./quick-replies";
+import { resolveConversationV2QuickReplySelection } from "./quick-reply-selection";
 import { hasConversationEpisodeExpired } from "./episode-policy";
 import { routeConversationTurnV2 } from "./engine";
 import {
@@ -139,9 +140,22 @@ function resolveBookingEpisodeBoundary(input: {
   const asksOtherFirst =
     input.state.bookingTask.status === "suspended" &&
     ASK_OTHER_FIRST_PATTERN.test(normalized);
+  const activeConsultationTreatmentKeys = input.state.activeTask.kind === "pricing"
+    ? input.state.pricingSubjectTreatmentKeys
+    : input.state.knowledge.treatmentKeys;
+  const declinesActiveConsultation =
+    input.state.bookingTask.status === "inactive" &&
+    (
+      ["answer_concern", "learn_treatment"].includes(input.state.activeTask.kind) ||
+      input.state.activeTask.kind === "pricing"
+    ) &&
+    activeConsultationTreatmentKeys.length > 0;
   const declinesBooking =
-    ["collecting", "suspended"].includes(input.state.bookingTask.status) &&
-    classifyBookingSpeechAct(input.message) === "decline";
+    classifyBookingSpeechAct(input.message) === "decline" &&
+    (
+      ["collecting", "suspended"].includes(input.state.bookingTask.status) ||
+      declinesActiveConsultation
+    );
   const restartsBooking =
     ["collecting", "suspended", "completed"].includes(input.state.bookingTask.status) &&
     RESTART_BOOKING_PATTERN.test(normalized);
@@ -176,7 +190,18 @@ function resolveBookingEpisodeBoundary(input: {
       status: expectedField ? "collecting" : "completed",
     };
   } else if (expiredWhileCollecting || declinesBooking) {
-    next.bookingTask = { ...next.bookingTask, status: "suspended" };
+    next.bookingTask = declinesActiveConsultation
+      ? {
+          draft: {
+            timeSlots: [],
+            treatmentKeys: [...activeConsultationTreatmentKeys],
+          },
+          expectedField: "branch",
+          id: `${next.episodeId}:${input.turnId}:booking-paused`,
+          intent: "create",
+          status: "suspended",
+        }
+      : { ...next.bookingTask, status: "suspended" };
     if (declinesBooking) {
       const treatmentKeys = next.bookingTask.draft.treatmentKeys.length > 0
         ? next.bookingTask.draft.treatmentKeys
@@ -986,6 +1011,11 @@ export async function routeConversationV2Canary(
         toolRequest: bookingProgressToolRequest(bookingEpisodeBoundary.state),
       };
     }
+    const quickReplySelection = resolveConversationV2QuickReplySelection({
+      clinic: snapshot.clinic,
+      message: routingMessage,
+      state,
+    });
     const nlu = await (dependencies.requestFrame ?? requestNluFrame)(routingMessage, {
       ontology: snapshot.ontology,
       recentTurns: input.recentTurns,
@@ -1037,7 +1067,7 @@ export async function routeConversationV2Canary(
       // trusted booking continuation was supplied.
       const semanticAnchor = trustedDeterministicBooking || negationGuard
         ? undefined
-        : resolveTrustedSemanticAnchor({
+        : quickReplySelection?.semanticAnchor ?? resolveTrustedSemanticAnchor({
             clinic: snapshot.clinic,
             message: routingMessage,
             ontology: snapshot.ontology,
@@ -1105,7 +1135,11 @@ export async function routeConversationV2Canary(
             resolveDoctorScheduleDecision({ fallbackReply: "", message, today: now }),
         });
         const deterministicPlan = deterministicHydrated.rendererPlan
-          ? withConversationV2QuickReplies(deterministicHydrated.rendererPlan, deterministicRouted.nextState)
+          ? withConversationV2QuickReplies(
+              deterministicHydrated.rendererPlan,
+              deterministicRouted.nextState,
+              { nextStage: quickReplySelection?.nextStage },
+            )
           : null;
         if (deterministicPlan) {
           return {
@@ -1221,7 +1255,7 @@ export async function routeConversationV2Canary(
           state,
         });
     const semanticAnchor = !rejectedExpectedTreatmentCandidate && !negationGuard
-      ? resolveTrustedSemanticAnchor({
+      ? quickReplySelection?.semanticAnchor ?? resolveTrustedSemanticAnchor({
           candidate: {
             questionAspect: nlu.frame.dialogue.focus,
             speechAct: nlu.frame.dialogue.speechAct,
@@ -1305,7 +1339,11 @@ export async function routeConversationV2Canary(
       ? routed.nextState
       : recordConversationV2TurnReceipt(state, turn.turnId, turn.receivedAt);
     const rendererPlan = hydrated.rendererPlan
-      ? withConversationV2QuickReplies(hydrated.rendererPlan, committedState)
+      ? withConversationV2QuickReplies(
+          hydrated.rendererPlan,
+          committedState,
+          { nextStage: quickReplySelection?.nextStage },
+        )
       : null;
     if (!rendererPlan) {
       return {

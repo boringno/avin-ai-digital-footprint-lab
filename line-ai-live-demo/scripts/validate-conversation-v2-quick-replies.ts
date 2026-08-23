@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { buildReplyPayload, processWebhookRequestBody } from "@/lib/line-webhook";
 import type { PriceCatalogEntry } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
+import { clinicConfig } from "@/lib/clinic-config";
 import { withConversationV2QuickReplies } from "@/lib/conversation-v2/quick-replies";
+import { resolveConversationV2QuickReplySelection } from "@/lib/conversation-v2/quick-reply-selection";
 import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
 import { createConversationV2State } from "@/lib/conversation-v2/state";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
@@ -24,6 +26,24 @@ const ONDA_PRICE: PriceCatalogEntry = {
   end_date: "2026-08-31",
   fallback_message: "",
   id: "quick-replies-onda-price",
+  is_active: "true",
+  notes: "validator",
+  price_text: "internal",
+  start_date: "2026-08-01",
+  treatment_name: "ONDA PRO",
+};
+
+const ONDA_BOTOX_COMBO_PRICE: PriceCatalogEntry = {
+  approval_status: "approved",
+  asset_urls: "",
+  branch_scope: "all",
+  campaign_aliases: "ONDA＋肉毒小臉組合|臉部輪廓組合",
+  campaign_name: "ONDA＋肉毒小臉組合",
+  customer_price_approval_status: "approved",
+  customer_price_text: "組合價 12,999 元",
+  end_date: "2026-08-31",
+  fallback_message: "",
+  id: "promo-2026-08-face-contour-combo",
   is_active: "true",
   notes: "validator",
   price_text: "internal",
@@ -102,6 +122,30 @@ function validateBotoxChoices() {
     treatmentKeys: ["botox"],
   }), state);
   assert.deepEqual(labels(sweatingFollowup.quickReplyItems), ["腋下多汗", "手汗", "價格／活動", "預約免費諮詢"]);
+}
+
+function validateEveryConfiguredSemanticChoiceResolves() {
+  for (const treatment of clinicConfig.treatmentList) {
+    for (const choice of treatment.consultationGuide?.customerQuickReplies ?? []) {
+      if (!choice.semantic) continue;
+      const state = createConversationV2State({
+        episodeId: `semantic-choice-${treatment.key}`,
+        now: NOW,
+      });
+      state.knowledge.treatmentKeys = [treatment.key];
+      state.knowledge.concernKeys = [...(choice.concernKeys ?? [])];
+      const resolved = resolveConversationV2QuickReplySelection({
+        clinic: clinicConfig,
+        message: choice.text,
+        state,
+      });
+      assert.ok(
+        resolved,
+        `${treatment.key}/${choice.stage}/${choice.label} must resolve to one trusted semantic choice`,
+      );
+      assert.equal(resolved.nextStage, choice.nextStage);
+    }
+  }
 }
 
 function validateBookingChoicesAndPayload() {
@@ -193,6 +237,13 @@ function quickReplyLabelsFromPayload(messages: readonly LineReplyMessage[]) {
   return message?.quickReply?.items.map((item) => item.action.label) ?? [];
 }
 
+function visibleTextFromPayload(messages: readonly LineReplyMessage[]) {
+  return messages
+    .filter((item): item is LineTextMessage => item.type === "text")
+    .map((item) => item.text)
+    .join("\n");
+}
+
 function webhookEvent(input: { id: string; message: string; userId: string }) {
   return JSON.stringify({
     events: [{
@@ -204,6 +255,213 @@ function webhookEvent(input: { id: string; message: string; userId: string }) {
       webhookEventId: `event-${input.id}`,
     }],
   });
+}
+
+async function validateSemanticQuickReplyJourneys() {
+  const factsProvider = createStaticClinicFactsProvider({
+    pricingCampaigns: [ONDA_PRICE, ONDA_BOTOX_COMBO_PRICE],
+  });
+  const overviewFrame = (treatmentKey: "botox" | "onda_pro"): NluFrame => ({
+    areas: [],
+    confidence: 0.99,
+    concerns: [],
+    dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+    intents: ["treatment"],
+    negated: [],
+    safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+    schemaVersion: 2,
+    treatments: [treatmentKey],
+  });
+  const routeJourney = (userId: string) =>
+    async (input: Parameters<typeof routeConversationV2Canary>[0]) =>
+      routeConversationV2Canary(input, {
+        factsProvider,
+        getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+        requestFrame: async (message) => {
+          const treatmentKey = message === "ONDA"
+            ? "onda_pro" as const
+            : message === "我想了解肉毒"
+              ? "botox" as const
+              : undefined;
+          return {
+            errorCode: treatmentKey ? null : "nlu_unavailable",
+            frame: treatmentKey ? overviewFrame(treatmentKey) : null,
+            latencyMs: 1,
+            model: "fixture",
+            promptVersion: "fixture",
+            tokensIn: 1,
+            tokensOut: treatmentKey ? 1 : 0,
+          };
+        },
+      });
+  const send = async (input: { id: string; message: string; userId: string }) => {
+    const result = await processWebhookRequestBody(webhookEvent(input), {
+      includePending: false,
+      routeConversationV2: routeJourney(input.userId),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run during a semantic V2 quick-reply journey");
+      },
+    });
+    const payload = result.results[0]?.replyPayload;
+    assert.ok(payload, `missing LINE payload for ${input.message}`);
+    return payload;
+  };
+
+  const ondaUserId = `U-v2-semantic-onda-${Date.now()}`;
+  await send({ id: "semantic-onda-open", message: "ONDA", userId: ondaUserId });
+  const featuresUserId = `${ondaUserId}-features`;
+  await send({ id: "semantic-features-open", message: "ONDA", userId: featuresUserId });
+  const features = await send({
+    id: "semantic-onda-features",
+    message: "ONDA 療程特色",
+    userId: featuresUserId,
+  });
+  assert.match(visibleTextFromPayload(features.messages), /Coolwaves®.*冷卻控溫/us);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(features.messages),
+    ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
+  );
+  const jawline = await send({
+    id: "semantic-onda-jawline",
+    message: "我想改善雙下巴／嘴邊肉",
+    userId: ondaUserId,
+  });
+  assert.match(visibleTextFromPayload(jawline.messages), /雙下巴.*脂肪肉感/us);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(jawline.messages),
+    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+  );
+
+  const fat = await send({
+    id: "semantic-onda-fat",
+    message: "脂肪堆積",
+    userId: ondaUserId,
+  });
+  assert.match(visibleTextFromPayload(fat.messages), /脂肪型困擾/u);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(fat.messages),
+    ["單做 ONDA", "ONDA＋肉毒組合", "價格／活動", "預約免費諮詢"],
+  );
+
+  const combination = await send({
+    id: "semantic-onda-combination",
+    message: "ONDA＋肉毒小臉組合",
+    userId: ondaUserId,
+  });
+  const combinationText = visibleTextFromPayload(combination.messages);
+  assert.match(combinationText, /ONDA Pro.*肉毒小臉/us);
+  assert.match(combinationText, /12,999/u);
+  assert.doesNotMatch(combinationText, /哪一項療程|剛剛沒有完整理解/u);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(combination.messages),
+    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+  );
+
+  const bodyUserId = `${ondaUserId}-body`;
+  await send({ id: "semantic-body-open", message: "ONDA", userId: bodyUserId });
+  const body = await send({
+    id: "semantic-body-concern",
+    message: "我想改善身體局部脂肪",
+    userId: bodyUserId,
+  });
+  assert.match(visibleTextFromPayload(body.messages), /身體局部脂肪/u);
+  const abdomen = await send({
+    id: "semantic-body-abdomen",
+    message: "我在意腹部／腰側脂肪",
+    userId: bodyUserId,
+  });
+  assert.match(visibleTextFromPayload(abdomen.messages), /局部脂肪厚度、線條與緊實需求/u);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(abdomen.messages),
+    ["價格／活動", "預約免費諮詢", "真人客服協助", "繼續詢問"],
+  );
+
+  const botoxUserId = `U-v2-semantic-botox-${Date.now()}`;
+  await send({ id: "semantic-botox-open", message: "我想了解肉毒", userId: botoxUserId });
+  const masseter = await send({
+    id: "semantic-botox-masseter",
+    message: "我想改善咀嚼肌／小臉",
+    userId: botoxUserId,
+  });
+  assert.match(visibleTextFromPayload(masseter.messages), /咀嚼肌.*臉型偏寬/us);
+  const faceWidth = await send({
+    id: "semantic-botox-face-width",
+    message: "臉型偏寬",
+    userId: botoxUserId,
+  });
+  const faceWidthText = visibleTextFromPayload(faceWidth.messages);
+  assert.match(faceWidthText, /咀嚼肌造成的下半臉偏寬/u);
+  assert.doesNotMatch(faceWidthText, /哪一項療程|剛剛沒有完整理解/u);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(faceWidth.messages),
+    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+  );
+}
+
+async function validatePriceDeclinePausesSameTreatmentInvitation() {
+  const userId = `U-v2-price-decline-${Date.now()}`;
+  const dependencies = {
+    factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: [ONDA_PRICE] }),
+    getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+    requestFrame: async (message: string) => ({
+      errorCode: message === "ONDA" ? null : "nlu_unavailable",
+      frame: message === "ONDA"
+        ? {
+            areas: [],
+            confidence: 0.99,
+            concerns: [],
+            dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+            intents: ["treatment"],
+            negated: [],
+            safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+            schemaVersion: 2,
+            treatments: ["onda_pro"],
+          } satisfies NluFrame
+        : null,
+      latencyMs: 1,
+      model: "fixture",
+      promptVersion: "fixture",
+      tokensIn: 1,
+      tokensOut: message === "ONDA" ? 1 : 0,
+    }),
+  };
+  let context = createEmptyConversationContext(userId);
+  const route = async (eventIdentity: string, message: string) => {
+    const result = await routeConversationV2Canary({
+      context,
+      eventIdentity,
+      message,
+      now: new Date(NOW),
+      sourceType: "user",
+      sourceUserId: userId,
+    }, dependencies);
+    assert.equal(result.kind, "routed");
+    context = result.decision.nextContext;
+    return result;
+  };
+
+  await route("price-decline-open", "ONDA");
+  const firstPrice = await route("price-decline-price-1", "ONDA 體驗價多少");
+  assert.ok(
+    labels(firstPrice.decision.replyPlan?.quickReplyItems ?? []).includes("預約免費諮詢"),
+    "an approved price may invite the first consultation step",
+  );
+  const declined = await route("price-decline-no", "先不用，暫時不預約");
+  assert.equal(
+    declined.decision.nextContext.conversationV2State?.bookingTask.status,
+    "suspended",
+    "declining after a price CTA must persist the paused same-treatment invitation",
+  );
+  assert.deepEqual(
+    declined.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+    ["onda_pro"],
+    "the paused invitation must retain the exact pricing subject",
+  );
+  const secondPrice = await route("price-decline-price-2", "ONDA 體驗價多少");
+  assert.ok(
+    !labels(secondPrice.decision.replyPlan?.quickReplyItems ?? []).includes("預約免費諮詢"),
+    "the same treatment must not repeat its booking invitation after a decline",
+  );
 }
 
 async function validateFinalWebhookPayload() {
@@ -402,9 +660,12 @@ async function validateFinalWebhookPayload() {
 async function main() {
   validateOndaChoices();
   validateBotoxChoices();
+  validateEveryConfiguredSemanticChoiceResolves();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
   await validateLiveRuntimeAttachesV2Choices();
+  await validateSemanticQuickReplyJourneys();
+  await validatePriceDeclinePausesSameTreatmentInvitation();
   await validateFinalWebhookPayload();
   console.log("Conversation V2 quick reply validation passed");
 }

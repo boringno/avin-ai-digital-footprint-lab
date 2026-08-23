@@ -10,7 +10,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const EXPECTED_COUNTS = {
   concern: 9,
-  detail: 18,
+  detail: 22,
   discovery: 3,
   discovery_fallback: 1,
   feature: 3,
@@ -80,6 +80,7 @@ function validateSourceCoverage(assets: readonly TreatmentReplyAsset[]) {
       const asset = treatmentAssets.find((candidate) => candidate.id === `treatment:${treatment.key}:detail:${detail.aspectKey}`);
       assert(asset?.customerCopy === detail.reply.trim(), `detail asset missing for ${treatment.key}:${detail.aspectKey}`);
       assert(asset?.followup === detail.followupPrompt.trim(), `detail followup lost for ${treatment.key}:${detail.aspectKey}`);
+      assert(asset?.priceRef === detail.pricingCampaignId, `detail price ref lost for ${treatment.key}:${detail.aspectKey}`);
       assert(JSON.stringify(asset?.behaviors ?? []) === JSON.stringify(detail.behaviors ?? []), `detail behaviors lost for ${treatment.key}:${detail.aspectKey}`);
       assert(JSON.stringify(asset?.terms ?? []) === JSON.stringify(detail.terms), `detail terms lost for ${treatment.key}:${detail.aspectKey}`);
     }
