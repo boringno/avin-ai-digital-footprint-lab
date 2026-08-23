@@ -96,6 +96,32 @@ async function validateDeterministicBypass() {
   });
   assert.equal(mixedPrice.fallbackReason, "deterministic_rejected", "RR1: an extra unapproved price must fail closed");
   assert.doesNotMatch(mixedPrice.replyText, /30,000/u, "RR1: an extra unapproved price must not reach LINE");
+
+  const labelledFactPlan = legacyDecisionToReplyPlan({
+    decisionType: "pricing_auto_reply",
+    matchedKey: "conversation_v2:price:approved_current",
+    matchedType: "pricing_campaign",
+    replyText: "ONDA PRO目前可參考：體驗價 16,888 元。\n全館適用。",
+  });
+  labelledFactPlan.exactPriceFacts = ["核准價格：體驗價 16,888 元", "全館適用"];
+  const labelledFact = await renderReplyPlan({
+    customerMessage: "ONDA體驗價多少",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: labelledFactPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    labelledFact.fallbackReason,
+    undefined,
+    "RR1: a customer-formatted price backed by a labelled approved fact must not be rejected",
+  );
+  assert.match(
+    labelledFact.replyText,
+    /ONDA PRO目前可參考：體驗價 16,888 元/u,
+    "RR1: the final LINE-visible reply must retain the approved ONDA price",
+  );
 }
 
 async function validateGeneratedReplyAndContext() {

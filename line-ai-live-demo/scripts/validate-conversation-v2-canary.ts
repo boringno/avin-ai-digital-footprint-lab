@@ -904,8 +904,12 @@ async function main() {
     check(assertion(parsed), `C21: only affirmed booking data may survive deterministic extraction: ${message}`);
   }
 
-  function pendingBookingFieldContext(expectedField: "name" | "phone") {
-    const context = createEmptyConversationContext(`U-pending-${expectedField}`);
+  function pendingBookingFieldContext(
+    expectedField: "name" | "phone",
+    userId = `U-pending-${expectedField}`,
+    status: "collecting" | "suspended" = "suspended",
+  ) {
+    const context = createEmptyConversationContext(userId);
     const v2State = createConversationV2State({
       episodeId: `fixture-pending-${expectedField}`,
       now: NOW.toISOString(),
@@ -921,7 +925,7 @@ async function main() {
       expectedField,
       id: `fixture-pending-${expectedField}:booking`,
       intent: "create",
-      status: "suspended",
+      status,
     };
     context.conversationV2State = v2State;
     return context;
@@ -1009,6 +1013,48 @@ async function main() {
       !phoneQuestionDuringBooking.decision.nextContext.conversationV2State?.bookingTask.draft.phone,
     "C21: a clinic phone question must not be persisted as the customer's awaited phone field",
   );
+
+  for (const [index, invalidPhone] of [
+    "07-1234567",
+    "02-2345-6789",
+    "0912-345-67",
+    "0912-345-6789",
+    "電話：09123",
+  ].entries()) {
+    const userId = `U-invalid-mobile-${index}`;
+    const invalidCounts = { nlu: 0, provider: 0 };
+    const invalidMobile = await routeConversationV2Canary({
+      context: pendingBookingFieldContext("phone", userId, "collecting"),
+      eventIdentity: `event-invalid-mobile-${index}`,
+      message: invalidPhone,
+      now: NOW,
+      sourceType: "user",
+      sourceUserId: userId,
+    }, {
+      factsProvider: countedProvider(createStaticClinicFactsProvider(), invalidCounts),
+      getCanarySettings: () => ({
+        allowlistedUserIds: [userId],
+        mode: "canary",
+      }),
+      requestFrame: async () => {
+        invalidCounts.nlu += 1;
+        throw new Error("invalid mobile submission must be handled before NLU");
+      },
+    });
+    assert.equal(invalidMobile.kind, "routed");
+    const invalidState = invalidMobile.decision.nextContext.conversationV2State;
+    check(
+      invalidMobile.decision.matchedKey === "conversation_v2:booking_invalid_mobile" &&
+        invalidMobile.decision.decisionType === "booking_intake_reply" &&
+        invalidMobile.decision.replyText.includes("0912-345-678") &&
+        invalidState?.bookingTask.status === "collecting" &&
+        invalidState.bookingTask.expectedField === "phone" &&
+        !invalidState.bookingTask.draft.phone &&
+        invalidCounts.provider === 1 &&
+        invalidCounts.nlu === 0,
+      `C21: an invalid landline or malformed mobile must request the correct mobile format: ${invalidPhone}`,
+    );
+  }
 
   function pendingModifyContext() {
     const context = createEmptyConversationContext("U-pending-modify");
@@ -1488,6 +1534,110 @@ async function main() {
       bookingName.decision.nextContext.conversationV2State?.bookingTask.expectedField === "phone",
     "C21: a strict bare-name reply is accepted only when NLU confirms the expected booking field",
   );
+
+  let declineNluCalls = 0;
+  const bookingDeclined = await routeConversationV2Canary({
+    context: bookingName.decision.nextContext,
+    eventIdentity: "event-book-decline",
+    message: "先不用預約",
+    now: new Date(NOW.getTime() + 2000),
+    sourceType: "user",
+    sourceUserId: "U-book",
+  }, {
+    factsProvider: createStaticClinicFactsProvider({ snapshotId: "booking-snapshot" }),
+    getCanarySettings: () => ({ allowlistedUserIds: ["U-book"], mode: "canary" }),
+    requestFrame: async () => {
+      declineNluCalls += 1;
+      return nluResult(frame());
+    },
+  });
+  assert.equal(bookingDeclined.kind, "routed");
+  check(
+    declineNluCalls === 0 &&
+      bookingDeclined.decision.matchedKey === "conversation_v2:booking_declined" &&
+      bookingDeclined.decision.nextContext.conversationV2State?.bookingTask.status === "suspended" &&
+      bookingDeclined.decision.replyText.includes("先不繼續預約") &&
+      !bookingDeclined.decision.replyText.includes("免費諮詢"),
+    "C22: declining an in-progress booking must suspend it briefly without another sales prompt or NLU call",
+  );
+
+  let restartNluCalls = 0;
+  const bookingRestarted = await routeConversationV2Canary({
+    context: bookingDeclined.decision.nextContext,
+    eventIdentity: "event-book-restart",
+    message: "我們重新跑一次預約流程",
+    now: new Date(NOW.getTime() + 3000),
+    sourceType: "user",
+    sourceUserId: "U-book",
+  }, {
+    factsProvider: createStaticClinicFactsProvider({ snapshotId: "booking-snapshot" }),
+    getCanarySettings: () => ({ allowlistedUserIds: ["U-book"], mode: "canary" }),
+    requestFrame: async () => {
+      restartNluCalls += 1;
+      return nluResult(frame());
+    },
+  });
+  assert.equal(bookingRestarted.kind, "routed");
+  check(
+    restartNluCalls === 0 &&
+      bookingRestarted.decision.matchedKey === "conversation_v2:booking_restarted" &&
+      bookingRestarted.decision.nextContext.conversationV2State?.bookingTask.status === "collecting" &&
+      bookingRestarted.decision.nextContext.conversationV2State?.bookingTask.expectedField === "branch" &&
+      bookingRestarted.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys.includes("onda_pro") &&
+      !bookingRestarted.decision.nextContext.conversationV2State?.bookingTask.draft.name &&
+      bookingRestarted.decision.replyText.includes("重新整理預約資料"),
+    "C23: an explicit restart must create a fresh booking flow while retaining the selected treatment",
+  );
+
+  const botoxBookingContext = structuredClone(bookingName.decision.nextContext);
+  const botoxBookingState = botoxBookingContext.conversationV2State;
+  assert.ok(botoxBookingState, "C24 fixture requires canonical booking state");
+  botoxBookingState.knowledge.treatmentKeys = ["botox"];
+  botoxBookingState.knowledge.concernKeys = ["masseter_contour"];
+  botoxBookingState.bookingTask.draft.treatmentKeys = ["botox"];
+  const botoxDeclined = await routeConversationV2Canary({
+    context: botoxBookingContext,
+    eventIdentity: "event-botox-book-decline",
+    message: "先不用預約",
+    now: new Date(NOW.getTime() + 4000),
+    sourceType: "user",
+    sourceUserId: "U-book",
+  }, {
+    factsProvider: createStaticClinicFactsProvider({ snapshotId: "booking-snapshot" }),
+    getCanarySettings: () => ({ allowlistedUserIds: ["U-book"], mode: "canary" }),
+    requestFrame: async () => { throw new Error("booking decline must bypass NLU"); },
+  });
+  assert.equal(botoxDeclined.kind, "routed");
+  const concernAfterDecline = await routeConversationV2Canary({
+    context: botoxDeclined.decision.nextContext,
+    eventIdentity: "event-botox-concern-after-decline",
+    message: "咀嚼肌偏大",
+    now: new Date(NOW.getTime() + 5000),
+    sourceType: "user",
+    sourceUserId: "U-book",
+  }, {
+    factsProvider: createStaticClinicFactsProvider({ snapshotId: "booking-snapshot" }),
+    getCanarySettings: () => ({ allowlistedUserIds: ["U-book"], mode: "canary" }),
+    requestFrame: async () => nluResult(frame({
+      concerns: [{ area: "jawline", key: "masseter_contour" }],
+      dialogue: {
+        focus: "benefits",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_concern",
+      },
+      intents: ["treatment"],
+      treatments: ["botox"],
+    })),
+  });
+  assert.equal(concernAfterDecline.kind, "routed");
+  check(
+    concernAfterDecline.policyAction === "learn_treatment" &&
+      concernAfterDecline.decision.replyText.includes("咀嚼肌") &&
+      !concernAfterDecline.decision.replyText.includes("想先了解哪項療程"),
+    `C24: declining booking must preserve the Botox topic so the next concern receives a substantive answer (${concernAfterDecline.policyAction}/${concernAfterDecline.decision.matchedKey}/${concernAfterDecline.decision.replyText})`,
+  );
+
   const bookingPhone = await continueBooking(
     bookingName.decision.nextContext,
     "event-book-phone",
@@ -1503,7 +1653,7 @@ async function main() {
       bookingPhone.decision.nextContext.bookingDraft.phone === "0912345678" &&
       bookingPhone.decision.nextContext.bookingDraft.timeSlots.length === 3 &&
       bookingPhone.decision.nextContext.bookingSession?.action === "use_current",
-    "C22: the canonical and legacy booking projections must stay consistent through completion",
+    "C25: the canonical and legacy booking projections must stay consistent through completion",
   );
 
   const staleLegacyContext = createEmptyConversationContext("U-stale-booking");

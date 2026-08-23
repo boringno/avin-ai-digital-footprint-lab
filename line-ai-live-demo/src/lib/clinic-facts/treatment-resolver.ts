@@ -263,10 +263,25 @@ export function resolveTreatmentKnowledge(
   const isPartial = recommendationFromPartialCatalog ||
     gaps.length > 0 ||
     offered.some((item) => item.profileCompleteness === "partial");
-  const requestedDataGaps = offered.flatMap((item) =>
-    item.missingFields.length > 0
-      ? [{ fields: [...item.missingFields], treatmentKey: item.key }]
-      : []);
+  const combinationQuestion =
+    input.questionAspect === "single_vs_combination" ||
+    input.questionAspect === "combination_reason";
+  const hasApprovedCombinationGuidance = combinationQuestion && offered.some(
+    (item) => !item.missingFields.includes("combination_guidance"),
+  );
+  const requestedDataGaps = offered.flatMap((item) => {
+    // A combination is one relationship. Once either approved treatment pack
+    // explains that relationship, the other treatment does not need to repeat
+    // the same copy. Requiring duplicate guidance made a fully approved ONDA +
+    // Botox answer look incomplete merely because Botox did not mirror ONDA's
+    // combination paragraph.
+    const fields = hasApprovedCombinationGuidance
+      ? item.missingFields.filter((field) => field !== "combination_guidance")
+      : item.missingFields;
+    return fields.length > 0
+      ? [{ fields: [...fields], treatmentKey: item.key }]
+      : [];
+  });
   const requestedConcernKeys = new Set(input.query.concernKeys);
   const customerConcernReplies = offered.flatMap((item) => {
     const treatment = snapshot.treatments.find((candidate) => candidate.key === item.key);

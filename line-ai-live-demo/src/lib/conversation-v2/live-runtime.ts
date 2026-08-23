@@ -32,6 +32,7 @@ import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subjec
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
 import type { RouterDecision } from "@/lib/router";
 import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
+import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 
 import { buildConversationV2BookingUnderstanding } from "./booking-adapter";
 import {
@@ -70,13 +71,39 @@ const BOOKING_FIELD_PROMPTS: Record<BookingField, string> = {
   change_request: "請告訴我想修改的日期、時段、館別或療程。",
   first_visit: "請問這次是初診還是複診呢？",
   name: "請留下方便聯絡的姓名。",
-  phone: "請留下聯絡電話。",
+  phone: "請留下台灣手機號碼，例如：0912-345-678。",
   time_slots: "請提供 3 個方便的日期與時段。",
   treatment: "想預約諮詢哪一項療程或主要困擾呢？",
 };
 
 const RESUME_BOOKING_PATTERN = /(?:繼續|接著|延續|回到).{0,8}(?:剛才|原本|之前)?(?:的)?(?:預約|資料|填寫)|繼續預約/u;
 const ASK_OTHER_FIRST_PATTERN = /(?:先|暫時).{0,6}(?:問|詢問|了解).{0,6}(?:其他|別的)|先詢問其他問題/u;
+const RESTART_BOOKING_PATTERN = /(?:重跑|從頭(?:跑|開始|走)?|重新(?:跑|開始|走)).{0,10}(?:預約|約診)(?:流程)?|重新.{0,6}(?:預約|約診)流程/u;
+
+function isInvalidExpectedMobileSubmission(message: string, state: ConversationV2State) {
+  if (state.bookingTask.status !== "collecting" || state.bookingTask.expectedField !== "phone") {
+    return false;
+  }
+  const parsed = buildConversationV2BookingUnderstanding({ message, state });
+  if (parsed?.fields?.phone) return false;
+
+  const normalized = message.trim();
+  if (
+    /[?？]/u.test(normalized) ||
+    /(?:嗎|呢)$/u.test(normalized.replace(/\s+/gu, "")) ||
+    /(?:你們|診所|客服).{0,6}(?:電話|手機|號碼)/u.test(normalized)
+  ) {
+    return false;
+  }
+
+  const hasPhoneLabel = /(?:聯絡)?(?:電話|手機)(?:號碼)?\s*[：:]?/u.test(normalized);
+  const candidate = normalized
+    .replace(/^(?:我的)?(?:聯絡)?(?:電話|手機)(?:號碼)?\s*[：:]?\s*(?:是|為)?\s*/u, "")
+    .trim();
+  const digits = candidate.replace(/\D/gu, "");
+  const barePhoneShape = digits.length >= 4 && /^[+\d\s()\-]+$/u.test(candidate);
+  return (hasPhoneLabel && digits.length > 0) || barePhoneShape;
+}
 
 function bookingProgressToolRequest(state: ConversationV2State): ConversationV2ToolRequest {
   return {
@@ -111,15 +138,80 @@ function resolveBookingEpisodeBoundary(input: {
   const asksOtherFirst =
     input.state.bookingTask.status === "suspended" &&
     ASK_OTHER_FIRST_PATTERN.test(normalized);
-  if (!expiredWhileCollecting && !resumesBooking && !asksOtherFirst) return null;
+  const declinesBooking =
+    ["collecting", "suspended"].includes(input.state.bookingTask.status) &&
+    classifyBookingSpeechAct(input.message) === "decline";
+  const restartsBooking =
+    ["collecting", "suspended", "completed"].includes(input.state.bookingTask.status) &&
+    RESTART_BOOKING_PATTERN.test(normalized);
+  const invalidMobileSubmission =
+    !expiredWhileCollecting &&
+    isInvalidExpectedMobileSubmission(input.message, input.state);
+  if (
+    !expiredWhileCollecting &&
+    !resumesBooking &&
+    !asksOtherFirst &&
+    !declinesBooking &&
+    !restartsBooking &&
+    !invalidMobileSubmission
+  ) return null;
 
   let next = cloneConversationV2State(input.state);
-  if (expiredWhileCollecting) {
+  if (restartsBooking) {
+    const retainedTreatmentKeys = [...next.bookingTask.draft.treatmentKeys];
+    const draft = { timeSlots: [], treatmentKeys: retainedTreatmentKeys };
+    const expectedField = nextMissingBookingField(draft, "create");
+    next.activeTask = {
+      id: `${next.episodeId}:${input.turnId}:booking`,
+      kind: "booking",
+      startedAt: input.now.toISOString(),
+    };
+    next.awaiting = undefined;
+    next.bookingTask = {
+      draft,
+      expectedField,
+      id: `${next.episodeId}:${input.turnId}:booking`,
+      intent: "create",
+      status: expectedField ? "collecting" : "completed",
+    };
+  } else if (expiredWhileCollecting || declinesBooking) {
     next.bookingTask = { ...next.bookingTask, status: "suspended" };
+    if (declinesBooking) {
+      const treatmentKeys = next.bookingTask.draft.treatmentKeys.length > 0
+        ? next.bookingTask.draft.treatmentKeys
+        : next.knowledge.treatmentKeys;
+      next.activeTask = treatmentKeys.length > 0
+        ? {
+            id: `${next.episodeId}:${input.turnId}:learn_treatment`,
+            kind: "learn_treatment",
+            startedAt: input.now.toISOString(),
+            subjectKey: `treatment:${[...treatmentKeys].sort().join("+")}`,
+          }
+        : next.activeTask;
+      next.awaiting = undefined;
+    }
   } else if (resumesBooking) {
     next.bookingTask = { ...next.bookingTask, status: "collecting" };
   }
   next = recordConversationV2TurnReceipt(next, input.turnId, input.now.toISOString());
+
+  if (restartsBooking) {
+    const field = next.bookingTask.expectedField;
+    return {
+      matchedKey: "conversation_v2:booking_restarted",
+      replyText: field
+        ? `😊 好的，我們重新整理預約資料。\n\n${BOOKING_FIELD_PROMPTS[field]}`
+        : "😊 好的，預約資料已重新整理完成，真人客服會在上班時間接續確認。",
+      state: next,
+    };
+  }
+  if (declinesBooking) {
+    return {
+      matchedKey: "conversation_v2:booking_declined",
+      replyText: "😊 好的，這一輪先不繼續預約。您想詢問其他療程或問題時，直接告訴我就可以。",
+      state: next,
+    };
+  }
 
   if (expiredWhileCollecting) {
     return {
@@ -135,6 +227,13 @@ function resolveBookingEpisodeBoundary(input: {
       replyText: field
         ? `😊 好的，我們接著剛才的預約資料。\n\n${BOOKING_FIELD_PROMPTS[field]}`
         : "😊 好的，預約資料已整理完成，真人客服會在上班時間接續確認。",
+      state: next,
+    };
+  }
+  if (invalidMobileSubmission) {
+    return {
+      matchedKey: "conversation_v2:booking_invalid_mobile",
+      replyText: "😊 目前預約需要台灣手機號碼，請輸入 10 碼，例如：0912-345-678。",
       state: next,
     };
   }

@@ -265,19 +265,17 @@ function knowledgeModeForTurn(
     return "replace_active_subject" as const;
   }
   if (
+    state.knowledge.treatmentKeys.length > 0 &&
     input.treatmentKeys.length > 0 &&
     (
       input.treatmentKeys.length !== state.knowledge.treatmentKeys.length ||
       input.treatmentKeys.some((key) => !state.knowledge.treatmentKeys.includes(key))
-    ) &&
-    (
-      state.activeTask.kind === "pricing" ||
-      input.taskKind === "compare_treatments"
     )
   ) {
-    // A canonical contextual subject (for example a price or booking owner)
-    // can establish a new comparison without letting stale consultation
-    // knowledge leak into it. A follow-up to the same comparison still merges.
+    // A newly named treatment owns the current answer. Historical interests
+    // belong in customer history, not in the active reply query; merging them
+    // here made a Botox brand question inherit ONDA concerns and instructions.
+    // A follow-up that names the same subject still merges normally.
     return "replace_active_subject" as const;
   }
   if (

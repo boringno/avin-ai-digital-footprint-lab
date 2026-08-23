@@ -233,6 +233,58 @@ function resolveApprovedReplyAsset(
 }
 
 /**
+ * A reviewed combination is owned by the treatment pack that defines the
+ * relationship. The companion treatment does not need to duplicate the same
+ * paragraph. This resolves only when every named companion is explicitly
+ * approved by that pack.
+ */
+function resolveApprovedCombinationReplyAsset(
+  input: HydrateConversationV2ReplyInput,
+  plan: GeneratedReplyPlan,
+): TreatmentReplyAsset | undefined {
+  if (
+    !["single_vs_combination", "combination_reason"].includes(
+      plan.responseContext.questionAspect,
+    )
+  ) return undefined;
+  const treatmentKeys = unique(plan.knowledgeQuery.treatmentKeys);
+  if (treatmentKeys.length < 2) return undefined;
+  const concernKeys = new Set(plan.knowledgeQuery.concernKeys);
+  const assets = buildTreatmentReplyAssets(input.snapshot.clinic);
+  for (const treatmentKey of treatmentKeys) {
+    const treatment = input.snapshot.clinic.treatmentList.find(
+      (candidate) => candidate.key === treatmentKey,
+    );
+    const approvedCompanions = new Set(
+      treatment?.consultationGuide?.approvedCombinationTreatmentKeys ?? [],
+    );
+    const companionKeys = treatmentKeys.filter((key) => key !== treatmentKey);
+    if (
+      companionKeys.length === 0 ||
+      !companionKeys.every((key) => approvedCompanions.has(key))
+    ) continue;
+    const candidates = assets.filter((candidate) =>
+      candidate.treatmentKey === treatmentKey &&
+      candidate.customerCopy.trim() &&
+      ["detail", "related"].includes(candidate.kind) &&
+      (
+        candidate.behaviors.includes("combination_comparison") ||
+        /(?:combination|搭配)/iu.test(candidate.aspectKey ?? "") ||
+        (
+          candidate.kind === "related" &&
+          Boolean(candidate.relatedTreatmentKey) &&
+          companionKeys.includes(candidate.relatedTreatmentKey ?? "")
+        )
+      ) &&
+      (!candidate.concernKey || concernKeys.size === 0 || concernKeys.has(candidate.concernKey))
+    );
+    const asset = candidates.find((candidate) => Boolean(candidate.priceRef)) ?? candidates[0];
+    if (asset) return asset;
+  }
+  return undefined;
+}
+
+/**
  * Deterministic customer-visible copy for a resolved treatment.
  *
  * `resolution.facts` is a knowledge base for the model and carries internal field
@@ -412,8 +464,24 @@ export async function hydrateConversationV2ReplyPlan(
     // stale-source, or not-offered gap.  Real resolution gaps always win.
     const approvedReplyAsset = hasResolutionGaps
       ? undefined
-      : resolveApprovedReplyAsset(input, replyPlan);
-    const approvedAssetFacts = approvedReplyAsset ? [approvedReplyAsset.customerCopy] : [];
+      : resolveApprovedReplyAsset(input, replyPlan) ??
+        resolveApprovedCombinationReplyAsset(input, replyPlan);
+    const approvedAssetPriceResolution = approvedReplyAsset?.priceRef
+      ? resolveApprovedPrice(input.snapshot, {
+          campaignId: approvedReplyAsset.priceRef,
+          kind: "campaign",
+          treatmentKeys: replyPlan.knowledgeQuery.treatmentKeys,
+        })
+      : undefined;
+    const approvedAssetPrice = approvedAssetPriceResolution?.status === "approved_current"
+      ? approvedAssetPriceResolution
+      : undefined;
+    const approvedAssetFacts = approvedReplyAsset
+      ? unique([
+          approvedReplyAsset.customerCopy,
+          ...(approvedAssetPrice?.customerFacts ?? []),
+        ])
+      : [];
     const approvedAssetNextQuestion = approvedReplyAsset?.followup ?? replyPlan.nextQuestion;
     const hasApprovedAnswer = hasFacts || approvedAssetFacts.length > 0;
     const hasUnresolvedRequestedData = hasRequestedDataGaps && !approvedReplyAsset;
@@ -434,6 +502,9 @@ export async function hydrateConversationV2ReplyPlan(
     const fallbackText = approvedReplyAsset
       ? unique([
           approvedReplyAsset.customerCopy,
+          approvedAssetPrice
+            ? `💰 ${approvedAssetPrice.customerPriceText}。${approvedAssetPrice.branchScope ? `\n${approvedAssetPrice.branchScope}。` : ""}`
+            : "",
           approvedAssetNextQuestion ?? "",
         ]).join("\n")
       : hasResolutionGaps || hasRequestedDataGaps
@@ -463,6 +534,7 @@ export async function hydrateConversationV2ReplyPlan(
         dialogueAct: hasApprovedAnswer && !hasResolutionGaps && !hasUnresolvedRequestedData
           ? rendererDialogueAct(replyPlan)
           : "clarify",
+        exactPriceFacts: approvedAssetPrice?.customerFacts ?? [],
         fallbackText,
         knowledgeSource: "turn_snapshot",
         nextQuestion: approvedAssetNextQuestion,
