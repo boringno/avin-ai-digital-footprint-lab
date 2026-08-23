@@ -17,6 +17,15 @@ export type CustomerQuickReplySemantic =
       type: "approved_asset";
     };
 
+export type CustomerQuickReplyChoice = {
+  concernKeys?: string[];
+  label: string;
+  nextStage?: CustomerQuickReplyStage | "consultation";
+  semantic?: CustomerQuickReplySemantic;
+  stage: CustomerQuickReplyStage;
+  text: string;
+};
+
 export type BranchConfig = {
   address: string;
   aliases: string[];
@@ -68,14 +77,7 @@ export type TreatmentConversationPack = {
    * Customer-facing LINE quick replies.  Unlike `quickReplies` above, these
    * are presentation choices, not terms the router has to guess from prose.
    */
-  customerQuickReplies?: Array<{
-    concernKeys?: string[];
-    label: string;
-    nextStage?: CustomerQuickReplyStage | "consultation";
-    semantic?: CustomerQuickReplySemantic;
-    stage: CustomerQuickReplyStage;
-    text: string;
-  }>;
+  customerQuickReplies?: CustomerQuickReplyChoice[];
   relatedReplies?: Array<{
     followupPrompt: string;
     key: string;

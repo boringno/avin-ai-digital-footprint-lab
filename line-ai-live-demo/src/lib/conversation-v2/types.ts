@@ -126,6 +126,40 @@ export type KnowledgeContext = {
   treatmentKeys: string[];
 };
 
+export type PendingQuickReplySemantic =
+  | { concernKey: string; kind: "concern" }
+  | {
+      areaKey?: string;
+      concernKey?: string;
+      kind: "approved_asset";
+      questionAspect: QuestionAspect;
+      replyAssetId: string;
+    };
+
+export type PendingQuickReplyChoice = {
+  choiceId: string;
+  label: string;
+  nextStage?: "approach" | "followup" | "initial" | "consultation";
+  normalizedMessageText: string;
+  messageText: string;
+  semantic: PendingQuickReplySemantic;
+};
+
+/**
+ * Exact semantic choices that were projected into the latest customer-visible
+ * LINE reply. This is approved identity, never generated prose or price data.
+ */
+export type PendingQuickReplyContract = {
+  choices: PendingQuickReplyChoice[];
+  episodeId: string;
+  expiresAt: string;
+  contractId: string;
+  issuedAt: string;
+  owner: { kind: "treatment"; treatmentKey: string };
+  sourceSnapshotId: string;
+  sourceTurnId: string;
+};
+
 export type ConversationPreferences = {
   excludedAreaKeys: string[];
   excludedConcernKeys: string[];
@@ -141,6 +175,7 @@ export type ConversationV2State = {
   episodeId: string;
   knowledge: KnowledgeContext;
   lastProcessedTurnId?: string;
+  pendingQuickReply?: PendingQuickReplyContract;
   pricingSubjectTreatmentKeys: string[];
   processedTurnIds: string[];
   revision: number;

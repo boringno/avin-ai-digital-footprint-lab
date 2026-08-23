@@ -48,7 +48,9 @@ import { adaptNluFrameToConversationV2Turn } from "./nlu-adapter";
 import { resolveDeterministicNegationGuard } from "./deterministic-negation";
 import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { resolveTreatmentClarification } from "./treatment-clarification";
-import { withConversationV2QuickReplies } from "./quick-replies";
+import {
+  projectConversationV2QuickReplies,
+} from "./quick-replies";
 import { resolveConversationV2QuickReplySelection } from "./quick-reply-selection";
 import { hasConversationEpisodeExpired } from "./episode-policy";
 import { routeConversationTurnV2 } from "./engine";
@@ -638,6 +640,28 @@ function projectStateToContext(input: {
   return nextContext;
 }
 
+function projectQuickRepliesIntoState(input: {
+  nextStage?: "approach" | "followup" | "initial" | "consultation";
+  now: Date;
+  plan: Parameters<typeof projectConversationV2QuickReplies>[0];
+  snapshot: ClinicFactsSnapshot;
+  state: ConversationV2State;
+}) {
+  const projection = projectConversationV2QuickReplies(input.plan, input.state, {
+    clinic: input.snapshot.clinic,
+    issuedAt: input.now.toISOString(),
+    ...(input.nextStage ? { nextStage: input.nextStage } : {}),
+    snapshotId: input.snapshot.snapshotId,
+  });
+  const state = cloneConversationV2State(input.state);
+  if (projection.pendingQuickReply) {
+    state.pendingQuickReply = projection.pendingQuickReply;
+  } else {
+    delete state.pendingQuickReply;
+  }
+  return { plan: projection.plan, state };
+}
+
 function normalizeDecisionType(value: string): RouterDecision["decisionType"] {
   const allowed: RouterDecision["decisionType"][] = [
     "booking_intake_reply",
@@ -977,7 +1001,7 @@ export async function routeConversationV2Canary(
       turnId,
     });
     if (bookingEpisodeBoundary) {
-      const replyPlan = withConversationV2QuickReplies(legacyDecisionToReplyPlan({
+      const bookingPlan = legacyDecisionToReplyPlan({
         decisionType: "booking_intake_reply",
         matchedKey: bookingEpisodeBoundary.matchedKey,
         matchedType: "config",
@@ -987,7 +1011,14 @@ export async function routeConversationV2Canary(
         fallbackText: bookingEpisodeBoundary.replyText,
         renderMode: "deterministic",
         requiresHuman: false,
-      }), bookingEpisodeBoundary.state);
+      });
+      const projectedBooking = projectQuickRepliesIntoState({
+        now: input.now,
+        plan: bookingPlan,
+        snapshot,
+        state: bookingEpisodeBoundary.state,
+      });
+      const replyPlan = projectedBooking.plan;
       return {
         dataStatus: "ready",
         decision: {
@@ -998,7 +1029,7 @@ export async function routeConversationV2Canary(
             context: input.context,
             matchedKey: bookingEpisodeBoundary.matchedKey,
             snapshot,
-            state: bookingEpisodeBoundary.state,
+            state: projectedBooking.state,
           }),
           replyPlan,
           replyText: bookingEpisodeBoundary.replyText,
@@ -1014,6 +1045,8 @@ export async function routeConversationV2Canary(
     const quickReplySelection = resolveConversationV2QuickReplySelection({
       clinic: snapshot.clinic,
       message: routingMessage,
+      now: input.now,
+      snapshotId: snapshot.snapshotId,
       state,
     });
     const nlu = await (dependencies.requestFrame ?? requestNluFrame)(routingMessage, {
@@ -1134,13 +1167,19 @@ export async function routeConversationV2Canary(
           resolveDoctorSchedule: ({ message, now }) =>
             resolveDoctorScheduleDecision({ fallbackReply: "", message, today: now }),
         });
-        const deterministicPlan = deterministicHydrated.rendererPlan
-          ? withConversationV2QuickReplies(
-              deterministicHydrated.rendererPlan,
-              deterministicRouted.nextState,
-              { nextStage: quickReplySelection?.nextStage },
-            )
+        const deterministicCommittedState = deterministicHydrated.stateCommit === "commit"
+          ? deterministicRouted.nextState
+          : recordConversationV2TurnReceipt(state, turnId, input.now.toISOString());
+        const deterministicProjection = deterministicHydrated.rendererPlan
+          ? projectQuickRepliesIntoState({
+              ...(quickReplySelection?.nextStage ? { nextStage: quickReplySelection.nextStage } : {}),
+              now: input.now,
+              plan: deterministicHydrated.rendererPlan,
+              snapshot,
+              state: deterministicCommittedState,
+            })
           : null;
+        const deterministicPlan = deterministicProjection?.plan ?? null;
         if (deterministicPlan) {
           return {
             aiModel: nlu?.model,
@@ -1155,9 +1194,7 @@ export async function routeConversationV2Canary(
                 context: input.context,
                 matchedKey: deterministicPlan.matchedKey,
                 snapshot,
-                state: deterministicHydrated.stateCommit === "commit"
-                  ? deterministicRouted.nextState
-                  : recordConversationV2TurnReceipt(state, turnId, input.now.toISOString()),
+                state: deterministicProjection!.state,
               }),
               replyMessages: deterministicPlan.richMessages,
               replyPlan: deterministicPlan,
@@ -1338,13 +1375,16 @@ export async function routeConversationV2Canary(
     const committedState = hydrated.stateCommit === "commit"
       ? routed.nextState
       : recordConversationV2TurnReceipt(state, turn.turnId, turn.receivedAt);
-    const rendererPlan = hydrated.rendererPlan
-      ? withConversationV2QuickReplies(
-          hydrated.rendererPlan,
-          committedState,
-          { nextStage: quickReplySelection?.nextStage },
-        )
+    const projection = hydrated.rendererPlan
+      ? projectQuickRepliesIntoState({
+          ...(quickReplySelection?.nextStage ? { nextStage: quickReplySelection.nextStage } : {}),
+          now: input.now,
+          plan: hydrated.rendererPlan,
+          snapshot,
+          state: committedState,
+        })
       : null;
+    const rendererPlan = projection?.plan ?? null;
     if (!rendererPlan) {
       return {
         aiModel: nlu.model,
@@ -1374,7 +1414,7 @@ export async function routeConversationV2Canary(
       context: input.context,
       matchedKey: rendererPlan.matchedKey,
       snapshot,
-      state: committedState,
+      state: projection!.state,
     });
     // Internal labelled facts must never reach a customer. Call sites already pick
     // approved copy; this check keeps that true for any future path as well.

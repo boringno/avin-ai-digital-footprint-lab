@@ -163,6 +163,10 @@ function validatePostRouterOverrideFreshness() {
   assert(rebuilt.renderMode === "deterministic", "RP6: the rebuilt schedule plan must bypass the reply model");
   assert(rebuilt.fallbackText === "本月門診表尚未公告。", "RP6: timeout fallback must belong to the schedule turn");
   assert(shouldSuppressOuterAiFooter(false, { suppressAiFooter: true }), "RP6: deterministic rich-message footer policy must reach the outer payload");
+  assert(
+    !shouldSuppressOuterAiFooter(false, { suppressAiFooter: false }),
+    "RP6: ordinary renderer text must delegate its one disclosure to the outer LINE payload",
+  );
 }
 
 function main() {

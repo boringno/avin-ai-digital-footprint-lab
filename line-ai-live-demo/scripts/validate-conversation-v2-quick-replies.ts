@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 
-import { buildReplyPayload, processWebhookRequestBody } from "@/lib/line-webhook";
+import {
+  buildReplyPayload,
+  processWebhookRequestBody,
+  reconcileRenderedQuickReplyContract,
+  reconcileUndeliveredQuickReplyContract,
+} from "@/lib/line-webhook";
 import type { PriceCatalogEntry } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
 import { clinicConfig } from "@/lib/clinic-config";
-import { withConversationV2QuickReplies } from "@/lib/conversation-v2/quick-replies";
-import { resolveConversationV2QuickReplySelection } from "@/lib/conversation-v2/quick-reply-selection";
+import {
+  projectConversationV2QuickReplies,
+  withConversationV2QuickReplies,
+} from "@/lib/conversation-v2/quick-replies";
+import {
+  buildConversationV2QuickReplySelection,
+  resolveConversationV2QuickReplySelection,
+} from "@/lib/conversation-v2/quick-reply-selection";
 import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
-import { createConversationV2State } from "@/lib/conversation-v2/state";
+import {
+  createConversationV2State,
+  parsePersistedConversationV2State,
+  recordConversationV2TurnReceipt,
+} from "@/lib/conversation-v2/state";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
@@ -66,6 +81,45 @@ function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" |
 
 function labels(items: ReturnType<typeof withConversationV2QuickReplies>["quickReplyItems"]) {
   return items.map((item) => item.action.label);
+}
+
+function validateUndeliveredContractCleanup() {
+  const state = createConversationV2State({ episodeId: "undelivered-buttons", now: NOW });
+  state.lastProcessedTurnId = "message-offer";
+  state.knowledge.treatmentKeys = ["onda_pro"];
+  const projection = projectConversationV2QuickReplies(
+    plan({ treatmentKeys: ["onda_pro"] }),
+    state,
+    {
+      clinic: clinicConfig,
+      issuedAt: NOW,
+      snapshotId: "snapshot-current",
+    },
+  );
+  assert.ok(projection.pendingQuickReply, "fixture must create a semantic quick-reply contract");
+  const context = createEmptyConversationContext("line-user-undelivered");
+  context.conversationV2State = {
+    ...state,
+    pendingQuickReply: projection.pendingQuickReply,
+  };
+
+  const unrelatedFailure = reconcileUndeliveredQuickReplyContract(context, {
+    messageId: "older-message",
+  });
+  assert.equal(
+    unrelatedFailure.conversationV2State?.pendingQuickReply?.sourceTurnId,
+    "message-offer",
+    "an older failed delivery must not clear a newer displayed contract",
+  );
+
+  const matchingFailure = reconcileUndeliveredQuickReplyContract(context, {
+    messageId: "message-offer",
+  });
+  assert.equal(
+    matchingFailure.conversationV2State?.pendingQuickReply,
+    undefined,
+    "known suppression or non-2xx must clear the contract for buttons LINE did not deliver",
+  );
 }
 
 function validateOndaChoices() {
@@ -128,16 +182,10 @@ function validateEveryConfiguredSemanticChoiceResolves() {
   for (const treatment of clinicConfig.treatmentList) {
     for (const choice of treatment.consultationGuide?.customerQuickReplies ?? []) {
       if (!choice.semantic) continue;
-      const state = createConversationV2State({
-        episodeId: `semantic-choice-${treatment.key}`,
-        now: NOW,
-      });
-      state.knowledge.treatmentKeys = [treatment.key];
-      state.knowledge.concernKeys = [...(choice.concernKeys ?? [])];
-      const resolved = resolveConversationV2QuickReplySelection({
+      const resolved = buildConversationV2QuickReplySelection({
+        choice,
         clinic: clinicConfig,
-        message: choice.text,
-        state,
+        treatmentKey: treatment.key,
       });
       assert.ok(
         resolved,
@@ -146,6 +194,132 @@ function validateEveryConfiguredSemanticChoiceResolves() {
       assert.equal(resolved.nextStage, choice.nextStage);
     }
   }
+}
+
+function validatePendingQuickReplyContractOwnsHistoricalState() {
+  const state = createConversationV2State({ episodeId: "multi-history-buttons", now: NOW });
+  state.knowledge.treatmentKeys = ["onda_pro", "botox"];
+  state.knowledge.concernKeys = ["jawline_looseness"];
+  const projected = projectConversationV2QuickReplies(plan({
+    dialogueAct: "answer_followup",
+    treatmentKeys: ["onda_pro"],
+  }), state, {
+    clinic: clinicConfig,
+    issuedAt: NOW,
+    snapshotId: "snapshot-approved-buttons",
+  });
+  assert.deepEqual(
+    labels(projected.plan.quickReplyItems),
+    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+  );
+  assert.equal(projected.pendingQuickReply?.owner.treatmentKey, "onda_pro");
+  assert.equal(projected.pendingQuickReply?.choices.length, 3);
+
+  state.pendingQuickReply = projected.pendingQuickReply;
+  const persisted = parsePersistedConversationV2State(JSON.parse(JSON.stringify(state)));
+  assert.ok(persisted?.pendingQuickReply, "the approved visible choice contract must survive V2 JSON persistence");
+  const selected = resolveConversationV2QuickReplySelection({
+    clinic: clinicConfig,
+    message: "脂肪堆積",
+    now: new Date("2026-08-23T12:05:00.000+08:00"),
+    snapshotId: "snapshot-approved-buttons",
+    state: persisted,
+  });
+  assert.deepEqual(
+    selected?.semanticAnchor.treatmentKeys,
+    ["onda_pro"],
+    "the displayed ONDA choice must keep its ONDA owner even when historical state also contains Botox",
+  );
+  assert.equal(selected?.semanticAnchor.replyAssetId, "treatment:onda_pro:detail:jawline_expectation");
+  assert.equal(
+    resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      now: new Date("2026-08-23T12:31:00.000+08:00"),
+      snapshotId: "snapshot-approved-buttons",
+      state: persisted,
+    }),
+    undefined,
+    "a stale visible choice must not take ownership of a later conversation episode",
+  );
+  assert.equal(
+    resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      now: new Date("2026-08-23T12:05:00.000+08:00"),
+      snapshotId: "snapshot-content-changed",
+      state: persisted,
+    }),
+    undefined,
+    "a choice from an old facts snapshot must not silently use changed clinic content",
+  );
+  const consumed = recordConversationV2TurnReceipt(
+    persisted,
+    "first-accepted-turn-after-offer",
+    "2026-08-23T12:06:00.000+08:00",
+  );
+  assert.equal(
+    consumed.pendingQuickReply,
+    undefined,
+    "the first accepted non-duplicate turn must consume the displayed contract even when it does not match",
+  );
+  assert.equal(
+    resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      state: consumed,
+    }),
+    undefined,
+    "the same text after an intervening turn must not be replayed as an old button tap",
+  );
+  const duplicateSeed = structuredClone(persisted);
+  duplicateSeed.processedTurnIds = ["already-processed"];
+  duplicateSeed.lastProcessedTurnId = "already-processed";
+  const duplicate = recordConversationV2TurnReceipt(
+    duplicateSeed,
+    "already-processed",
+    "2026-08-23T12:06:00.000+08:00",
+  );
+  assert.ok(
+    duplicate.pendingQuickReply,
+    "a duplicate webhook must not consume the contract created by the original reply",
+  );
+
+  const legacyMultiState = createConversationV2State({ episodeId: "legacy-multi", now: NOW });
+  legacyMultiState.knowledge.treatmentKeys = ["onda_pro", "botox"];
+  legacyMultiState.knowledge.concernKeys = ["jawline_looseness"];
+  assert.equal(
+    resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      state: legacyMultiState,
+    }),
+    undefined,
+    "without a delivered contract, multi-treatment history must never guess the button owner",
+  );
+
+  const malformed = JSON.parse(JSON.stringify(state)) as Record<string, unknown>;
+  malformed.pendingQuickReply = { contractId: "broken" };
+  const recovered = parsePersistedConversationV2State(malformed);
+  assert.ok(recovered, "a malformed ephemeral choice contract must not discard the core V2 episode");
+  assert.equal(recovered.pendingQuickReply, undefined);
+  assert.deepEqual(recovered.knowledge.treatmentKeys, ["onda_pro", "botox"]);
+
+  const contextWithContract = createEmptyConversationContext("render-contract-gate");
+  contextWithContract.conversationV2State = persisted;
+  assert.equal(
+    reconcileRenderedQuickReplyContract(contextWithContract, []).conversationV2State?.pendingQuickReply,
+    undefined,
+    "a terminal renderer fallback that drops the buttons must also drop their pending contract",
+  );
+  const deliveredItems = projected.plan.quickReplyItems.filter((item) =>
+    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒小臉組合"].includes(item.action.text),
+  );
+  assert.ok(
+    reconcileRenderedQuickReplyContract(contextWithContract, deliveredItems)
+      .conversationV2State?.pendingQuickReply,
+    "the contract remains valid only when the final payload still carries all semantic choices",
+  );
 }
 
 function validateBookingChoicesAndPayload() {
@@ -228,6 +402,70 @@ async function validateLiveRuntimeAttachesV2Choices() {
     ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
     "the live V2 route must attach ONDA choices before rendering",
   );
+}
+
+async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
+  const userId = "U-v2-pending-contract";
+  const provider = createStaticClinicFactsProvider();
+  const dependencies = {
+    factsProvider: provider,
+    getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+    requestFrame: async (message: string) => ({
+      errorCode: message === "ONDA" ? null : "nlu_unavailable",
+      frame: message === "ONDA"
+        ? {
+            areas: [],
+            confidence: 0.99,
+            concerns: [],
+            dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+            intents: ["treatment"],
+            negated: [],
+            safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+            schemaVersion: 2,
+            treatments: ["onda_pro"],
+          } satisfies NluFrame
+        : null,
+      latencyMs: 1,
+      model: "fixture",
+      promptVersion: "fixture",
+      tokensIn: 1,
+      tokensOut: message === "ONDA" ? 1 : 0,
+    }),
+  };
+  let context = createEmptyConversationContext(userId);
+  const route = async (eventIdentity: string, message: string) => {
+    const result = await routeConversationV2Canary({
+      context,
+      eventIdentity,
+      message,
+      now: new Date(NOW),
+      sourceType: "user",
+      sourceUserId: userId,
+    }, dependencies);
+    assert.equal(result.kind, "routed");
+    context = result.decision.nextContext;
+    return result;
+  };
+
+  await route("pending-contract-open", "ONDA");
+  assert.equal(
+    context.conversationV2State?.pendingQuickReply?.owner.treatmentKey,
+    "onda_pro",
+    "the actual ONDA reply must persist the owner of its visible semantic choices",
+  );
+  await route("pending-contract-concern", "我想改善雙下巴／嘴邊肉");
+  assert.ok(
+    context.conversationV2State?.pendingQuickReply?.choices.some((choice) => choice.messageText === "脂肪堆積"),
+    "the follow-up LINE reply must persist the exact displayed concern choice",
+  );
+  context.conversationV2State!.knowledge.treatmentKeys = ["onda_pro", "botox"];
+  const fat = await route("pending-contract-fat", "脂肪堆積");
+  assert.match(
+    fat.decision.replyText,
+    /脂肪型困擾/u,
+    "a tap must resolve from its delivered contract instead of guessing from multi-treatment history",
+  );
+  assert.doesNotMatch(fat.decision.replyText, /想先了解這個部位可評估的方向/u);
 }
 
 function quickReplyLabelsFromPayload(messages: readonly LineReplyMessage[]) {
@@ -338,6 +576,11 @@ async function validateSemanticQuickReplyJourneys() {
     userId: ondaUserId,
   });
   assert.match(visibleTextFromPayload(fat.messages), /脂肪型困擾/u);
+  assert.equal(
+    visibleTextFromPayload(fat.messages).match(/以上為 AI 客服順順初步回覆。/gu)?.length,
+    1,
+    "a deterministic approved-asset reply must carry exactly one AI disclosure",
+  );
   assert.deepEqual(
     quickReplyLabelsFromPayload(fat.messages),
     ["單做 ONDA", "ONDA＋肉毒組合", "價格／活動", "預約免費諮詢"],
@@ -351,6 +594,11 @@ async function validateSemanticQuickReplyJourneys() {
   const combinationText = visibleTextFromPayload(combination.messages);
   assert.match(combinationText, /ONDA Pro.*肉毒小臉/us);
   assert.match(combinationText, /12,999/u);
+  assert.equal(
+    combinationText.match(/以上為 AI 客服順順初步回覆。/gu)?.length,
+    1,
+    "an approved deterministic combination reply must carry exactly one AI disclosure",
+  );
   assert.doesNotMatch(combinationText, /哪一項療程|剛剛沒有完整理解/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(combination.messages),
@@ -660,10 +908,13 @@ async function validateFinalWebhookPayload() {
 async function main() {
   validateOndaChoices();
   validateBotoxChoices();
+  validateUndeliveredContractCleanup();
   validateEveryConfiguredSemanticChoiceResolves();
+  validatePendingQuickReplyContractOwnsHistoricalState();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
   await validateLiveRuntimeAttachesV2Choices();
+  await validateLiveRuntimePersistsAndConsumesVisibleContract();
   await validateSemanticQuickReplyJourneys();
   await validatePriceDeclinePausesSameTreatmentInvitation();
   await validateFinalWebhookPayload();
