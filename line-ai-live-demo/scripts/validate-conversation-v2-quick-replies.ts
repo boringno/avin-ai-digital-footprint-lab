@@ -1,16 +1,35 @@
 import assert from "node:assert/strict";
 
-import { buildReplyPayload } from "@/lib/line-webhook";
+import { buildReplyPayload, processWebhookRequestBody } from "@/lib/line-webhook";
+import type { PriceCatalogEntry } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
 import { withConversationV2QuickReplies } from "@/lib/conversation-v2/quick-replies";
 import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
 import { createConversationV2State } from "@/lib/conversation-v2/state";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
-import type { LineTextMessage } from "@/lib/treatment-carousel";
+import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import type { NluFrame } from "@/lib/nlu-frame";
 
 const NOW = "2026-08-23T12:00:00.000+08:00";
+
+const ONDA_PRICE: PriceCatalogEntry = {
+  approval_status: "approved",
+  asset_urls: "",
+  branch_scope: "all",
+  campaign_aliases: "ONDA|ONDA PRO|ONDA體驗價",
+  campaign_name: "ONDA 體驗方案",
+  customer_price_approval_status: "approved",
+  customer_price_text: "體驗價 16,888 元",
+  end_date: "2026-08-31",
+  fallback_message: "",
+  id: "quick-replies-onda-price",
+  is_active: "true",
+  notes: "validator",
+  price_text: "internal",
+  start_date: "2026-08-01",
+  treatment_name: "ONDA PRO",
+};
 
 function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
   return legacyDecisionToReplyPlan({
@@ -139,12 +158,180 @@ async function validateLiveRuntimeAttachesV2Choices() {
   );
 }
 
+function quickReplyLabelsFromPayload(messages: readonly LineReplyMessage[]) {
+  const message = messages.find((item): item is LineTextMessage =>
+    item.type === "text" && (item.quickReply?.items.length ?? 0) > 0,
+  );
+  return message?.quickReply?.items.map((item) => item.action.label) ?? [];
+}
+
+function webhookEvent(input: { id: string; message: string; userId: string }) {
+  return JSON.stringify({
+    events: [{
+      message: { id: input.id, text: input.message, type: "text" },
+      replyToken: `reply-${input.id}`,
+      source: { type: "user", userId: input.userId },
+      timestamp: new Date(NOW).getTime(),
+      type: "message",
+      webhookEventId: `event-${input.id}`,
+    }],
+  });
+}
+
+async function validateFinalWebhookPayload() {
+  const userId = `U-v2-quick-replies-e2e-${Date.now()}`;
+  const fixtureRoute = (value: NluFrame | null) =>
+    async (input: Parameters<typeof routeConversationV2Canary>[0]) =>
+      routeConversationV2Canary(input, {
+        factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: [ONDA_PRICE] }),
+        getCanarySettings: () => ({
+          allowlistedUserIds: [userId, `${userId}-booking`],
+          mode: "canary" as const,
+        }),
+        requestFrame: async () => ({
+          errorCode: value ? null : "nlu_unavailable",
+          frame: value,
+          latencyMs: 1,
+          model: "fixture",
+          promptVersion: "fixture",
+          tokensIn: 1,
+          tokensOut: 1,
+        }),
+      });
+
+  const priceFrame: NluFrame = {
+    areas: [],
+    confidence: 0.99,
+    concerns: [],
+    dialogue: { focus: "price_unspecified", move: "continue", reference: "explicit", speechAct: "ask_price" },
+    intents: ["pricing"],
+    negated: [],
+    safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+    schemaVersion: 2,
+    treatments: ["onda_pro"],
+  };
+  const price = await processWebhookRequestBody(
+    webhookEvent({ id: "v2-price", message: "ONDA 體驗價多少", userId }),
+    {
+      includePending: false,
+      routeConversationV2: fixtureRoute(priceFrame),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run when the V2 price route is eligible");
+      },
+    },
+  );
+  const pricePayload = price.results[0]?.replyPayload;
+  assert.ok(pricePayload, "the final webhook payload must exist for an approved V2 price reply");
+  assert.match(JSON.stringify(pricePayload), /16,888/u, "the final payload must retain the approved ONDA price");
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(pricePayload.messages),
+    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    "the approved-price CTA choices must survive V2 route, renderer, and webhook formatting",
+  );
+
+  const bookingUserId = `${userId}-booking`;
+  const overviewFrame: NluFrame = {
+    areas: [],
+    confidence: 0.99,
+    concerns: [],
+    dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+    intents: ["treatment"],
+    negated: [],
+    safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+    schemaVersion: 2,
+    treatments: ["onda_pro"],
+  };
+  await processWebhookRequestBody(
+    webhookEvent({ id: "v2-booking-onda", message: "我想了解 ONDA", userId: bookingUserId }),
+    {
+      includePending: false,
+      routeConversationV2: fixtureRoute(overviewFrame),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run when the V2 ONDA context route is eligible");
+      },
+    },
+  );
+  const booking = await processWebhookRequestBody(
+    webhookEvent({ id: "v2-booking", message: "我要預約免費諮詢", userId: bookingUserId }),
+    {
+      includePending: false,
+      routeConversationV2: fixtureRoute(null),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run when explicit V2 booking is eligible");
+      },
+    },
+  );
+  const bookingPayload = booking.results[0]?.replyPayload;
+  assert.ok(bookingPayload, "the final webhook payload must exist for V2 booking intake");
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(bookingPayload.messages),
+    ["高雄館", "台中館", "桃園館", "林口館"],
+    "booking branch choices must survive V2 route, renderer, and webhook formatting",
+  );
+
+  const flexPlan = legacyDecisionToReplyPlan({
+    decisionType: "clinic_info_reply",
+    matchedKey: "fixture:v2-flex-quick-replies",
+    matchedType: "config",
+    replyMessages: [{
+      altText: "活動卡片",
+      contents: {
+        contents: [{ body: { contents: [{ text: "核准活動", type: "text" }], layout: "vertical", type: "box" }, type: "bubble" }],
+        type: "carousel",
+      },
+      type: "flex",
+    }],
+    replyText: "核准活動內容。",
+  }, {
+    dialogueAct: "quote_approved_price",
+    renderMode: "deterministic",
+    treatmentKeys: ["onda_pro"],
+  });
+  const flexState = createConversationV2State({ episodeId: "flex-buttons", now: NOW });
+  flexState.knowledge.treatmentKeys = ["onda_pro"];
+  const flexDecision = withConversationV2QuickReplies(flexPlan, flexState);
+  const flex = await processWebhookRequestBody(
+    webhookEvent({ id: "v2-flex", message: "活動卡片", userId: `${userId}-flex` }),
+    {
+      includePending: false,
+      routeConversationV2: async ({ context }) => ({
+        dataStatus: "ready" as const,
+        decision: {
+          decisionType: "clinic_info_reply" as const,
+          matchedKey: flexDecision.matchedKey,
+          matchedType: "config" as const,
+          nextContext: context,
+          replyPlan: flexDecision,
+          replyText: flexDecision.fallbackText,
+        },
+        gate: { eligible: true, reason: "eligible" as const },
+        kind: "routed" as const,
+      }),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run when the V2 flex fixture is eligible");
+      },
+    },
+  );
+  const flexPayload = flex.results[0]?.replyPayload;
+  assert.ok(flexPayload, "the final webhook payload must exist for the V2 flex fixture");
+  assert.ok(
+    flexPayload.messages.some((message) => message.type === "flex"),
+    "webhook formatting must preserve a V2 rich Flex message",
+  );
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(flexPayload.messages),
+    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    "a V2 Flex reply must retain its CTA quick replies after webhook formatting",
+  );
+}
+
 async function main() {
   validateOndaChoices();
   validateBotoxChoices();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
   await validateLiveRuntimeAttachesV2Choices();
+  await validateFinalWebhookPayload();
   console.log("Conversation V2 quick reply validation passed");
 }
 
