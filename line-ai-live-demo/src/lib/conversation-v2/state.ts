@@ -9,8 +9,10 @@ import {
   type ConversationV2State,
   type DialoguePolicyAction,
   type KnowledgeContext,
+  type PendingQuickReplyContract,
   type TreatmentResponseContext,
 } from "./types";
+import { QUESTION_ASPECTS } from "@/lib/dialogue-semantics";
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -61,9 +63,25 @@ function cloneKnowledge(knowledge: KnowledgeContext): KnowledgeContext {
   };
 }
 
+function clonePendingQuickReply(
+  contract: PendingQuickReplyContract | undefined,
+): PendingQuickReplyContract | undefined {
+  return contract
+    ? {
+        ...contract,
+        choices: contract.choices.map((choice) => ({
+          ...choice,
+          semantic: { ...choice.semantic },
+        })),
+        owner: { ...contract.owner },
+      }
+    : undefined;
+}
+
 export function cloneConversationV2State(state: ConversationV2State): ConversationV2State {
+  const { pendingQuickReply, ...baseState } = state;
   return {
-    ...state,
+    ...baseState,
     activeTask: { ...state.activeTask },
     awaiting: cloneAwaiting(state.awaiting),
     bookingTask: {
@@ -75,6 +93,9 @@ export function cloneConversationV2State(state: ConversationV2State): Conversati
       handoff: state.control.handoff ? { ...state.control.handoff } : undefined,
     },
     knowledge: cloneKnowledge(state.knowledge),
+    ...(pendingQuickReply
+      ? { pendingQuickReply: clonePendingQuickReply(pendingQuickReply) }
+      : {}),
     pricingSubjectTreatmentKeys: [...state.pricingSubjectTreatmentKeys],
     preferences: {
       ...state.preferences,
@@ -131,6 +152,7 @@ export function recordConversationV2TurnReceipt(
 ): ConversationV2State {
   const next = cloneConversationV2State(state);
   if (next.processedTurnIds.includes(turnId)) return next;
+  delete next.pendingQuickReply;
   return {
     ...next,
     lastProcessedTurnId: turnId,
@@ -146,6 +168,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isPendingQuickReplyContract(value: unknown): value is PendingQuickReplyContract {
+  if (!isRecord(value) || !isRecord(value.owner) || !Array.isArray(value.choices)) return false;
+  const issuedAt = typeof value.issuedAt === "string" ? new Date(value.issuedAt).getTime() : Number.NaN;
+  const expiresAt = typeof value.expiresAt === "string" ? new Date(value.expiresAt).getTime() : Number.NaN;
+  if (
+    typeof value.contractId !== "string" || !value.contractId ||
+    typeof value.episodeId !== "string" || !value.episodeId ||
+    !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) ||
+    expiresAt <= issuedAt || expiresAt - issuedAt > 30 * 60 * 1000 ||
+    value.owner.kind !== "treatment" ||
+    typeof value.owner.treatmentKey !== "string" || !value.owner.treatmentKey
+    || typeof value.sourceSnapshotId !== "string" || !value.sourceSnapshotId
+    || typeof value.sourceTurnId !== "string" || !value.sourceTurnId
+  ) return false;
+  return value.choices.length <= 4 && value.choices.every((choice) => {
+    if (!isRecord(choice) || !isRecord(choice.semantic)) return false;
+    const semantic = choice.semantic;
+    const validSemantic = semantic.kind === "concern"
+      ? typeof semantic.concernKey === "string" && Boolean(semantic.concernKey)
+      : semantic.kind === "approved_asset" &&
+        typeof semantic.replyAssetId === "string" && Boolean(semantic.replyAssetId) &&
+        QUESTION_ASPECTS.includes(semantic.questionAspect as never) &&
+        (semantic.areaKey === undefined || typeof semantic.areaKey === "string") &&
+        (semantic.concernKey === undefined || typeof semantic.concernKey === "string");
+    return (
+      typeof choice.choiceId === "string" && Boolean(choice.choiceId) &&
+      typeof choice.label === "string" && Boolean(choice.label) &&
+      typeof choice.messageText === "string" && Boolean(choice.messageText) &&
+      typeof choice.normalizedMessageText === "string" && Boolean(choice.normalizedMessageText) &&
+      (choice.nextStage === undefined || ["approach", "followup", "initial", "consultation"].includes(String(choice.nextStage))) &&
+      validSemantic
+    );
+  });
 }
 
 /**
@@ -192,7 +249,12 @@ export function parsePersistedConversationV2State(value: unknown): ConversationV
     return null;
   }
   try {
-    return cloneConversationV2State(value as unknown as ConversationV2State);
+    return cloneConversationV2State({
+      ...(value as unknown as ConversationV2State),
+      pendingQuickReply: isPendingQuickReplyContract(value.pendingQuickReply)
+        ? value.pendingQuickReply
+        : undefined,
+    });
   } catch {
     return null;
   }
@@ -374,6 +436,9 @@ export function reduceConversationV2State(
   if (state.processedTurnIds.includes(action.turnId)) {
     return next;
   }
+  // The latest displayed choice contract owns exactly the first accepted
+  // non-duplicate customer turn, whether or not its text matched a choice.
+  delete next.pendingQuickReply;
   if (action.preferenceContext) {
     const excludedPricingSubjects = new Set(action.preferenceContext.excludedTreatmentKeys);
     const clinicTreatmentKeys = action.type === "answer_clinic_info"

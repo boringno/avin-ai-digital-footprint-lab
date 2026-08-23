@@ -42,7 +42,7 @@ import {
 } from "@/lib/reply-renderer";
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { routeCustomerMessage, shouldAllowAiFallbackReply, type RouterDecision } from "@/lib/router";
-import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
+import type { LineQuickReplyItem, LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import { appendReplyDeadLetter } from "@/lib/webhook-dead-letter";
 import {
   routeConversationV2Canary,
@@ -135,6 +135,7 @@ type ClassifiedDecision = {
   rendererTelemetry?: ReplyRendererTelemetry;
   routeVersion?: "preflight" | "v1" | "v2";
   replyMessages?: LineReplyMessage[];
+  replyQuickReplyItems?: LineQuickReplyItem[];
   replyText: string;
   suppressAiFooter?: boolean;
   shouldIntroduce: boolean;
@@ -315,8 +316,45 @@ export function applyControlledScheduleDecision(
   };
 }
 
-export function shouldSuppressOuterAiFooter(generated: boolean, plan: Pick<ReplyPlan, "suppressAiFooter">) {
-  return generated || plan.suppressAiFooter;
+export function shouldSuppressOuterAiFooter(
+  _generated: boolean,
+  plan: Pick<ReplyPlan, "suppressAiFooter">,
+) {
+  // The final LINE payload is the single disclosure owner. Generated,
+  // deterministic and guarded-fallback renderer outputs all follow this rule.
+  return plan.suppressAiFooter;
+}
+
+export function reconcileRenderedQuickReplyContract(
+  context: ConversationContext,
+  quickReplyItems: readonly LineQuickReplyItem[],
+) {
+  const contract = context.conversationV2State?.pendingQuickReply;
+  if (!contract) return context;
+  const deliveredTexts = new Set(quickReplyItems.map((item) => item.action.text));
+  if (contract.choices.every((choice) => deliveredTexts.has(choice.messageText))) {
+    return context;
+  }
+  const nextContext = structuredClone(context);
+  if (nextContext.conversationV2State) {
+    delete nextContext.conversationV2State.pendingQuickReply;
+  }
+  return nextContext;
+}
+
+export function reconcileUndeliveredQuickReplyContract(
+  context: ConversationContext,
+  identity: ConversationTurnIdentity,
+) {
+  const contract = context.conversationV2State?.pendingQuickReply;
+  if (!contract) return context;
+  const sourceTurnId = identity.messageId || identity.webhookEventId || identity.replyToken;
+  if (!sourceTurnId || contract.sourceTurnId !== sourceTurnId) return context;
+  const nextContext = structuredClone(context);
+  if (nextContext.conversationV2State) {
+    delete nextContext.conversationV2State.pendingQuickReply;
+  }
+  return nextContext;
 }
 
 export class InvalidWebhookPayloadError extends Error {
@@ -447,29 +485,51 @@ export function buildReplyPayload(
   shouldIntroduce: boolean,
   replyMessages?: LineReplyMessage[],
   suppressAiFooter = false,
+  explicitQuickReplyItems?: readonly LineQuickReplyItem[],
 ) {
   const introducedText = shouldIntroduce && !replyText.includes("AI 客服") ? `${AI_INTRO_TEXT}\n\n${replyText}` : replyText;
   const finalText = suppressAiFooter ? introducedText : appendAiFooter(introducedText);
-  const baseMessages: LineReplyMessage[] = replyMessages?.length
+  const formattedReplyMessages = replyMessages?.length
+    ? formatReplyMessages(replyMessages)
+    : [];
+  const richBaseMessages: LineReplyMessage[] = replyMessages?.length
     ? [
-        ...(shouldIntroduce && !suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_INTRO_TEXT) } satisfies LineTextMessage] : []),
-        ...formatReplyMessages(replyMessages),
-        ...(!suppressAiFooter ? [{ type: "text", text: formatReplyText(AI_REPLY_FOOTER) } satisfies LineTextMessage] : []),
+        ...(shouldIntroduce && !suppressAiFooter
+          ? [{ type: "text", text: formatReplyText(AI_INTRO_TEXT) } satisfies LineTextMessage]
+          : []),
+        ...formattedReplyMessages,
       ]
+    : [];
+  if (replyMessages?.length && !suppressAiFooter) {
+    const lastIndex = richBaseMessages.length - 1;
+    const lastMessage = richBaseMessages[lastIndex];
+    if (lastMessage?.type === "text") {
+      richBaseMessages[lastIndex] = {
+        ...lastMessage,
+        text: appendAiFooter(lastMessage.text),
+      } satisfies LineTextMessage;
+    } else {
+      richBaseMessages.push({ type: "text", text: formatReplyText(AI_REPLY_FOOTER) });
+    }
+  }
+  const baseMessages: LineReplyMessage[] = replyMessages?.length
+    ? richBaseMessages
     : buildTextReplyMessages(finalText);
   const messagesWithoutQuickReplies: LineReplyMessage[] = replyMessages?.length
     ? baseMessages.flatMap((message): LineReplyMessage[] =>
         message.type === "text" ? buildTextReplyMessages(message.text) : [message],
       )
     : baseMessages;
-  const explicitQuickReplyItems = replyMessages
+  const quickReplyItems = explicitQuickReplyItems?.length
+    ? [...explicitQuickReplyItems]
+    : replyMessages
     ?.filter((message): message is LineTextMessage => message.type === "text")
     .map((message) => message.quickReply?.items ?? [])
     .find((items) => items.length > 0);
   const messages = attachApprovedQuickReplies(
     messagesWithoutQuickReplies,
     replyText,
-    explicitQuickReplyItems,
+    quickReplyItems,
   );
 
   return {
@@ -844,9 +904,8 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     customerMessage,
     dialogueState,
     footer: AI_REPLY_FOOTER,
-    // Generated messages own their disclosure because the outer payload builder
-    // suppresses its footer to avoid duplication.
-    includeFooter: true,
+    // The final LINE payload is the single disclosure owner for every mode.
+    includeFooter: false,
     plan: replyPlan,
     recentTurns: synchronizedContext.recentTurns ?? [],
   });
@@ -860,13 +919,20 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   const replyMessages = rendered.handoffRequired
     ? undefined
     : formatReplyMessages(rendered.messages);
+  const replyQuickReplyItems = rendered.replyTextSource === "approved_terminal_fallback"
+    ? []
+    : [...replyPlan.quickReplyItems];
+  const renderedContext = reconcileRenderedQuickReplyContract(
+    synchronizedContext,
+    replyQuickReplyItems,
+  );
 
   const introducedInReply = replyText.includes(clinicConfig.aiName);
   const nextContext = appendRecentConversationTurns(
     {
-      ...synchronizedContext,
+      ...renderedContext,
       introSent: existingContext.introSent || introducedInReply || Boolean(replyText),
-      lastIntent: synchronizedContext.lastIntent,
+      lastIntent: renderedContext.lastIntent,
     },
     [
       createRecentConversationTurn("user", customerMessage, getEventTurnIdentity(event)),
@@ -940,9 +1006,10 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     rendererTelemetry,
     routeVersion: usedConversationV2 ? "v2" : "v1",
     replyMessages,
+    replyQuickReplyItems,
     replyText,
-    // Customer-visible generated messages already include the disclosure. A
-    // guarded fallback still relies on the outer payload footer.
+    // The outer LINE payload adds one disclosure unless the plan explicitly
+    // suppresses it (for example a non-AI rich message).
     suppressAiFooter: shouldSuppressOuterAiFooter(rendered.generated, replyPlan),
     shouldIntroduce: rendered.generated ? false : !existingContext.introSent && !introducedInReply,
     usedAiHumanizer,
@@ -958,7 +1025,14 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
     const decision = await classifyEvent(event, options);
     const replyToken = event.replyToken ?? "";
     const replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
-      ? buildReplyPayload(replyToken, decision.replyText, decision.shouldIntroduce, decision.replyMessages, decision.suppressAiFooter)
+      ? buildReplyPayload(
+          replyToken,
+          decision.replyText,
+          decision.shouldIntroduce,
+          decision.replyMessages,
+          decision.suppressAiFooter,
+          decision.replyQuickReplyItems,
+        )
       : null;
     const eventIdentity = getEventTurnIdentity(event);
     const currentTurnIds = new Set([
@@ -1134,7 +1208,7 @@ export async function isReplyStillAuthorized(
 }
 
 async function removeSuppressedReplyFromContext(result: ProcessedWebhookResult) {
-  if (!result.sourceUserId || !result.decision.replyText) return;
+  if (!result.sourceUserId) return;
   try {
     const currentContext = await loadConversationContext(result.sourceUserId);
     const assistantTurnId = buildConversationTurnId("assistant", {
@@ -1142,7 +1216,14 @@ async function removeSuppressedReplyFromContext(result: ProcessedWebhookResult) 
       replyToken: result.replyToken,
       webhookEventId: result.webhookEventId,
     });
-    const nextContext = removeUnsentAssistantTurn(currentContext, result.decision.replyText, assistantTurnId);
+    const contextWithoutAssistantTurn = result.decision.replyText
+      ? removeUnsentAssistantTurn(currentContext, result.decision.replyText, assistantTurnId)
+      : currentContext;
+    const nextContext = reconcileUndeliveredQuickReplyContract(contextWithoutAssistantTurn, {
+      messageId: result.messageId,
+      replyToken: result.replyToken,
+      webhookEventId: result.webhookEventId,
+    });
     if (nextContext !== currentContext) {
       await saveConversationContext(nextContext, currentContext);
     }

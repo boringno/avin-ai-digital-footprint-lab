@@ -1,11 +1,18 @@
 import {
-  findTreatmentByKey,
+  clinicConfig,
+  normalizeClinicText,
+  type ClinicConfig,
+  type CustomerQuickReplyChoice,
   type CustomerQuickReplyStage,
 } from "@/lib/clinic-config";
 import { lineQuickReplyItems } from "@/lib/line-quick-replies";
 import type { ReplyPlan } from "@/lib/reply-plan";
 
-import type { ConversationV2State } from "./types";
+import { buildConversationV2QuickReplySelection } from "./quick-reply-selection";
+import type {
+  ConversationV2State,
+  PendingQuickReplyContract,
+} from "./types";
 import { isConsultationInvitationPaused } from "./consultation-invitation";
 
 const CONSULTATION_ACTIONS = [
@@ -34,22 +41,29 @@ const TREATMENT_DIALOGUE_ACTS = new Set<ReplyPlan["dialogueAct"]>([
   "quote_approved_price",
 ]);
 
-/**
- * LINE choices are selected from the canonical V2 state, never inferred from
- * a rendered sentence.  A tap sends normal customer text, so free typing and
- * the same deterministic router remain available.
- */
-export function conversationV2QuickReplyItems(
+type QuickReplyOptions = {
+  clinic?: ClinicConfig;
+  issuedAt?: string;
+  nextStage?: CustomerQuickReplyStage | "consultation";
+  snapshotId?: string;
+};
+
+type ProjectedQuickReplyAction = {
+  choice?: CustomerQuickReplyChoice;
+  label: string;
+  text: string;
+};
+
+function conversationV2QuickReplyActions(
   plan: ReplyPlan,
   state: ConversationV2State,
-  options: {
-    nextStage?: CustomerQuickReplyStage | "consultation";
-  } = {},
-) {
+  options: QuickReplyOptions = {},
+): ProjectedQuickReplyAction[] {
+  const clinic = options.clinic ?? clinicConfig;
   if (state.bookingTask.status === "collecting") {
-    if (state.bookingTask.expectedField === "branch") return lineQuickReplyItems(BRANCH_ACTIONS);
-    if (state.bookingTask.expectedField === "first_visit") return lineQuickReplyItems(FIRST_VISIT_ACTIONS);
-    return [];
+    if (state.bookingTask.expectedField === "branch") return [...BRANCH_ACTIONS] satisfies ProjectedQuickReplyAction[];
+    if (state.bookingTask.expectedField === "first_visit") return [...FIRST_VISIT_ACTIONS] satisfies ProjectedQuickReplyAction[];
+    return [] as ProjectedQuickReplyAction[];
   }
 
   const treatmentKeys = plan.treatmentKeys.length > 0
@@ -59,17 +73,14 @@ export function conversationV2QuickReplyItems(
     plan.dialogueAct === "quote_approved_price" ||
     options.nextStage === "consultation"
   ) {
-    return lineQuickReplyItems(
-      isConsultationInvitationPaused(state, treatmentKeys)
-        ? PAUSED_CONSULTATION_ACTIONS
-        : CONSULTATION_ACTIONS,
-    );
+    return [...(isConsultationInvitationPaused(state, treatmentKeys)
+      ? PAUSED_CONSULTATION_ACTIONS
+      : CONSULTATION_ACTIONS)] satisfies ProjectedQuickReplyAction[];
   }
-  if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [];
+  if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [] as ProjectedQuickReplyAction[];
+  if (treatmentKeys.length !== 1) return [] as ProjectedQuickReplyAction[];
 
-  if (treatmentKeys.length !== 1) return [];
-
-  const guide = findTreatmentByKey(treatmentKeys[0])?.consultationGuide;
+  const guide = clinic.treatmentList.find((item) => item.key === treatmentKeys[0])?.consultationGuide;
   const customerChoices = guide?.customerQuickReplies ?? [];
   const stage = options.nextStage ?? (
     state.knowledge.concernKeys.length > 0 ? "followup" : "initial"
@@ -78,22 +89,92 @@ export function conversationV2QuickReplyItems(
   const concernChoices = stagedChoices.filter((choice) =>
     choice.concernKeys?.some((key) => state.knowledge.concernKeys.includes(key)),
   );
-  // Once the customer has told us their concern, offer the next useful
-  // decision for that concern.  Generic choices remain the fallback for an
-  // unqualified treatment question, rather than crowding out this turn's
-  // follow-up question on a small LINE screen.
-  const actions = concernChoices.length > 0
+  return (concernChoices.length > 0
     ? concernChoices
-    : stagedChoices.filter((choice) => !choice.concernKeys?.length);
-  return lineQuickReplyItems(actions.slice(0, 4));
+    : stagedChoices.filter((choice) => !choice.concernKeys?.length))
+    .slice(0, 4)
+    .map((choice) => ({ choice, label: choice.label, text: choice.text }));
+}
+
+/**
+ * LINE choices are selected from the canonical V2 state, never inferred from
+ * a rendered sentence.  A tap sends normal customer text, so free typing and
+ * the same deterministic router remain available.
+ */
+export function conversationV2QuickReplyItems(
+  plan: ReplyPlan,
+  state: ConversationV2State,
+  options: QuickReplyOptions = {},
+) {
+  return lineQuickReplyItems(conversationV2QuickReplyActions(plan, state, options));
+}
+
+export function projectConversationV2QuickReplies(
+  plan: ReplyPlan,
+  state: ConversationV2State,
+  options: Required<Pick<QuickReplyOptions, "issuedAt" | "snapshotId">> & QuickReplyOptions,
+): { pendingQuickReply?: PendingQuickReplyContract; plan: ReplyPlan } {
+  const clinic = options.clinic ?? clinicConfig;
+  const actions = conversationV2QuickReplyActions(plan, state, options);
+  const quickReplyItems = lineQuickReplyItems(actions);
+  const projectedPlan = quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
+  const treatmentKeys = plan.treatmentKeys.length > 0
+    ? plan.treatmentKeys
+    : state.knowledge.treatmentKeys;
+  if (treatmentKeys.length !== 1 || quickReplyItems.length === 0) {
+    return { plan: projectedPlan };
+  }
+
+  const treatmentKey = treatmentKeys[0]!;
+  const choices = actions.flatMap((action, index) => {
+    const configured = action.choice;
+    if (!configured?.semantic) return [];
+    const selection = buildConversationV2QuickReplySelection({
+      choice: configured,
+      clinic,
+      treatmentKey,
+    });
+    if (!selection) return [];
+    const semantic = configured.semantic.type === "concern"
+      ? { concernKey: configured.semantic.concernKey, kind: "concern" as const }
+      : {
+          ...(configured.semantic.areaKey ? { areaKey: configured.semantic.areaKey } : {}),
+          ...(configured.semantic.concernKey ? { concernKey: configured.semantic.concernKey } : {}),
+          kind: "approved_asset" as const,
+          questionAspect: configured.semantic.questionAspect,
+          replyAssetId: selection.semanticAnchor.replyAssetId!,
+        };
+    return [{
+      choiceId: `${treatmentKey}:${configured.stage}:${index}:${normalizeClinicText(configured.text)}`,
+      label: configured.label,
+      ...(configured.nextStage ? { nextStage: configured.nextStage } : {}),
+      normalizedMessageText: normalizeClinicText(configured.text),
+      messageText: configured.text,
+      semantic,
+    }];
+  });
+  if (choices.length === 0) return { plan: projectedPlan };
+  const issuedAt = new Date(options.issuedAt);
+  if (!Number.isFinite(issuedAt.getTime())) return { plan: projectedPlan };
+  return {
+    pendingQuickReply: {
+      choices,
+      episodeId: state.episodeId,
+      expiresAt: new Date(issuedAt.getTime() + 30 * 60 * 1000).toISOString(),
+      contractId: `${state.episodeId}:${state.lastProcessedTurnId ?? "uncommitted"}:quick-reply`,
+      issuedAt: issuedAt.toISOString(),
+      owner: { kind: "treatment", treatmentKey },
+      sourceSnapshotId: options.snapshotId,
+      sourceTurnId: state.lastProcessedTurnId ?? "uncommitted",
+    },
+    plan: projectedPlan,
+  };
 }
 
 export function withConversationV2QuickReplies(
   plan: ReplyPlan,
   state: ConversationV2State,
-  options: {
-    nextStage?: CustomerQuickReplyStage | "consultation";
-  } = {},
+  options: QuickReplyOptions = {},
 ) {
   const quickReplyItems = conversationV2QuickReplyItems(plan, state, options);
   return quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
