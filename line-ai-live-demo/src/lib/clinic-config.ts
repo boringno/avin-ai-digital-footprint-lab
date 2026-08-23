@@ -47,6 +47,16 @@ export type TreatmentConversationPack = {
     reply: string;
     terms: string[];
   }>;
+  /**
+   * Customer-facing LINE quick replies.  Unlike `quickReplies` above, these
+   * are presentation choices, not terms the router has to guess from prose.
+   */
+  customerQuickReplies?: Array<{
+    concernKeys?: string[];
+    label: string;
+    stage: "initial" | "followup";
+    text: string;
+  }>;
   relatedReplies?: Array<{
     followupPrompt: string;
     key: string;
@@ -520,6 +530,16 @@ export const clinicConfig: ClinicConfig = {
             followupPrompt: "直接告訴我最想問的重點就可以。",
           },
         ],
+        customerQuickReplies: [
+          { label: "雙下巴／嘴邊肉", text: "我想改善雙下巴／嘴邊肉", stage: "initial" },
+          { label: "身體局部脂肪", text: "我想改善身體局部脂肪", stage: "initial" },
+          { label: "療程特色", text: "ONDA 療程特色", stage: "initial" },
+          { label: "價格／活動", text: "ONDA 體驗價多少", stage: "initial" },
+          { label: "脂肪堆積", text: "脂肪堆積", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "下顎線鬆弛", text: "下顎線鬆弛", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "ONDA＋肉毒組合", text: "ONDA＋肉毒小臉組合", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
+        ],
         relatedReplies: [
           {
             followupPrompt: "您比較在意咀嚼肌造成的臉寬，還是雙下巴與下顎線呢？😊",
@@ -846,6 +866,16 @@ export const clinicConfig: ClinicConfig = {
             reply: "😊 可以，您想繼續了解肉毒的改善方向、品牌差異，還是價格呢？",
             followupPrompt: "直接告訴我最想問的重點就可以。",
           },
+        ],
+        customerQuickReplies: [
+          { label: "動態紋", text: "我想改善動態紋", stage: "initial" },
+          { label: "咀嚼肌／小臉", text: "我想改善咀嚼肌／小臉", stage: "initial" },
+          { label: "肩頸／小腿", text: "我想改善肩頸／小腿", stage: "initial" },
+          { label: "腋下／手汗", text: "我想改善腋下／手汗", stage: "initial" },
+          { label: "品牌差異", text: "肉毒有哪些品牌", stage: "followup" },
+          { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup" },
+          { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
+          { label: "真人客服協助", text: "我要找真人客服", stage: "followup" },
         ],
       },
       evaluationNote: "實際品項與劑量仍需依部位需求與醫師評估為主。",

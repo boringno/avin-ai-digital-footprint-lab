@@ -97,6 +97,7 @@ jobs:
           npm run validate:conversation-v2
           npm run validate:conversation-v2-customer-experience
           npm run validate:conversation-v2-journey
+          npm run validate:conversation-v2-quick-replies
           npm run validate:conversation-v2-nlu-adapter
           npm run validate:conversation-v2-repository
           npm run validate:conversation-v2-runtime-shadow

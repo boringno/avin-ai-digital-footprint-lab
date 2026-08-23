@@ -32,11 +32,20 @@ export function approvedQuickReplyItems(replyText: string): LineQuickReplyItem[]
   return [];
 }
 
+export function lineQuickReplyItems(
+  actions: readonly { label: string; text: string }[],
+): LineQuickReplyItem[] {
+  return toLineItems(actions);
+}
+
 export function attachApprovedQuickReplies(
   messages: readonly LineReplyMessage[],
   replyText: string,
+  explicitItems?: readonly LineQuickReplyItem[],
 ) {
-  const items = approvedQuickReplyItems(replyText);
+  const items = explicitItems?.length
+    ? [...explicitItems]
+    : approvedQuickReplyItems(replyText);
   if (items.length === 0) return [...messages];
 
   let lastTextIndex = -1;

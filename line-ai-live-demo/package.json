@@ -77,6 +77,7 @@
     "validate:conversation-v2-runtime-provider": "tsx scripts/validate-conversation-v2-runtime-provider.ts",
     "validate:conversation-v2-canary": "tsx scripts/validate-conversation-v2-canary.ts",
     "validate:conversation-v2-customer-quality-fixtures": "tsx scripts/validate-conversation-v2-customer-quality-fixtures.ts",
+    "validate:conversation-v2-quick-replies": "tsx scripts/validate-conversation-v2-quick-replies.ts",
     "validate:conversation-state-v3": "tsx scripts/validate-conversation-state-v3.ts",
     "validate:conversation-state-envelope": "tsx scripts/validate-conversation-state-envelope.ts",
     "validate:conversation-state-registry": "tsx scripts/validate-conversation-state-registry.ts",

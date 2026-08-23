@@ -462,7 +462,15 @@ export function buildReplyPayload(
         message.type === "text" ? buildTextReplyMessages(message.text) : [message],
       )
     : baseMessages;
-  const messages = attachApprovedQuickReplies(messagesWithoutQuickReplies, replyText);
+  const explicitQuickReplyItems = replyMessages
+    ?.filter((message): message is LineTextMessage => message.type === "text")
+    .map((message) => message.quickReply?.items ?? [])
+    .find((items) => items.length > 0);
+  const messages = attachApprovedQuickReplies(
+    messagesWithoutQuickReplies,
+    replyText,
+    explicitQuickReplyItems,
+  );
 
   return {
     replyToken,
@@ -851,11 +859,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   const rendererTelemetry = toReplyRendererTelemetry(rendered);
   const replyMessages = rendered.handoffRequired
     ? undefined
-    : rendered.generated
-    ? formatReplyMessages(rendered.messages)
-    : routedDecision.replyMessages
-      ? formatReplyMessages(routedDecision.replyMessages)
-      : undefined;
+    : formatReplyMessages(rendered.messages);
 
   const introducedInReply = replyText.includes(clinicConfig.aiName);
   const nextContext = appendRecentConversationTurns(
