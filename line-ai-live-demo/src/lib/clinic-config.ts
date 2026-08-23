@@ -1,4 +1,21 @@
 import type { TreatmentConversationBehavior } from "@/lib/conversation-behavior";
+import type { QuestionAspect } from "@/lib/dialogue-semantics";
+
+export type CustomerQuickReplyStage = "approach" | "followup" | "initial";
+
+export type CustomerQuickReplySemantic =
+  | {
+      concernKey: string;
+      type: "concern";
+    }
+  | {
+      areaKey?: string;
+      assetKey: string;
+      assetKind: "detail" | "quick";
+      concernKey?: string;
+      questionAspect: QuestionAspect;
+      type: "approved_asset";
+    };
 
 export type BranchConfig = {
   address: string;
@@ -54,7 +71,9 @@ export type TreatmentConversationPack = {
   customerQuickReplies?: Array<{
     concernKeys?: string[];
     label: string;
-    stage: "initial" | "followup";
+    nextStage?: CustomerQuickReplyStage | "consultation";
+    semantic?: CustomerQuickReplySemantic;
+    stage: CustomerQuickReplyStage;
     text: string;
   }>;
   relatedReplies?: Array<{
@@ -472,10 +491,19 @@ export const clinicConfig: ClinicConfig = {
             aspectKey: "jawline_combination_difference",
             behaviors: ["combination_comparison", "combination_declined", "single_treatment_preference"],
             concernKey: "jawline_looseness",
+            pricingCampaignId: "promo-2026-08-face-contour-combo",
             terms: [],
             reply:
               "🟢 ONDA Pro 主要從雙下巴的局部脂肪與緊實方向評估；肉毒小臉則著重放鬆肥厚的咀嚼肌。若同時有脂肪感與肌肉型臉寬，才會一起比較搭配方向。",
             followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "jawline_looseness_focus",
+            concernKey: "jawline_looseness",
+            terms: ["下顎線鬆弛"],
+            reply:
+              "🌿 如果主要在意下顎線鬆弛，ONDA Pro 會從輪廓緊實與局部脂肪分布一起評估；若鬆弛來源不只脂肪，醫師也會依現場狀況整理其他方向。",
+            followupPrompt: "😊 您想先比較單做 ONDA Pro 與搭配方案，還是直接了解目前價格呢？",
           },
           {
             aspectKey: "jawline_single_treatment",
@@ -531,19 +559,27 @@ export const clinicConfig: ClinicConfig = {
           },
         ],
         customerQuickReplies: [
-          { label: "雙下巴／嘴邊肉", text: "我想改善雙下巴／嘴邊肉", stage: "initial" },
-          { label: "身體局部脂肪", text: "我想改善身體局部脂肪", stage: "initial" },
-          { label: "療程特色", text: "ONDA 療程特色", stage: "initial" },
+          { label: "雙下巴／嘴邊肉", nextStage: "followup", semantic: { concernKey: "jawline_looseness", type: "concern" }, text: "我想改善雙下巴／嘴邊肉", stage: "initial" },
+          { label: "身體局部脂肪", nextStage: "followup", semantic: { concernKey: "local_contour", type: "concern" }, text: "我想改善身體局部脂肪", stage: "initial" },
+          { label: "療程特色", nextStage: "initial", semantic: { assetKey: "features", assetKind: "quick", questionAspect: "mechanism", type: "approved_asset" }, text: "ONDA 療程特色", stage: "initial" },
           { label: "價格／活動", text: "ONDA 體驗價多少", stage: "initial" },
-          { label: "脂肪堆積", text: "脂肪堆積", stage: "followup", concernKeys: ["jawline_looseness"] },
-          { label: "下顎線鬆弛", text: "下顎線鬆弛", stage: "followup", concernKeys: ["jawline_looseness"] },
-          { label: "ONDA＋肉毒組合", text: "ONDA＋肉毒小臉組合", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "脂肪堆積", nextStage: "approach", semantic: { assetKey: "jawline_expectation", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "benefits", type: "approved_asset" }, text: "脂肪堆積", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "下顎線鬆弛", nextStage: "approach", semantic: { assetKey: "jawline_looseness_focus", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "benefits", type: "approved_asset" }, text: "下顎線鬆弛", stage: "followup", concernKeys: ["jawline_looseness"] },
+          { label: "ONDA＋肉毒組合", nextStage: "consultation", semantic: { assetKey: "jawline_combination_difference", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "ONDA＋肉毒小臉組合", stage: "followup", concernKeys: ["jawline_looseness"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["jawline_looseness"] },
-          { label: "手臂", text: "我在意手臂脂肪", stage: "followup", concernKeys: ["local_contour"] },
-          { label: "腹部／腰側", text: "我在意腹部／腰側脂肪", stage: "followup", concernKeys: ["local_contour"] },
-          { label: "大腿／臀部", text: "我在意大腿／臀部脂肪", stage: "followup", concernKeys: ["local_contour"] },
+          { label: "手臂", nextStage: "approach", semantic: { areaKey: "arm", assetKey: "body_area_direction", assetKind: "detail", concernKey: "local_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意手臂脂肪", stage: "followup", concernKeys: ["local_contour"] },
+          { label: "腹部／腰側", nextStage: "approach", semantic: { areaKey: "abdomen", assetKey: "body_area_direction", assetKind: "detail", concernKey: "local_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意腹部／腰側脂肪", stage: "followup", concernKeys: ["local_contour"] },
+          { label: "大腿／臀部", nextStage: "approach", semantic: { areaKey: "thigh", assetKey: "body_area_direction", assetKind: "detail", concernKey: "local_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意大腿／臀部脂肪", stage: "followup", concernKeys: ["local_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["local_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
+          { label: "單做 ONDA", nextStage: "consultation", semantic: { assetKey: "jawline_single_treatment", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "我想先單做 ONDA", stage: "approach", concernKeys: ["jawline_looseness"] },
+          { label: "ONDA＋肉毒組合", nextStage: "consultation", semantic: { assetKey: "jawline_combination_difference", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "ONDA＋肉毒小臉組合", stage: "approach", concernKeys: ["jawline_looseness"] },
+          { label: "價格／活動", text: "ONDA 體驗價多少", stage: "approach", concernKeys: ["jawline_looseness"] },
+          { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "approach", concernKeys: ["jawline_looseness"] },
+          { label: "價格／活動", text: "ONDA 體驗價多少", stage: "approach", concernKeys: ["local_contour"] },
+          { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "approach", concernKeys: ["local_contour"] },
+          { label: "真人客服協助", text: "我要找真人客服", stage: "approach", concernKeys: ["local_contour"] },
+          { label: "繼續詢問", text: "繼續詢問", stage: "approach", concernKeys: ["local_contour"] },
         ],
         relatedReplies: [
           {
@@ -836,6 +872,30 @@ export const clinicConfig: ClinicConfig = {
             followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
           },
           {
+            aspectKey: "muscle_contour_tightness",
+            concernKey: "muscle_contour",
+            terms: ["緊繃感", "肩頸緊繃", "小腿緊繃", "肌肉緊繃"],
+            reply:
+              "🌿 如果主要在意肩頸或小腿的緊繃感，醫師會先了解肌肉活動與日常困擾；若伴隨明顯疼痛或功能問題，也會一起評估原因。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "localized_sweating_armpit",
+            concernKey: "localized_sweating",
+            terms: ["腋下多汗", "腋下流汗"],
+            reply:
+              "🌿 已記下主要困擾是腋下多汗。醫師會依出汗範圍、頻率及對衣物與日常活動的影響，評估適合的處理方向。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
+            aspectKey: "localized_sweating_hand",
+            concernKey: "localized_sweating",
+            terms: ["手汗", "手掌多汗"],
+            reply:
+              "🌿 已記下主要困擾是手汗。醫師會依出汗範圍、頻率及對工作與日常活動的影響，評估適合的處理方向。",
+            followupPrompt: CONSULTATION_NEXT_STEP_PROMPT,
+          },
+          {
             aspectKey: "localized_sweating_impact",
             concernKey: "localized_sweating",
             terms: ["影響衣物", "衣服濕", "影響工作", "影響生活", "很困擾", "出汗很多"],
@@ -873,24 +933,24 @@ export const clinicConfig: ClinicConfig = {
           },
         ],
         customerQuickReplies: [
-          { label: "動態紋", text: "我想改善動態紋", stage: "initial" },
-          { label: "咀嚼肌／小臉", text: "我想改善咀嚼肌／小臉", stage: "initial" },
-          { label: "肩頸／小腿", text: "我想改善肩頸／小腿", stage: "initial" },
-          { label: "腋下／手汗", text: "我想改善腋下／手汗", stage: "initial" },
-          { label: "做表情時明顯", text: "做表情時比較明顯", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
-          { label: "平時也看得到", text: "平時也看得到", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
+          { label: "動態紋", nextStage: "followup", semantic: { concernKey: "dynamic_wrinkles", type: "concern" }, text: "我想改善動態紋", stage: "initial" },
+          { label: "咀嚼肌／小臉", nextStage: "followup", semantic: { concernKey: "masseter_contour", type: "concern" }, text: "我想改善咀嚼肌／小臉", stage: "initial" },
+          { label: "肩頸／小腿", nextStage: "followup", semantic: { concernKey: "muscle_contour", type: "concern" }, text: "我想改善肩頸／小腿", stage: "initial" },
+          { label: "腋下／手汗", nextStage: "followup", semantic: { concernKey: "localized_sweating", type: "concern" }, text: "我想改善腋下／手汗", stage: "initial" },
+          { label: "做表情時明顯", nextStage: "consultation", semantic: { assetKey: "dynamic_wrinkles_expression_only", assetKind: "detail", concernKey: "dynamic_wrinkles", questionAspect: "benefits", type: "approved_asset" }, text: "做表情時比較明顯", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
+          { label: "平時也看得到", nextStage: "consultation", semantic: { assetKey: "dynamic_wrinkles_at_rest", assetKind: "detail", concernKey: "dynamic_wrinkles", questionAspect: "benefits", type: "approved_asset" }, text: "平時也看得到", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["dynamic_wrinkles"] },
-          { label: "臉型偏寬", text: "臉型偏寬", stage: "followup", concernKeys: ["masseter_contour"] },
-          { label: "咬肌緊繃", text: "咬肌緊繃", stage: "followup", concernKeys: ["masseter_contour"] },
+          { label: "臉型偏寬", nextStage: "consultation", semantic: { assetKey: "masseter_face_width", assetKind: "detail", concernKey: "masseter_contour", questionAspect: "benefits", type: "approved_asset" }, text: "臉型偏寬", stage: "followup", concernKeys: ["masseter_contour"] },
+          { label: "咬肌緊繃", nextStage: "consultation", semantic: { assetKey: "masseter_tightness", assetKind: "detail", concernKey: "masseter_contour", questionAspect: "benefits", type: "approved_asset" }, text: "咬肌緊繃", stage: "followup", concernKeys: ["masseter_contour"] },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup", concernKeys: ["masseter_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["masseter_contour"] },
-          { label: "肌肉線條", text: "我在意肌肉線條", stage: "followup", concernKeys: ["muscle_contour"] },
-          { label: "緊繃感", text: "我在意緊繃感", stage: "followup", concernKeys: ["muscle_contour"] },
+          { label: "肌肉線條", nextStage: "consultation", semantic: { assetKey: "muscle_contour_lines", assetKind: "detail", concernKey: "muscle_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意肌肉線條", stage: "followup", concernKeys: ["muscle_contour"] },
+          { label: "緊繃感", nextStage: "consultation", semantic: { assetKey: "muscle_contour_tightness", assetKind: "detail", concernKey: "muscle_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意緊繃感", stage: "followup", concernKeys: ["muscle_contour"] },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup", concernKeys: ["muscle_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["muscle_contour"] },
-          { label: "腋下多汗", text: "我在意腋下多汗", stage: "followup", concernKeys: ["localized_sweating"] },
-          { label: "手汗", text: "我在意手汗", stage: "followup", concernKeys: ["localized_sweating"] },
+          { label: "腋下多汗", nextStage: "consultation", semantic: { areaKey: "armpit", assetKey: "localized_sweating_armpit", assetKind: "detail", concernKey: "localized_sweating", questionAspect: "benefits", type: "approved_asset" }, text: "我在意腋下多汗", stage: "followup", concernKeys: ["localized_sweating"] },
+          { label: "手汗", nextStage: "consultation", semantic: { areaKey: "hand", assetKey: "localized_sweating_hand", assetKind: "detail", concernKey: "localized_sweating", questionAspect: "benefits", type: "approved_asset" }, text: "我在意手汗", stage: "followup", concernKeys: ["localized_sweating"] },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup", concernKeys: ["localized_sweating"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["localized_sweating"] },
           { label: "品牌差異", text: "肉毒有哪些品牌", stage: "followup" },

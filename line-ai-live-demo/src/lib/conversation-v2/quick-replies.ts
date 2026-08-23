@@ -1,14 +1,22 @@
-import { findTreatmentByKey } from "@/lib/clinic-config";
+import {
+  findTreatmentByKey,
+  type CustomerQuickReplyStage,
+} from "@/lib/clinic-config";
 import { lineQuickReplyItems } from "@/lib/line-quick-replies";
 import type { ReplyPlan } from "@/lib/reply-plan";
 
 import type { ConversationV2State } from "./types";
+import { isConsultationInvitationPaused } from "./consultation-invitation";
 
 const CONSULTATION_ACTIONS = [
   { label: "預約免費諮詢", text: "我要預約免費諮詢" },
   { label: "真人客服協助", text: "我要找真人客服" },
   { label: "繼續詢問", text: "繼續詢問" },
 ] as const;
+
+const PAUSED_CONSULTATION_ACTIONS = CONSULTATION_ACTIONS.filter(
+  (item) => item.text !== "我要預約免費諮詢",
+);
 
 const BRANCH_ACTIONS = ["高雄館", "台中館", "桃園館", "林口館"].map((name) => ({
   label: name,
@@ -34,6 +42,9 @@ const TREATMENT_DIALOGUE_ACTS = new Set<ReplyPlan["dialogueAct"]>([
 export function conversationV2QuickReplyItems(
   plan: ReplyPlan,
   state: ConversationV2State,
+  options: {
+    nextStage?: CustomerQuickReplyStage | "consultation";
+  } = {},
 ) {
   if (state.bookingTask.status === "collecting") {
     if (state.bookingTask.expectedField === "branch") return lineQuickReplyItems(BRANCH_ACTIONS);
@@ -41,19 +52,28 @@ export function conversationV2QuickReplyItems(
     return [];
   }
 
-  if (plan.dialogueAct === "quote_approved_price") {
-    return lineQuickReplyItems(CONSULTATION_ACTIONS);
-  }
-  if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [];
-
   const treatmentKeys = plan.treatmentKeys.length > 0
     ? plan.treatmentKeys
     : state.knowledge.treatmentKeys;
+  if (
+    plan.dialogueAct === "quote_approved_price" ||
+    options.nextStage === "consultation"
+  ) {
+    return lineQuickReplyItems(
+      isConsultationInvitationPaused(state, treatmentKeys)
+        ? PAUSED_CONSULTATION_ACTIONS
+        : CONSULTATION_ACTIONS,
+    );
+  }
+  if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [];
+
   if (treatmentKeys.length !== 1) return [];
 
   const guide = findTreatmentByKey(treatmentKeys[0])?.consultationGuide;
   const customerChoices = guide?.customerQuickReplies ?? [];
-  const stage = state.knowledge.concernKeys.length > 0 ? "followup" : "initial";
+  const stage = options.nextStage ?? (
+    state.knowledge.concernKeys.length > 0 ? "followup" : "initial"
+  );
   const stagedChoices = customerChoices.filter((choice) => choice.stage === stage);
   const concernChoices = stagedChoices.filter((choice) =>
     choice.concernKeys?.some((key) => state.knowledge.concernKeys.includes(key)),
@@ -71,7 +91,10 @@ export function conversationV2QuickReplyItems(
 export function withConversationV2QuickReplies(
   plan: ReplyPlan,
   state: ConversationV2State,
+  options: {
+    nextStage?: CustomerQuickReplyStage | "consultation";
+  } = {},
 ) {
-  const quickReplyItems = conversationV2QuickReplyItems(plan, state);
+  const quickReplyItems = conversationV2QuickReplyItems(plan, state, options);
   return quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
 }

@@ -36,6 +36,7 @@ import type {
   GeneratedReplyPlan,
   TurnUnderstanding,
 } from "./types";
+import { isConsultationInvitationPaused } from "./consultation-invitation";
 
 type DoctorScheduleDecision = {
   replyMessages?: RendererReplyPlan["richMessages"];
@@ -206,11 +207,8 @@ function resolveApprovedReplyAsset(
   // not create an owner for a stale, ambiguous, or replay-injected turn.
   if (
     treatmentKeys.length !== 1 ||
-    concernKeys.length !== 1 ||
     turnTreatmentKeys.length !== 1 ||
-    turnConcernKeys.length !== 1 ||
-    turnTreatmentKeys[0] !== treatmentKeys[0] ||
-    turnConcernKeys[0] !== concernKeys[0]
+    turnTreatmentKeys[0] !== treatmentKeys[0]
   ) return undefined;
 
   const asset = buildTreatmentReplyAssets(input.snapshot.clinic).find(
@@ -225,10 +223,19 @@ function resolveApprovedReplyAsset(
     !approvedAssetQuestionAspects(asset).has(input.turn.questionAspect)
   ) return undefined;
 
-  if (
-    asset.concernKey &&
-    concernKeys[0] !== asset.concernKey
-  ) return undefined;
+  if (asset.concernKey) {
+    if (
+      concernKeys.length !== 1 ||
+      turnConcernKeys.length !== 1 ||
+      concernKeys[0] !== asset.concernKey ||
+      turnConcernKeys[0] !== concernKeys[0]
+    ) return undefined;
+  } else if (
+    turnConcernKeys.length !== concernKeys.length ||
+    turnConcernKeys.some((key) => !concernKeys.includes(key))
+  ) {
+    return undefined;
+  }
   return asset;
 }
 
@@ -482,7 +489,12 @@ export async function hydrateConversationV2ReplyPlan(
           ...(approvedAssetPrice?.customerFacts ?? []),
         ])
       : [];
-    const approvedAssetNextQuestion = approvedReplyAsset?.followup ?? replyPlan.nextQuestion;
+    const consultationInvitationPaused = approvedReplyAsset
+      ? isConsultationInvitationPaused(input.nextState, [approvedReplyAsset.treatmentKey])
+      : false;
+    const approvedAssetNextQuestion = consultationInvitationPaused
+      ? "😊 可以繼續告訴我想了解的療程細節，我會接著幫您整理。"
+      : approvedReplyAsset?.followup ?? replyPlan.nextQuestion;
     const hasApprovedAnswer = hasFacts || approvedAssetFacts.length > 0;
     const hasUnresolvedRequestedData = hasRequestedDataGaps && !approvedReplyAsset;
     const partialInstruction = treatmentResolution.profileCompleteness === "partial"
