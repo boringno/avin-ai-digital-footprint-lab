@@ -156,8 +156,16 @@ export function resolveConversationV2QuickReplySelection(input: {
   ) return undefined;
 
   const normalizedMessage = normalizeClinicText(input.message);
-  const matches = contract.choices
-    .filter((choice) => choice.normalizedMessageText === normalizedMessage)
+  const exactChoices = contract.choices.filter(
+    (choice) => choice.normalizedMessageText === normalizedMessage,
+  );
+  const affirmative = /^(?:好|好的|好啊|可以|可以啊|沒問題|幫我看|幫我看看|請幫我|麻煩你)$/u.test(normalizedMessage);
+  const selectedChoices = exactChoices.length > 0
+    ? exactChoices
+    : affirmative && contract.choices.length === 1
+      ? contract.choices
+      : [];
+  const matches = selectedChoices
     .map((choice) => selectionFromStoredChoice({
       choice,
       clinic: input.clinic,

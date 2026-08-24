@@ -84,10 +84,28 @@ function conversationV2QuickReplyActions(
   const treatmentKeys = plan.treatmentKeys.length > 0
     ? plan.treatmentKeys
     : state.knowledge.treatmentKeys;
-  if (
-    plan.dialogueAct === "quote_approved_price" ||
-    options.nextStage === "consultation"
-  ) {
+  if (plan.dialogueAct === "quote_approved_price") {
+    const guide = treatmentKeys.length === 1
+      ? clinic.treatmentList.find((item) => item.key === treatmentKeys[0])?.consultationGuide
+      : undefined;
+    const comparisonChoice = guide?.customerQuickReplies?.find((choice) =>
+        choice.stage === "approach" &&
+        choice.semantic?.type === "approved_asset" &&
+        choice.semantic.questionAspect === "single_vs_combination" &&
+        /(?:組合|搭配)/u.test(choice.label),
+      );
+    const consultationActions = isConsultationInvitationPaused(state, treatmentKeys)
+      ? PAUSED_CONSULTATION_ACTIONS
+      : CONSULTATION_ACTIONS;
+    return [
+      ...(comparisonChoice
+        ? [{ choice: comparisonChoice, label: comparisonChoice.label, text: comparisonChoice.text }]
+        : []),
+      ...consultationActions.filter((item) => item.text !== "繼續詢問"),
+      ...(!comparisonChoice ? consultationActions.filter((item) => item.text === "繼續詢問") : []),
+    ].slice(0, 4) satisfies ProjectedQuickReplyAction[];
+  }
+  if (options.nextStage === "consultation") {
     return [...(isConsultationInvitationPaused(state, treatmentKeys)
       ? PAUSED_CONSULTATION_ACTIONS
       : CONSULTATION_ACTIONS)] satisfies ProjectedQuickReplyAction[];

@@ -35,6 +35,7 @@ import { isConversationV2AiAssistanceEnabled } from "./state";
 const CONTENT_SPEECH_ACTS = new Set<DialogueSpeechAct>([
   "ask_concern",
   "ask_treatment_detail",
+  "compare_treatments",
   "learn_treatment",
   "unknown",
 ]);
@@ -88,6 +89,13 @@ const ENTITY_ONLY_FILLERS = [
 ] as const;
 const CONTENT_QUESTION_FILLERS = [
   ...ENTITY_ONLY_FILLERS,
+  "好",
+  "好的",
+  "可以",
+  "可以啊",
+  "沒問題",
+  "幫",
+  "差異",
   "有什麼效果",
   "有沒有什麼效果",
   "有何效果",
@@ -423,10 +431,63 @@ function subjectTreatmentKeys(subjectKey: string | undefined) {
 }
 
 function activeTreatmentKeys(state: ConversationV2State) {
-  if (!["answer_concern", "learn_treatment"].includes(state.activeTask.kind)) return [];
+  if (state.activeTask.kind === "pricing") {
+    return unique(state.pricingSubjectTreatmentKeys);
+  }
+  if (!["answer_concern", "learn_treatment", "compare_treatments"].includes(state.activeTask.kind)) return [];
   const subjectKeys = subjectTreatmentKeys(state.activeTask.subjectKey);
   if (subjectKeys.length > 0) return unique(subjectKeys);
   return unique(state.knowledge.treatmentKeys);
+}
+
+/**
+ * A reviewed combination relationship belongs to the treatment pack. When a
+ * customer accepts the comparison offered immediately after a price answer,
+ * recover that exact pair from the active pricing subject instead of asking
+ * them to repeat two treatment names that the clinic just offered.
+ */
+function resolveActiveCombinationQueryAnchor(
+  input: ResolveSemanticAnchorInput,
+  explicitTreatmentKeys: readonly string[],
+  explicitConcernKeys: readonly string[],
+  explicitAreaKeys: readonly string[],
+  matchedTerms: readonly string[],
+): TrustedSemanticAnchor | undefined {
+  const ownerKeys = activeTreatmentKeys(input.state);
+  if (ownerKeys.length !== 1 || explicitTreatmentKeys.length > 1) return undefined;
+  const ownerKey = ownerKeys[0]!;
+  if (explicitTreatmentKeys.length === 1 && explicitTreatmentKeys[0] !== ownerKey) return undefined;
+
+  const aspect = inferDeterministicContentQuestionAspect(
+    input.message,
+    matchedTerms,
+    APPROVED_ASSET_NEUTRAL_FILLERS,
+  );
+  if (!["single_vs_combination", "combination_reason", "general_difference"].includes(aspect ?? "")) {
+    return undefined;
+  }
+  const treatment = input.clinic.treatmentList.find((item) => item.key === ownerKey);
+  const companions = unique(
+    (treatment?.consultationGuide?.approvedCombinationTreatmentKeys ?? [])
+      .filter((key) => !input.state.preferences.excludedTreatmentKeys.includes(key)),
+  );
+  if (companions.length !== 1) return undefined;
+
+  const concernKeys = unique([
+    ...explicitConcernKeys,
+    ...input.state.knowledge.concernKeys.filter((key) =>
+      treatmentSupportsConcern(input.clinic, ownerKey, key)),
+  ]);
+  return {
+    areaKeys: unique([...explicitAreaKeys, ...input.state.knowledge.areaKeys]),
+    concernKeys,
+    conversationMove: "continue",
+    dialogueReference: "active_comparison",
+    questionAspect: "single_vs_combination",
+    source: "active_subject_query",
+    speechAct: "compare_treatments",
+    treatmentKeys: [ownerKey, companions[0]!],
+  };
 }
 
 function contentActionAllowed(candidate: SemanticAnchorCandidate | undefined) {
@@ -950,6 +1011,15 @@ export function resolveTrustedSemanticAnchor(
   const effectiveInput = effectiveCandidate === input.candidate
     ? scopedInput
     : { ...scopedInput, candidate: effectiveCandidate };
+
+  const activeCombinationAnchor = resolveActiveCombinationQueryAnchor(
+    effectiveInput,
+    treatmentKeys,
+    concernKeys,
+    areaKeys,
+    matchedTerms,
+  );
+  if (activeCombinationAnchor) return activeCombinationAnchor;
 
   const approvedAssetAnchor = resolveApprovedAssetAnchor(
     effectiveInput,

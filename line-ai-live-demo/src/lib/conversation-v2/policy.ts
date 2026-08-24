@@ -1031,15 +1031,21 @@ export function evaluateDialoguePolicy(
     const hasActiveComparison =
       state.activeTask.kind === "compare_treatments" &&
       state.knowledge.treatmentKeys.length >= 2;
+    const hasTrustedCurrentComparison = Boolean(
+      turn.semanticEvidence &&
+      confirmedKeys(turn, affirmedTreatments).length >= 2,
+    );
     const isContextualComparison =
       turn.speechAct === "compare_treatments" &&
-      ((turn.dialogueReference === "active_comparison" && hasActiveComparison) ||
+      ((turn.dialogueReference === "active_comparison" &&
+        (hasActiveComparison || hasTrustedCurrentComparison)) ||
         (turn.dialogueReference === "active_subject" &&
           state.knowledge.treatmentKeys.length > 0));
     const invalidActiveComparisonReference =
       turn.speechAct === "compare_treatments" &&
       turn.dialogueReference === "active_comparison" &&
-      !hasActiveComparison;
+      !hasActiveComparison &&
+      !hasTrustedCurrentComparison;
     const selectionEligible = Boolean(
       state.awaiting &&
         (turn.speechAct === "select_options" ||
