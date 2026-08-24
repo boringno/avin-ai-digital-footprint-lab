@@ -406,9 +406,10 @@ function hasContraindicationOrMedicalHistorySignal(message: string) {
 export function buildHumanHandoffReply(extraGuidance: string | null, now: Date) {
   const supportStatus = getHumanSupportStatus(now);
   const baseReply = supportStatus.inServiceHours
-    ? "這個問題需要由真人客服進一步確認。我先幫您整理需求，稍後客服會接續協助。"
-    : "這個問題需要由真人客服進一步確認。目前真人客服服務時間為週一至週五 09:00-18:00。我會先幫您整理需求，客服上班後再接續協助。";
-  return extraGuidance ? `${extraGuidance} ${baseReply}` : baseReply;
+    ? "我先幫您整理需求，真人客服會接續協助。"
+    : "我會先幫您整理需求，待真人客服上班後接續協助。";
+  const guidance = extraGuidance ?? "這個問題需要由真人客服進一步確認。";
+  return `${guidance}\n${baseReply}\n${clinicConfig.humanSupportHours.fallbackSummary}`;
 }
 
 export function isPostProcedureEmergency(message: string) {
@@ -502,7 +503,10 @@ export function runImmediateSafetyPreflight(input: {
       decisionType: "handoff_pending",
       matchedKey: "plastic_surgery_scope",
       matchedType: "handoff_rule",
-      replyText: "整形外科涉及手術評估，AI 暫不提供自由解說。我先幫您轉由真人客服協助，也可預約現場由醫師評估。",
+      replyText: buildHumanHandoffReply(
+        "整形外科涉及手術評估，AI 暫不提供自由解說，也可預約現場由醫師評估。",
+        now,
+      ),
     };
   }
   if (isPostProcedureIssue(message)) {
@@ -510,7 +514,10 @@ export function runImmediateSafetyPreflight(input: {
       decisionType: "handoff_pending",
       matchedKey: "post_procedure_issue",
       matchedType: "handoff_rule",
-      replyText: "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
+      replyText: buildHumanHandoffReply(
+        "這類術後反應需要真人確認，請直接撥打診所電話聯繫；若症狀快速惡化，請立即就醫。",
+        now,
+      ),
     };
   }
   if (includesAnyTerm(message, clinicConfig.escalationPolicy.seriousComplaintTerms)) {

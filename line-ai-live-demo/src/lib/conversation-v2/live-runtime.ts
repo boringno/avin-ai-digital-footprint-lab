@@ -50,6 +50,7 @@ import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { resolveTreatmentClarification } from "./treatment-clarification";
 import {
   projectConversationV2QuickReplies,
+  withConversationV2QuickReplies,
 } from "./quick-replies";
 import { resolveConversationV2QuickReplySelection } from "./quick-reply-selection";
 import { hasConversationEpisodeExpired } from "./episode-policy";
@@ -721,7 +722,7 @@ function deterministicFallback(
 ): RouterDecision {
   const receivedState = recordConversationV2TurnReceipt(state, turnId, at);
   const replyText = buildDeterministicFallbackText(context);
-  const replyPlan = legacyDecisionToReplyPlan(
+  const replyPlan = withConversationV2QuickReplies(legacyDecisionToReplyPlan(
     {
       decisionType: "fallback_reply",
       matchedKey: `conversation_v2_unavailable:${reason}`,
@@ -733,7 +734,7 @@ function deterministicFallback(
       fallbackText: replyText,
       renderMode: "deterministic",
     },
-  );
+  ), receivedState);
   return {
     decisionType: "fallback_reply",
     matchedKey: replyPlan.matchedKey,

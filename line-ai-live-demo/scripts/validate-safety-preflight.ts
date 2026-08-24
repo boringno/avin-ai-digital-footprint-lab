@@ -281,5 +281,8 @@ assert.equal(route("療程後有哪些常見副作用"), null, "SP2: generic aft
 assert.equal(route("我想了解肉毒"), null, "SP2: ordinary treatment discovery must pass through preflight");
 assert.equal(route("姓名：王小美\n電話：0912345678", true), null, "SP2: structured booking contact must bypass account lookup");
 assert.match(route("我剛打完肉毒，現在呼吸困難")?.replyText ?? "", /119|急診/u, "SP3: emergency reply must retain urgent action");
+const humanReply = route("我要真人客服")?.replyText ?? "";
+assert.match(humanReply, /週一至週五\s*09:00-18:00/u, "SP4: every human handoff must proactively state service hours");
+assert.match(humanReply, /國定假日休息/u, "SP4: every human handoff must state the holiday closure");
 
 console.log(`safety preflight validation passed (${boundaries.length} hard boundaries plus education controls)`);
