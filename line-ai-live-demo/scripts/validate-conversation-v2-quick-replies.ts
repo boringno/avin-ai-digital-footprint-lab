@@ -88,17 +88,49 @@ const BOTOX_PRICE: PriceCatalogEntry = {
   treatment_name: "肉毒",
 };
 
-function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" | "clarify" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
+function plan(input: { concernKeys?: string[]; dialogueAct?: "introduce_treatment" | "answer_followup" | "clarify" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
   return legacyDecisionToReplyPlan({
     decisionType: "treatment_intro_reply",
     matchedKey: "fixture:quick-replies",
     matchedType: "config",
     replyText: "核准的客服回覆。",
   }, {
+    concernKeys: input.concernKeys ?? [],
     dialogueAct: input.dialogueAct ?? "introduce_treatment",
     renderMode: "deterministic",
     treatmentKeys: input.treatmentKeys ?? [],
   });
+}
+
+function validateCurrentConcernChoosesQuickReplyOwnerFromHistory() {
+  const state = createConversationV2State({ episodeId: "multi-treatment-owner", now: NOW });
+  state.activeTask = {
+    id: "multi-treatment-owner:task",
+    kind: "learn_treatment",
+    startedAt: NOW,
+    subjectKey: "treatment:botox+onda_pro",
+  };
+  state.knowledge.treatmentKeys = ["botox", "onda_pro"];
+  state.knowledge.concernKeys = ["dynamic_wrinkles", "jawline_looseness"];
+  const projected = projectConversationV2QuickReplies(
+    plan({
+      concernKeys: ["jawline_looseness"],
+      dialogueAct: "answer_followup",
+      treatmentKeys: ["botox", "onda_pro"],
+    }),
+    state,
+    { issuedAt: NOW, snapshotId: "snapshot-multi-treatment-owner" },
+  );
+  assert.deepEqual(
+    labels(projected.plan.quickReplyItems),
+    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+    "the current ONDA concern must still project its choices when Botox remains in customer history",
+  );
+  assert.equal(
+    projected.pendingQuickReply?.owner.treatmentKey,
+    "onda_pro",
+    "the displayed choices must persist the current ONDA owner, not the whole treatment history",
+  );
 }
 
 function labels(items: ReturnType<typeof withConversationV2QuickReplies>["quickReplyItems"]) {
@@ -996,6 +1028,71 @@ async function validatePriceDeclinePausesSameTreatmentInvitation() {
   );
 }
 
+async function validateHumanRequestStartsGuidedBookingWithoutPausingAi() {
+  const userId = `U-v2-handoff-booking-${Date.now()}`;
+  const dependencies = {
+    factsProvider: createStaticClinicFactsProvider(),
+    getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+    requestFrame: async (message: string) => ({
+      errorCode: message === "ONDA" ? null : "nlu_unavailable",
+      frame: message === "ONDA"
+        ? {
+            areas: [],
+            confidence: 0.99,
+            concerns: [],
+            dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+            intents: ["treatment"],
+            negated: [],
+            safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
+            schemaVersion: 2,
+            treatments: ["onda_pro"],
+          } satisfies NluFrame
+        : null,
+      latencyMs: 1,
+      model: "fixture",
+      promptVersion: "fixture",
+      tokensIn: 1,
+      tokensOut: message === "ONDA" ? 1 : 0,
+    }),
+  };
+  let context = createEmptyConversationContext(userId);
+  const route = async (eventIdentity: string, message: string) => {
+    const result = await routeConversationV2Canary({
+      context,
+      eventIdentity,
+      message,
+      now: new Date(NOW),
+      sourceType: "user",
+      sourceUserId: userId,
+    }, dependencies);
+    assert.equal(result.kind, "routed");
+    context = result.decision.nextContext;
+    return result;
+  };
+
+  await route("handoff-booking-open", "ONDA");
+  const handoff = await route("handoff-booking-request", "我要找真人客服");
+  assert.equal(handoff.decision.nextContext.conversationV2State?.control.mode, "handoff_pending");
+  assert.equal(handoff.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.equal(handoff.decision.nextContext.conversationV2State?.bookingTask.expectedField, "branch");
+  assert.match(handoff.decision.replyText, /真人客服服務時間.*週一至週五 09:00-18:00/u);
+  assert.match(handoff.decision.replyText, /先幫您整理預約資料.*較方便前往哪個館別/su);
+  assert.deepEqual(
+    labels(handoff.decision.replyPlan?.quickReplyItems ?? []),
+    ["高雄館", "台中館", "桃園館", "林口館"],
+    "a human request must offer the first guided booking choices",
+  );
+
+  const branch = await route("handoff-booking-branch", "高雄館");
+  assert.equal(
+    branch.decision.nextContext.conversationV2State?.control.mode,
+    "handoff_pending",
+    "AI must remain active until staff explicitly takes ownership",
+  );
+  assert.equal(branch.decision.nextContext.conversationV2State?.bookingTask.expectedField, "time_slots");
+  assert.match(branch.decision.replyText, /3 個方便的日期與時段/u);
+}
+
 async function validateFinalWebhookPayload() {
   const userId = `U-v2-quick-replies-e2e-${Date.now()}`;
   const fixtureRoute = (value: NluFrame | null) =>
@@ -1043,7 +1140,7 @@ async function validateFinalWebhookPayload() {
   assert.match(JSON.stringify(pricePayload), /16,888/u, "the final payload must retain the approved ONDA price");
   assert.deepEqual(
     quickReplyLabelsFromPayload(pricePayload.messages),
-    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
     "the approved-price CTA choices must survive V2 route, renderer, and webhook formatting",
   );
 
@@ -1277,6 +1374,7 @@ async function main() {
   validateEveryConfiguredSemanticChoiceResolves();
   validateEveryConfiguredChoiceHasCustomerDestination();
   validatePendingQuickReplyContractOwnsHistoricalState();
+  validateCurrentConcernChoosesQuickReplyOwnerFromHistory();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
   validateFallbackChoicesRespectConversationOwnership();
@@ -1284,6 +1382,7 @@ async function main() {
   await validateLiveRuntimePersistsAndConsumesVisibleContract();
   await validateSemanticQuickReplyJourneys();
   await validatePriceDeclinePausesSameTreatmentInvitation();
+  await validateHumanRequestStartsGuidedBookingWithoutPausingAi();
   await validateFallbackChoicesHaveLiveDestinations();
   await validateFinalWebhookPayload();
   console.log("Conversation V2 quick reply validation passed");

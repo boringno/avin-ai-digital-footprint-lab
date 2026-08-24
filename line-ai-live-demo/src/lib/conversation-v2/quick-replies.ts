@@ -62,6 +62,67 @@ type ProjectedQuickReplyAction = {
   text: string;
 };
 
+function uniqueTreatmentKeys(values: readonly string[], clinic: ClinicConfig) {
+  const offered = new Set(clinic.treatmentList.map((item) => item.key));
+  return Array.from(new Set(values.filter((key) => offered.has(key))));
+}
+
+function subjectTreatmentKeys(subjectKey: string | undefined) {
+  if (!subjectKey) return [];
+  for (const prefix of ["treatment:", "comparison:"]) {
+    if (subjectKey.startsWith(prefix)) {
+      return subjectKey.slice(prefix.length).split("+").filter(Boolean);
+    }
+  }
+  return [];
+}
+
+/**
+ * Quick replies belong to the treatment that owns the current answer, not to
+ * every treatment ever mentioned in the episode.  A returning customer may
+ * have both Botox and ONDA in canonical history; current concern evidence can
+ * still identify the one treatment whose approved guide should be displayed.
+ */
+function quickReplyTreatmentOwner(
+  plan: ReplyPlan,
+  state: ConversationV2State,
+  clinic: ClinicConfig,
+) {
+  const planKeys = uniqueTreatmentKeys(plan.treatmentKeys, clinic);
+  if (planKeys.length === 1) return planKeys[0];
+
+  const activeKeys = uniqueTreatmentKeys(subjectTreatmentKeys(state.activeTask.subjectKey), clinic);
+  if (activeKeys.length === 1 && (planKeys.length === 0 || planKeys.includes(activeKeys[0]!))) {
+    return activeKeys[0];
+  }
+
+  const pricingKeys = uniqueTreatmentKeys(state.pricingSubjectTreatmentKeys, clinic);
+  if (plan.dialogueAct === "quote_approved_price" && pricingKeys.length === 1) {
+    return pricingKeys[0];
+  }
+
+  const candidateKeys = planKeys.length > 0
+    ? planKeys
+    : activeKeys.length > 0
+      ? activeKeys
+      : uniqueTreatmentKeys(state.knowledge.treatmentKeys, clinic);
+  const concernKeys = plan.concernKeys.length > 0
+    ? plan.concernKeys
+    : state.knowledge.concernKeys;
+  if (concernKeys.length === 0) return undefined;
+
+  const owners = candidateKeys.filter((treatmentKey) => {
+    const guide = clinic.treatmentList.find((item) => item.key === treatmentKey)?.consultationGuide;
+    return Boolean(
+      guide?.concernReplies?.some((reply) => concernKeys.includes(reply.concernKey)) ||
+      guide?.customerQuickReplies?.some((choice) =>
+        choice.concernKeys?.some((key) => concernKeys.includes(key)),
+      ),
+    );
+  });
+  return owners.length === 1 ? owners[0] : undefined;
+}
+
 function conversationV2QuickReplyActions(
   plan: ReplyPlan,
   state: ConversationV2State,
@@ -81,9 +142,8 @@ function conversationV2QuickReplyActions(
     return [...FALLBACK_ACTIONS] satisfies ProjectedQuickReplyAction[];
   }
 
-  const treatmentKeys = plan.treatmentKeys.length > 0
-    ? plan.treatmentKeys
-    : state.knowledge.treatmentKeys;
+  const treatmentOwner = quickReplyTreatmentOwner(plan, state, clinic);
+  const treatmentKeys = treatmentOwner ? [treatmentOwner] : [];
   if (plan.dialogueAct === "quote_approved_price") {
     const guide = treatmentKeys.length === 1
       ? clinic.treatmentList.find((item) => item.key === treatmentKeys[0])?.consultationGuide
@@ -111,16 +171,19 @@ function conversationV2QuickReplyActions(
       : CONSULTATION_ACTIONS)] satisfies ProjectedQuickReplyAction[];
   }
   if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [] as ProjectedQuickReplyAction[];
-  if (treatmentKeys.length !== 1) return [] as ProjectedQuickReplyAction[];
+  if (!treatmentOwner) return [] as ProjectedQuickReplyAction[];
 
-  const guide = clinic.treatmentList.find((item) => item.key === treatmentKeys[0])?.consultationGuide;
+  const guide = clinic.treatmentList.find((item) => item.key === treatmentOwner)?.consultationGuide;
   const customerChoices = guide?.customerQuickReplies ?? [];
   const stage = options.nextStage ?? (
     state.knowledge.concernKeys.length > 0 ? "followup" : "initial"
   );
   const stagedChoices = customerChoices.filter((choice) => choice.stage === stage);
+  const currentConcernKeys = plan.concernKeys.length > 0
+    ? plan.concernKeys
+    : state.knowledge.concernKeys;
   const concernChoices = stagedChoices.filter((choice) =>
-    choice.concernKeys?.some((key) => state.knowledge.concernKeys.includes(key)),
+    choice.concernKeys?.some((key) => currentConcernKeys.includes(key)),
   );
   return (concernChoices.length > 0
     ? concernChoices
@@ -151,14 +214,10 @@ export function projectConversationV2QuickReplies(
   const actions = conversationV2QuickReplyActions(plan, state, options);
   const quickReplyItems = lineQuickReplyItems(actions);
   const projectedPlan = quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
-  const treatmentKeys = plan.treatmentKeys.length > 0
-    ? plan.treatmentKeys
-    : state.knowledge.treatmentKeys;
-  if (treatmentKeys.length !== 1 || quickReplyItems.length === 0) {
+  const treatmentKey = quickReplyTreatmentOwner(plan, state, clinic);
+  if (!treatmentKey || quickReplyItems.length === 0) {
     return { plan: projectedPlan };
   }
-
-  const treatmentKey = treatmentKeys[0]!;
   const choices = actions.flatMap((action, index) => {
     const configured = action.choice;
     if (!configured?.semantic) return [];

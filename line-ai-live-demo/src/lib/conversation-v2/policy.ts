@@ -787,6 +787,16 @@ function initialDraft(
   };
 }
 
+function handoffBookingDraft(state: ConversationV2State): Partial<BookingDraft> {
+  const activeTreatmentKeys = subjectTreatmentKeys(state.activeTask.subjectKey);
+  const treatmentKeys = activeTreatmentKeys.length > 0
+    ? activeTreatmentKeys
+    : state.activeTask.kind === "pricing" && state.pricingSubjectTreatmentKeys.length > 0
+      ? state.pricingSubjectTreatmentKeys
+      : state.knowledge.treatmentKeys;
+  return treatmentKeys.length > 0 ? { treatmentKeys: [...treatmentKeys] } : {};
+}
+
 function sameTreatmentTask(state: ConversationV2State, turn: TurnUnderstanding) {
   if (state.bookingTask.intent !== "create") return true;
   const current = state.bookingTask.draft.treatmentKeys;
@@ -915,10 +925,18 @@ export function evaluateDialoguePolicy(
       type: "answer_safety",
     };
   } else if (turn.speechAct === "request_handoff") {
+    const handoffReason = turn.handoffReason ?? "customer_requested_human";
+    const collectBookingDetails = ["human_request", "customer_requested_human"].includes(handoffReason);
     action = {
       at: turn.receivedAt,
+      ...(collectBookingDetails
+        ? {
+            collectBookingDetails: true,
+            initialDraft: { ...initialDraft(state, turn), ...handoffBookingDraft(state) },
+          }
+        : {}),
       handoffId: `${state.episodeId}:${turn.turnId}:handoff`,
-      reason: "customer_requested_human",
+      reason: handoffReason,
       turnId: turn.turnId,
       type: "queue_handoff",
     };

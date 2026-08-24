@@ -69,7 +69,7 @@ export type HydrateConversationV2ReplyDependencies = {
   }) => Promise<DoctorScheduleDecision | null>;
 };
 
-const BOOKING_PROMPTS: Record<BookingField, string> = {
+export const BOOKING_PROMPTS: Record<BookingField, string> = {
   appointment_reference: "請提供原預約的姓名、電話或其他可供客服查詢的資料。",
   branch: "請問較方便前往哪個館別？",
   change_request: "請告訴我想修改的日期、時段、館別或療程。",
@@ -818,7 +818,13 @@ export async function hydrateConversationV2ReplyPlan(
     const action = input.result.action;
     const handoffId = action.type === "queue_handoff" ? action.handoffId : `${input.nextState.episodeId}:${replyPlan.sourceTurnId}:handoff`;
     const reason = action.type === "queue_handoff" ? action.reason : "customer_requested_human";
-    const replyText = `好的，我已幫您通知真人客服接手，客服會在服務時間內接續協助。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`;
+    const bookingPrompt = input.nextState.bookingTask.status === "collecting" &&
+      input.nextState.bookingTask.expectedField
+        ? `\n\n在真人客服正式接手前，我可以先幫您整理預約資料。\n${BOOKING_PROMPTS[input.nextState.bookingTask.expectedField]}`
+        : input.nextState.bookingTask.status === "completed"
+          ? "\n\n您先前提供的預約資料已保留，真人客服接手後會一併確認。"
+          : "";
+    const replyText = `好的，我已幫您通知真人客服接手，客服會在服務時間內接續協助。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}${bookingPrompt}`;
     return {
       dataStatus: "ready",
       rendererPlan: deterministicPlan({
