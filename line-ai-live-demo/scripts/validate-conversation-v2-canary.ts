@@ -1540,7 +1540,7 @@ async function main() {
   const bookingDeclined = await routeConversationV2Canary({
     context: bookingName.decision.nextContext,
     eventIdentity: "event-book-decline",
-    message: "先不用預約",
+    message: "先測到這就好",
     now: new Date(NOW.getTime() + 2000),
     sourceType: "user",
     sourceUserId: "U-book",

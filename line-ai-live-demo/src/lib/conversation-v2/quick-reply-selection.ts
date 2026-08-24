@@ -136,6 +136,7 @@ export function resolveConversationV2QuickReplySelection(input: {
   clinic: ClinicConfig;
   message: string;
   now?: Date;
+  /** Retained for decision telemetry; current clinic data revalidates the stored semantic asset. */
   snapshotId?: string;
   state: ConversationV2State;
 }): ConversationV2QuickReplySelection | undefined {
@@ -151,8 +152,7 @@ export function resolveConversationV2QuickReplySelection(input: {
   if (
     contract.episodeId !== input.state.episodeId ||
     !Number.isFinite(now.getTime()) ||
-    now.getTime() >= new Date(contract.expiresAt).getTime() ||
-    (input.snapshotId !== undefined && input.snapshotId !== contract.sourceSnapshotId)
+    now.getTime() >= new Date(contract.expiresAt).getTime()
   ) return undefined;
 
   const normalizedMessage = normalizeClinicText(input.message);
@@ -168,6 +168,10 @@ export function resolveConversationV2QuickReplySelection(input: {
   const matches = selectedChoices
     .map((choice) => selectionFromStoredChoice({
       choice,
+      // A price-source readiness change may alter the full facts snapshot
+      // between rendering and tapping. The persisted choice contains no price
+      // data; resolve its stable asset identity against the current approved
+      // clinic config instead of invalidating the customer-visible button.
       clinic: input.clinic,
       treatmentKey: contract.owner.treatmentKey,
     }))

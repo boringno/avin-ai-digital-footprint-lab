@@ -384,16 +384,17 @@ function validatePendingQuickReplyContractOwnsHistoricalState() {
     undefined,
     "a stale visible choice must not take ownership of a later conversation episode",
   );
-  assert.equal(
-    resolveConversationV2QuickReplySelection({
+  const selectedAfterSnapshotRefresh = resolveConversationV2QuickReplySelection({
       clinic: clinicConfig,
       message: "脂肪堆積",
       now: new Date("2026-08-23T12:05:00.000+08:00"),
       snapshotId: "snapshot-content-changed",
       state: persisted,
-    }),
-    undefined,
-    "a choice from an old facts snapshot must not silently use changed clinic content",
+    });
+  assert.equal(
+    selectedAfterSnapshotRefresh?.semanticAnchor.replyAssetId,
+    "treatment:onda_pro:detail:jawline_expectation",
+    "a delivered semantic choice must survive volatile price-source snapshot readiness",
   );
   const consumed = recordConversationV2TurnReceipt(
     persisted,
@@ -675,7 +676,22 @@ async function validateFallbackChoicesHaveLiveDestinations() {
 
 async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
   const userId = "U-v2-pending-contract";
-  const provider = createStaticClinicFactsProvider({ pricingCampaigns: [BOTOX_PRICE] });
+  const unavailableProvider = createStaticClinicFactsProvider({
+    priceSourceAvailable: false,
+    pricingCampaigns: [BOTOX_PRICE],
+    snapshotId: "runtime-price-source-unavailable",
+  });
+  const readyProvider = createStaticClinicFactsProvider({
+    pricingCampaigns: [BOTOX_PRICE],
+    snapshotId: "runtime-price-ready",
+  });
+  let snapshotLoads = 0;
+  const provider = {
+    loadSnapshot: (input: Parameters<typeof readyProvider.loadSnapshot>[0]) => {
+      snapshotLoads += 1;
+      return (snapshotLoads === 1 ? unavailableProvider : readyProvider).loadSnapshot(input);
+    },
+  };
   const dependencies = {
     factsProvider: provider,
     getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
@@ -722,6 +738,7 @@ async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
     "onda_pro",
     "the actual ONDA reply must persist the owner of its visible semantic choices",
   );
+  assert.equal(snapshotLoads, 1, "the first visible ONDA choices are issued while the price source is unavailable");
   context.conversationV2State!.control = {
     handoff: {
       id: "pending-human-review-live",
@@ -732,6 +749,7 @@ async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
     mode: "handoff_pending",
   };
   await route("pending-contract-concern", "我想改善雙下巴／嘴邊肉");
+  assert.equal(snapshotLoads, 2, "the delivered choice is selected after the price source becomes ready");
   assert.ok(
     context.conversationV2State?.pendingQuickReply?.choices.some((choice) => choice.messageText === "脂肪堆積"),
     "the follow-up LINE reply must persist the exact displayed concern choice",

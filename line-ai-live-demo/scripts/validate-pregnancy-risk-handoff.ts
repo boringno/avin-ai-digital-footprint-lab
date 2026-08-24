@@ -1,5 +1,5 @@
 import { buildBookingLeadNotes, buildHandoffReason } from "../src/lib/admin-webhook-sync";
-import { hasPregnancyRiskMarker } from "../src/lib/admin-risk-flags";
+import { hasCurrentPregnancyRiskMarker, hasPregnancyRiskMarker } from "../src/lib/admin-risk-flags";
 import { createEmptyConversationContext } from "../src/lib/conversation-context";
 import { routeCustomerMessage } from "../src/lib/router";
 
@@ -24,12 +24,24 @@ async function main() {
   assert(hasPregnancyRiskMarker({ handoffReason: riskReason }), "G7: queue must detect pregnancy risk from handoff reason");
   assert(hasPregnancyRiskMarker({ notes: riskNotes }), "G8: inbox must detect pregnancy risk from lead notes");
   assert(!hasPregnancyRiskMarker({ handoffReason: "booking_intake", notes: "一般預約" }), "G9: ordinary leads must not be risk-tagged");
+  assert(
+    !hasCurrentPregnancyRiskMarker({ bookingStatus: "booked", notes: riskNotes }),
+    "G10: a terminal historical booking note must not flag the current conversation",
+  );
+  assert(
+    hasCurrentPregnancyRiskMarker({ bookingStatus: "booked", contextJson: { pregnancyRiskFlag: true }, notes: riskNotes }),
+    "G11: a current episode pregnancy flag must still be visible even when history is terminal",
+  );
+  assert(
+    hasCurrentPregnancyRiskMarker({ handoffReason: riskReason }),
+    "G12: the current handoff reason remains authoritative for the workbench queue",
+  );
   const ordinary = await route("我想預約肉毒");
   assert(!ordinary.nextContext.pregnancyRiskFlag && !buildBookingLeadNotes("", false).includes("孕期"), "G5: ordinary booking must not be risk-tagged");
   for (const message of ["我在哺乳想預約", "我在備孕想預約"]) {
     const decision = await route(message);
     assert(decision.nextContext.pregnancyRiskFlag, `G4: ${message} must set risk flag`);
   }
-  console.log("Pregnancy risk handoff validation passed: G1-G9");
+  console.log("Pregnancy risk handoff validation passed: G1-G12");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

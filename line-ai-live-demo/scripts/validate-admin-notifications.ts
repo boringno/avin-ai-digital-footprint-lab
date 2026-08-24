@@ -9,6 +9,7 @@ import {
   shouldCreateHandoffTask,
   shouldRecoverMissingHandoffTask,
   shouldRefreshHandoffTask,
+  shouldResolveBookingIntakeHandoffTask,
   shouldStoreAiMessage,
 } from "../src/lib/admin-webhook-sync";
 import { getRuntimeConfig } from "../src/lib/live-demo-config";
@@ -57,6 +58,14 @@ expect(
 );
 expect(getHandoffNotificationReasonLabel("booking_intake") === "新預約需求", "booking intake uses Chinese label");
 expect(!shouldCreateHandoffTask({ decision: { decisionType: "clinic_info_reply" } }), "clinic information does not create a task");
+expect(
+  shouldResolveBookingIntakeHandoffTask({ decision: { matchedKey: "conversation_v2:booking_declined" } }),
+  "pausing an in-progress booking resolves its still-open intake follow-up",
+);
+expect(
+  !shouldResolveBookingIntakeHandoffTask({ decision: { matchedKey: "conversation_v2:fallback_clarify" } }),
+  "an unrelated fallback must not resolve a booking follow-up",
+);
 expect(shouldRefreshHandoffTask({ conversationStatus: "handoff_pending" }), "a pending conversation refreshes an existing task after a new message");
 expect(!shouldRefreshHandoffTask({ conversationStatus: "ai_active" }), "an active AI conversation does not refresh a handoff task");
 expect(shouldRecoverMissingHandoffTask({ conversationStatus: "handoff_pending", handoffReason: "human_request" }), "a pending conversation with a canonical reason can recreate a missing task");

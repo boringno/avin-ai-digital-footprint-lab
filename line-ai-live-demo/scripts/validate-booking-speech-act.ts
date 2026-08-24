@@ -61,6 +61,10 @@ const CASES: ReadonlyArray<readonly [BookingSpeechAct, string]> = [
   ["decline", "先不要約"],
   ["decline", "先了解就好"],
   ["decline", "暫時先了解"],
+  ["decline", "先測到這就好"],
+  ["decline", "今天先問到這裡就好"],
+  ["decline", "先這樣就好"],
+  ["decline", "暫時不要繼續填預約資料"],
 
   ["none", "想了解 ONDA"],
   ["none", "肉毒多少錢"],
@@ -71,6 +75,7 @@ const CASES: ReadonlyArray<readonly [BookingSpeechAct, string]> = [
   ["none", "我有預約紀錄"],
   ["none", "我不想取消預約"],
   ["none", "今天天氣如何"],
+  ["none", "測到這裡會有結果嗎"],
 ];
 
 for (const [expected, message] of CASES) {
