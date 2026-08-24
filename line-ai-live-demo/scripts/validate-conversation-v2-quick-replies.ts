@@ -87,7 +87,7 @@ const BOTOX_PRICE: PriceCatalogEntry = {
   treatment_name: "肉毒",
 };
 
-function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
+function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" | "clarify" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
   return legacyDecisionToReplyPlan({
     decisionType: "treatment_intro_reply",
     matchedKey: "fixture:quick-replies",
@@ -511,6 +511,110 @@ async function validateLiveRuntimeAttachesV2Choices() {
     ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
     "the live V2 route must attach ONDA choices before rendering",
   );
+}
+
+function validateFallbackChoicesRespectConversationOwnership() {
+  const state = createConversationV2State({ episodeId: "fallback-buttons", now: NOW });
+  const fallback = withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state);
+  assert.deepEqual(
+    labels(fallback.quickReplyItems),
+    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
+    "a genuine generic fallback must provide four deterministic exits",
+  );
+
+  state.control = {
+    handoff: {
+      id: "fallback-pending-human",
+      reason: "human_request",
+      requestedAt: NOW,
+      status: "pending",
+    },
+    mode: "handoff_pending",
+  };
+  assert.deepEqual(
+    labels(withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state).quickReplyItems),
+    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
+    "waiting for staff must not remove AI fallback choices",
+  );
+
+  state.control = {
+    handoff: {
+      id: "fallback-human-active",
+      reason: "human_request",
+      requestedAt: NOW,
+      status: "active",
+    },
+    mode: "human_active",
+  };
+  assert.deepEqual(
+    labels(withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state).quickReplyItems),
+    [],
+    "once staff formally takes over, AI must not project fallback choices",
+  );
+}
+
+async function validateFallbackChoicesHaveLiveDestinations() {
+  const dependencies = {
+    factsProvider: createStaticClinicFactsProvider(),
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-fallback-buttons", "U-fallback-booking", "U-fallback-handoff"],
+      mode: "canary" as const,
+    }),
+    requestFrame: async () => ({
+      errorCode: "nlu_unavailable",
+      frame: null,
+      latencyMs: 1,
+      model: "fixture",
+      promptVersion: "fixture",
+      tokensIn: 1,
+      tokensOut: 0,
+    }),
+  };
+  const route = (userId: string, context: ReturnType<typeof createEmptyConversationContext>, eventIdentity: string, message: string) =>
+    routeConversationV2Canary({
+      context,
+      eventIdentity,
+      message,
+      now: new Date(NOW),
+      sourceType: "user",
+      sourceUserId: userId,
+    }, dependencies);
+
+  const fallback = await route(
+    "U-fallback-buttons",
+    createEmptyConversationContext("U-fallback-buttons"),
+    "fallback-buttons-open",
+    "我不知道要問什麼",
+  );
+  assert.equal(fallback.kind, "routed");
+  assert.deepEqual(
+    labels(fallback.decision.replyPlan?.quickReplyItems ?? []),
+    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
+    "the actual NLU-outage fallback must carry the four LINE choices",
+  );
+
+  const bookingContext = fallback.decision.nextContext;
+  const booking = await route(
+    "U-fallback-booking",
+    { ...bookingContext, userId: "U-fallback-booking" },
+    "fallback-buttons-booking",
+    "我要預約免費諮詢",
+  );
+  assert.equal(booking.kind, "routed");
+  assert.equal(booking.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.equal(booking.decision.nextContext.conversationV2State?.bookingTask.expectedField, "treatment");
+
+  const handoffContext = createEmptyConversationContext("U-fallback-handoff");
+  const handoff = await route(
+    "U-fallback-handoff",
+    handoffContext,
+    "fallback-buttons-handoff",
+    "我要找真人客服",
+  );
+  assert.equal(handoff.kind, "routed");
+  assert.equal(handoff.decision.decisionType, "handoff_pending");
+  assert.match(handoff.decision.replyText, /週一至週五 09:00-18:00/u);
+  assert.match(handoff.decision.replyText, /國定假日休息/u);
 }
 
 async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
@@ -1056,10 +1160,12 @@ async function main() {
   validatePendingQuickReplyContractOwnsHistoricalState();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
+  validateFallbackChoicesRespectConversationOwnership();
   await validateLiveRuntimeAttachesV2Choices();
   await validateLiveRuntimePersistsAndConsumesVisibleContract();
   await validateSemanticQuickReplyJourneys();
   await validatePriceDeclinePausesSameTreatmentInvitation();
+  await validateFallbackChoicesHaveLiveDestinations();
   await validateFinalWebhookPayload();
   console.log("Conversation V2 quick reply validation passed");
 }

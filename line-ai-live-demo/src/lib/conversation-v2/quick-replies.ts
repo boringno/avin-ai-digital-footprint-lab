@@ -14,6 +14,7 @@ import type {
   PendingQuickReplyContract,
 } from "./types";
 import { isConsultationInvitationPaused } from "./consultation-invitation";
+import { isConversationV2AiAssistanceEnabled } from "./state";
 
 const CONSULTATION_ACTIONS = [
   { label: "預約免費諮詢", text: "我要預約免費諮詢" },
@@ -31,6 +32,13 @@ const BRANCH_ACTIONS = ["高雄館", "台中館", "桃園館", "林口館"].map(
 }));
 
 const FIRST_VISIT_ACTIONS = ["初診", "複診"].map((value) => ({ label: value, text: value }));
+
+const FALLBACK_ACTIONS = [
+  { label: "了解 ONDA", text: "我想了解 ONDA" },
+  { label: "了解肉毒", text: "我想了解肉毒" },
+  { label: "預約免費諮詢", text: "我要預約免費諮詢" },
+  { label: "真人客服協助", text: "我要找真人客服" },
+] as const;
 
 const TREATMENT_DIALOGUE_ACTS = new Set<ReplyPlan["dialogueAct"]>([
   "introduce_treatment",
@@ -60,10 +68,17 @@ function conversationV2QuickReplyActions(
   options: QuickReplyOptions = {},
 ): ProjectedQuickReplyAction[] {
   const clinic = options.clinic ?? clinicConfig;
+  if (!isConversationV2AiAssistanceEnabled(state.control.mode)) {
+    return [] as ProjectedQuickReplyAction[];
+  }
   if (state.bookingTask.status === "collecting") {
     if (state.bookingTask.expectedField === "branch") return [...BRANCH_ACTIONS] satisfies ProjectedQuickReplyAction[];
     if (state.bookingTask.expectedField === "first_visit") return [...FIRST_VISIT_ACTIONS] satisfies ProjectedQuickReplyAction[];
     return [] as ProjectedQuickReplyAction[];
+  }
+
+  if (plan.dialogueAct === "clarify") {
+    return [...FALLBACK_ACTIONS] satisfies ProjectedQuickReplyAction[];
   }
 
   const treatmentKeys = plan.treatmentKeys.length > 0
