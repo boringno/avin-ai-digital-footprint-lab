@@ -4,7 +4,7 @@ import type { ConversationState } from "@/lib/conversation-state";
 import { createEmptyConversationState } from "@/lib/conversation-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
-import { hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
+import { hasCurrentPregnancyRiskMarker, hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
 import {
   getConversationDecisionTrace,
   type ConversationDecisionTrace,
@@ -103,6 +103,7 @@ type MessageRow = {
 };
 
 type RuntimeStateRow = {
+  context_json?: Record<string, unknown>;
   line_user_id: string;
   state_json: Record<string, unknown>;
 };
@@ -174,7 +175,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
       .limit(ADMIN_CONVERSATION_MESSAGE_LIMIT),
     supabase
       .from("conversation_runtime_state")
-      .select("line_user_id, state_json")
+      .select("line_user_id, state_json, context_json")
       .eq("tenant_id", staff.tenantId)
       .eq("line_user_id", conversation.line_user_id)
       .maybeSingle<RuntimeStateRow>(),
@@ -197,7 +198,11 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
           customerName: bookingLead.customer_name,
           interestedTreatments: normalizeStringArray(bookingLead.interested_treatments),
           phone: bookingLead.phone,
-          pregnancyRisk: hasPregnancyRiskMarker({ notes: bookingLead.notes }),
+          pregnancyRisk: hasCurrentPregnancyRiskMarker({
+            bookingStatus: bookingLead.booking_status,
+            contextJson: runtimeState?.context_json,
+            notes: bookingLead.notes,
+          }),
           preferredBranch: bookingLead.preferred_branch,
           preferredTimeSlots: normalizeStringArray(bookingLead.preferred_time_slots),
         }
@@ -379,10 +384,7 @@ async function loadWorkbenchQueue(staff: AdminStaffUser) {
         lastSeenAt: conversation.last_seen_at,
         lineUserId: conversation.line_user_id,
         phoneTail: queueLeadInfo.get(conversation.id)?.phoneTail ?? null,
-        pregnancyRisk: hasPregnancyRiskMarker({
-          handoffReason: task.reason,
-          notes: queueLeadInfo.get(conversation.id)?.notes,
-        }),
+        pregnancyRisk: hasPregnancyRiskMarker({ handoffReason: task.reason }),
         preferredBranch: queueLeadInfo.get(conversation.id)?.preferredBranch ?? null,
         status: state.status,
         taskAssignedTo: task.assigned_to,

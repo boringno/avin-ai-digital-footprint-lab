@@ -1,7 +1,7 @@
 import type { AdminStaffUser } from "@/lib/admin-auth";
 import type { ConversationState } from "@/lib/conversation-state";
 import { createEmptyConversationState } from "@/lib/conversation-state";
-import { hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
+import { hasCurrentPregnancyRiskMarker } from "@/lib/admin-risk-flags";
 import { getSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
 
 import { loadConversationDetail, type WorkbenchConversationDetail } from "./admin-workbench-data";
@@ -30,6 +30,7 @@ type ConversationRow = {
 };
 
 type LeadRow = {
+  booking_status: string;
   conversation_id: string;
   customer_name: string | null;
   notes: string | null;
@@ -41,6 +42,7 @@ type MessageRow = {
 };
 
 type RuntimeStateRow = {
+  context_json?: Record<string, unknown>;
   line_user_id: string;
   state_json: Record<string, unknown>;
 };
@@ -69,7 +71,7 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
     conversationIds.length
       ? supabase
           .from("booking_leads_db")
-          .select("conversation_id, customer_name, notes")
+          .select("conversation_id, customer_name, notes, booking_status")
           .eq("tenant_id", staff.tenantId)
           .in("conversation_id", conversationIds)
       : Promise.resolve({ data: [] as LeadRow[] }),
@@ -85,7 +87,7 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
     lineUserIds.length
       ? supabase
           .from("conversation_runtime_state")
-          .select("line_user_id, state_json")
+          .select("line_user_id, state_json, context_json")
           .eq("tenant_id", staff.tenantId)
           .in("line_user_id", lineUserIds)
       : Promise.resolve({ data: [] as RuntimeStateRow[] }),
@@ -98,7 +100,9 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
       lastMessageByConversation.set(message.conversation_id, message.content);
     }
   }
-  const runtimeByLineUser = new Map(((runtimeStates ?? []) as RuntimeStateRow[]).map((state) => [state.line_user_id, state.state_json]));
+  const runtimeRows = (runtimeStates ?? []) as RuntimeStateRow[];
+  const runtimeByLineUser = new Map(runtimeRows.map((state) => [state.line_user_id, state.state_json]));
+  const contextByLineUser = new Map(runtimeRows.map((state) => [state.line_user_id, state.context_json]));
 
   const items = conversations
     .map((conversation) => {
@@ -112,7 +116,11 @@ export async function loadConversationInboxData(staff: AdminStaffUser, search = 
         lastMessage: lastMessageByConversation.get(conversation.id) ?? "尚未擷取到訊息",
         lastSeenAt: conversation.last_seen_at,
         lineUserId: conversation.line_user_id,
-        pregnancyRisk: hasPregnancyRiskMarker({ notes: lead?.notes }),
+        pregnancyRisk: hasCurrentPregnancyRiskMarker({
+          bookingStatus: lead?.booking_status,
+          contextJson: contextByLineUser.get(conversation.line_user_id),
+          notes: lead?.notes,
+        }),
         status: normalizeState(conversation.line_user_id, runtimeByLineUser.get(conversation.line_user_id)).status,
       } satisfies ConversationInboxItem;
     })

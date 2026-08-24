@@ -464,11 +464,28 @@ async function maybeCreateHandoffTask(conversationId: string, result: ProcessedW
   const shouldCreate = shouldCreateHandoffTask(result);
   const shouldRefresh = shouldRefreshHandoffTask(result);
   const shouldRecover = shouldRecoverMissingHandoffTask(result);
-  if (!shouldCreate && !shouldRefresh && !shouldRecover) {
+  const shouldResolveBookingIntake = shouldResolveBookingIntakeHandoffTask(result);
+  if (!shouldCreate && !shouldRefresh && !shouldRecover && !shouldResolveBookingIntake) {
     return;
   }
 
   const supabase = getSupabaseServerClient();
+  if (shouldResolveBookingIntake) {
+    const resolvedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("handoff_tasks")
+      .update({ resolved_at: resolvedAt, status: "resolved", updated_at: resolvedAt })
+      .eq("tenant_id", TENANT_ID)
+      .eq("conversation_id", conversationId)
+      .eq("status", "open")
+      .in("reason", ["booking_intake", "conversation_v2:booking_restarted"])
+      .retry(false);
+    if (error) {
+      throw new Error(`Failed to resolve paused booking handoff task: ${error.message}`);
+    }
+    return;
+  }
+
   const { data: existing, error: selectError } = await supabase
     .from("handoff_tasks")
     .select("id, reason")
@@ -560,6 +577,12 @@ export function shouldCreateHandoffTask(result: {
 }) {
   return result.conversationV2ToolRequestType === "request_fact_confirmation" ||
     ["handoff_pending", "booking_intake_reply"].includes(result.decision.decisionType);
+}
+
+export function shouldResolveBookingIntakeHandoffTask(result: {
+  decision: Pick<ProcessedWebhookResult["decision"], "matchedKey">;
+}) {
+  return result.decision.matchedKey === "conversation_v2:booking_declined";
 }
 
 export function shouldStoreAiMessage(replyResult: undefined | Pick<ReplySendResult, "suppressedReason">) {
