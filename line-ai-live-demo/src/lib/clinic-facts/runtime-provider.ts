@@ -28,6 +28,18 @@ function unavailableOverlay(): RuntimeContentOverlay {
   };
 }
 
+async function loadRuntimeOverlayWithSingleRetry(
+  loader: typeof loadRuntimeContentOverlay,
+  input: Parameters<typeof loadRuntimeContentOverlay>[0],
+) {
+  const first = await loader(input);
+  if (first.sourceStatus !== "unavailable") return first;
+  // Retry only the unavailable source lookup. A second failure still closes
+  // every price, so this improves transient availability without reviving a
+  // seed amount when the active release cannot be verified.
+  return loader(input);
+}
+
 function snapshotDescriptor(
   overlay: RuntimeContentOverlay,
   priceSourceAvailable: boolean,
@@ -81,7 +93,7 @@ export class RuntimeClinicFactsProvider implements ClinicFactsProvider {
     // lookup is represented as unavailable so no seed amount can leak through.
     const [seedResult, overlayResult] = await Promise.allSettled([
       this.loadSeeds(),
-      this.loadRuntimeOverlay({
+      loadRuntimeOverlayWithSingleRetry(this.loadRuntimeOverlay, {
         audienceKey: input.audienceKey ?? "",
         now: input.now,
         tenantId: input.tenantId,

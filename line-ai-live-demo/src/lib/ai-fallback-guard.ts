@@ -7,7 +7,9 @@ const SAFE_MEDICAL_FALLBACK =
 const SAFE_GENERAL_FALLBACK = "我可以協助診所療程與預約相關問題，請告訴我想了解的項目。";
 
 const PRICE_OR_CAMPAIGN_PATTERN =
-  /(?:NT\$|TWD|新台幣|價格|價錢|費用|報價|市場行情|優惠|折扣|活動|體驗價|檔期|截至|即日起|[\p{Nd}０-９][\p{Nd}０-９,，.．]*\s*(?:元|塊)|[零〇一二兩三四五六七八九十百千萬億]+\s*(?:元|塊)|(?:大約|大概|差不多|需要).{0,4}[\p{Nd}０-９]{4,}|(?:大約|大概|差不多).{0,8}(?:萬|千)|(?:幾|數)(?:萬|千)|(?:月底|年底))/iu;
+  /(?:NT\$|TWD|新台幣|(?:價格|價錢|費用|報價|優惠價|體驗價).{0,8}[\p{Nd}０-９][\p{Nd}０-９,，.．]*|[\p{Nd}０-９][\p{Nd}０-９,，.．]*\s*(?:元|塊)|[零〇一二兩三四五六七八九十百千萬億]+\s*(?:元|塊)|(?:大約|大概|差不多|需要).{0,4}[\p{Nd}０-９]{4,}|(?:大約|大概|差不多).{0,8}(?:萬|千)|(?:幾|數)(?:萬|千)|(?:月底|年底))/iu;
+const UNAPPROVED_PROMOTION_CLAIM_PATTERN =
+  /(?:市場行情|(?:價格|價錢|費用|報價).{0,6}(?:便宜|划算|優惠|折扣|很低|不高)|(?:目前|現在|近期|本院|我們|診所).{0,8}(?:有|提供|推出|享有).{0,6}(?:活動|優惠|折扣|方案)|(?:活動|優惠|方案|檔期).{0,12}(?:截至|即日起|期間|到期|結束|\d{1,4}[/.\-年]\d{1,2}))/iu;
 const OVERCLAIM_PATTERN =
   /(?:(?:保證|一定|必定|立即|馬上|立刻).{0,5}(?:有效|有感|改善|見效)|(?:效果|療效).{0,5}(?:很好|超好|明顯|都很好)|(?:每個人|人人).{0,8}(?:有效|有感|改善|效果)|永久|百分之百|100%)/iu;
 const ABSOLUTE_SAFETY_PATTERN =
@@ -72,6 +74,7 @@ export function constrainMedicalAiReply(text: string, _footer: string, options: 
     !normalized ||
     (medical &&
       (PRICE_OR_CAMPAIGN_PATTERN.test(contentWithoutApprovedTreatmentNames) ||
+        UNAPPROVED_PROMOTION_CLAIM_PATTERN.test(contentWithoutApprovedTreatmentNames) ||
         SURGERY_CLAIM_PATTERN.test(normalized) ||
         INTERNAL_INFORMATION_PATTERN.test(normalized) ||
         hasUnapprovedClinicFact ||

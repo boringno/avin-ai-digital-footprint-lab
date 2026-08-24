@@ -678,7 +678,9 @@ export async function hydrateConversationV2ReplyPlan(
                 : []),
             ])
           : [],
-        matchedKey: `conversation_v2:price:${priceResolution.status}`,
+        matchedKey: priceResolution.status === "approved_current"
+          ? "conversation_v2:price:approved_current"
+          : `conversation_v2:price:unavailable_to_quote:${priceResolution.reason}`,
         replyText,
         responseContract: replyPlan.responseContract,
       }),
