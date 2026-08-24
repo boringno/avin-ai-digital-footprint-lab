@@ -592,7 +592,6 @@ async function validateMondayConsultationCtaJourneys() {
     "J6a: Botox must offer the three approved next steps after the deeper answer",
   );
   assert.match(botoxCta.decision.replyText, /表情肌活動|動態紋/u);
-
   const continues = await routeTurn({
     context: botoxCta.decision.nextContext,
     frame: null,
@@ -2794,6 +2793,60 @@ async function validatePricingOwnership() {
   assert.ok(
     activeSubject.decision.replyText.includes(ONDA_PRICE_AMOUNT),
     `P1: an active ONDA must quote the approved amount: ${activeSubject.decision.replyText}`,
+  );
+  assert.doesNotMatch(
+    activeSubject.decision.replyText,
+    /要我.*(?:比較|介紹|說明).*(?:嗎|呢)/u,
+    "P1: the system must not ask a yes/no question unless the next turn has an approved answer contract",
+  );
+  assert.equal(activeSubject.decision.nextContext.conversationV2State?.activeTask.kind, "pricing");
+  assert.deepEqual(
+    activeSubject.decision.nextContext.conversationV2State?.pricingSubjectTreatmentKeys,
+    ["onda_pro"],
+    "P1: the approved price reply must preserve the treatment owner for its own follow-up question",
+  );
+
+  const acceptedComparison = await routeConversationV2Canary({
+    context: activeSubject.decision.nextContext,
+    eventIdentity: "price-followup-comparison",
+    message: "好，幫我看看單做與搭配的差異",
+    now: NOW,
+    sourceType: "user",
+    sourceUserId: "U-price",
+  }, {
+    factsProvider: factsProvider(),
+    getCanarySettings: () => ({ allowlistedUserIds: ["U-price"], mode: "canary" as const }),
+    requestFrame: async () => nluResult(frame({
+      confidence: 0.95,
+      dialogue: { focus: "general_difference", move: "continue", reference: "active_comparison", speechAct: "compare_treatments" },
+      intents: ["treatment"],
+      treatments: [],
+    })),
+  });
+  assert.equal(acceptedComparison.kind, "routed");
+  assert.match(acceptedComparison.decision.replyText, /ONDA Pro.*肉毒小臉/us);
+  assert.doesNotMatch(
+    acceptedComparison.decision.replyText,
+    /要比較哪兩項療程/u,
+    "P1a: accepting the comparison offered by the system must not ask the customer to repeat its subjects",
+  );
+
+  const staleConcernContext = structuredClone(activeContext);
+  staleConcernContext.conversationV2State!.knowledge.concernKeys = ["dynamic_wrinkles"];
+  const staleConcernPrice = await askPrice({
+    context: staleConcernContext,
+    frameOverrides: {
+      dialogue: { focus: "price_unspecified", move: "continue", reference: "active_subject", speechAct: "ask_price" },
+      intents: ["pricing"],
+      treatments: [],
+    },
+    message: "ONDA 體驗價多少",
+    userId: "U-price",
+  });
+  assert.doesNotMatch(
+    staleConcernPrice.decision.replyText,
+    /魚尾紋|抬頭紋|皺眉紋|動態紋/u,
+    "P1b: a concern unsupported by the priced treatment must not leak into its follow-up",
   );
 
   const explicitSubject = await askPrice({

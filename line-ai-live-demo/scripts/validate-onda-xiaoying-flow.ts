@@ -84,8 +84,9 @@ async function main() {
     "X8a: same-turn price plus concern must preserve the approved generic combination content",
   );
   assert(
-    (multiIntentPrice.replyText.match(/？/gu) ?? []).length === 1,
-    "X8a: a combined price answer must end with one next-step question, not stacked campaign CTAs",
+    !/要我.*(?:比較|介紹|說明).*(?:嗎|呢)/u.test(multiIntentPrice.replyText) &&
+      /可接著比較單做與搭配的差異|安排免費諮詢/u.test(multiIntentPrice.replyText),
+    "X8a: a combined price answer must offer approved next steps without an unowned yes/no question",
   );
   assert(
     multiIntentPrice.nextContext.treatmentConsultation?.concernKeys.includes("jawline_looseness"),

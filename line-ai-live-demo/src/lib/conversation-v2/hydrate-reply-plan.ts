@@ -156,18 +156,28 @@ function approvedCombinationPriceResolution(
 }
 
 function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
+  const pricedTreatmentKeys = input.result.replyPlan.mode === "deterministic"
+    ? input.result.replyPlan.pricingQuery?.treatmentKeys ?? []
+    : [];
   const concernKeys = unique([
     ...input.turn.concerns
       .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
       .map((mention) => mention.key),
     ...input.nextState.knowledge.concernKeys,
-  ]);
+  ]).filter((concernKey) => pricedTreatmentKeys.some((treatmentKey) => {
+    const treatment = input.snapshot.clinic.treatmentList.find((item) => item.key === treatmentKey);
+    const concern = input.snapshot.clinic.concernList.find((item) => item.key === concernKey);
+    return Boolean(
+      treatment?.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ||
+      concern?.recommendedTreatmentKeys.includes(treatmentKey),
+    );
+  }));
   const label = concernKeys
     .map((key) => input.snapshot.clinic.concernList.find((item) => item.key === key)?.label)
     .find(Boolean);
   return label
-    ? `您提到在意${label}；兩個方案內容不同，要我接著幫您比較單做與搭配的差異嗎？😊`
-    : "兩個方案內容不同；要我接著幫您比較單做與搭配的差異嗎？😊";
+    ? `您提到在意${label}；兩個方案內容不同，可接著比較單做與搭配的差異，或安排免費諮詢😊`
+    : "兩個方案內容不同，可接著比較單做與搭配的差異，或安排免費諮詢😊";
 }
 
 function treatmentFactMode(plan: GeneratedReplyPlan) {

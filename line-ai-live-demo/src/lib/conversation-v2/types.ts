@@ -243,7 +243,7 @@ export type TrustedSemanticAnchor = {
   source: "active_subject_query" | "approved_asset" | "exact_ontology";
   speechAct: Extract<
     DialogueSpeechAct,
-    "ask_concern" | "ask_treatment_detail" | "learn_treatment"
+    "ask_concern" | "ask_treatment_detail" | "compare_treatments" | "learn_treatment"
   >;
   treatmentKeys: string[];
 };

@@ -77,6 +77,7 @@ const SEMANTIC_ANCHOR_SOURCES = new Set<TrustedSemanticAnchor["source"]>([
 const SEMANTIC_ANCHOR_SPEECH_ACTS = new Set<TrustedSemanticAnchor["speechAct"]>([
   "ask_concern",
   "ask_treatment_detail",
+  "compare_treatments",
   "learn_treatment",
 ]);
 const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);

@@ -466,12 +466,35 @@ function validateBookingChoicesAndPayload() {
 
 function validatePriceCallToAction() {
   const state = createConversationV2State({ episodeId: "price-buttons", now: NOW });
+  state.lastProcessedTurnId = "price-turn";
   state.knowledge.treatmentKeys = ["onda_pro"];
-  const quoted = withConversationV2QuickReplies(plan({
-    dialogueAct: "quote_approved_price",
-    treatmentKeys: ["onda_pro"],
-  }), state);
-  assert.deepEqual(labels(quoted.quickReplyItems), ["預約免費諮詢", "真人客服協助", "繼續詢問"]);
+  const projection = projectConversationV2QuickReplies(
+    plan({ dialogueAct: "quote_approved_price", treatmentKeys: ["onda_pro"] }),
+    state,
+    { clinic: clinicConfig, issuedAt: NOW, snapshotId: "price-snapshot" },
+  );
+  assert.deepEqual(
+    labels(projection.plan.quickReplyItems),
+    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
+  );
+  assert.equal(
+    projection.pendingQuickReply?.choices.length,
+    1,
+    "a yes/no comparison invitation must persist exactly one approved semantic answer",
+  );
+  const projectedState = structuredClone(state);
+  projectedState.pendingQuickReply = projection.pendingQuickReply;
+  for (const message of ["ONDA＋肉毒小臉組合", "好"] as const) {
+    const selected = resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message,
+      now: new Date(NOW),
+      snapshotId: "price-snapshot",
+      state: projectedState,
+    });
+    assert.equal(selected?.semanticAnchor.questionAspect, "single_vs_combination");
+    assert.equal(selected?.semanticAnchor.replyAssetId, "treatment:onda_pro:detail:jawline_combination_difference");
+  }
 }
 
 async function validateLiveRuntimeAttachesV2Choices() {
@@ -1242,7 +1265,7 @@ async function validateFinalWebhookPayload() {
   );
   assert.deepEqual(
     quickReplyLabelsFromPayload(flexPayload.messages),
-    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
     "a V2 Flex reply must retain its CTA quick replies after webhook formatting",
   );
 }

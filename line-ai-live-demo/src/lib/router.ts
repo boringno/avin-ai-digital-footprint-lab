@@ -2989,7 +2989,7 @@ function buildContextualPricingComparison(
     replyText: [
       `🟢 ${buildPricingCoreReply(baseCampaign)}`,
       `💎 另有搭配方案：${buildPricingCoreReply(contextualCampaign)}`,
-      `您提到在意${concernLabel}；兩個方案內容不同，要我接著幫您比較單做與搭配的差異嗎？😊`,
+      `您提到在意${concernLabel}；兩個方案內容不同，可接著比較單做與搭配的差異，或安排免費諮詢😊`,
     ].join("\n"),
   } satisfies RouterDecision;
 }
