@@ -6,6 +6,9 @@ export type ConversationDecisionTrace = {
   nluConfidence: number | null;
   nluStatus: string | null;
   policyAction: string | null;
+  replyDeliveryAttempts: number | null;
+  replyDeliveryStatus: string | null;
+  replyDeliverySuppressedReason: string | null;
   rendererMode: string | null;
   replyTextSource: string | null;
   routeVersion: string | null;
@@ -26,6 +29,9 @@ export function getConversationDecisionTrace(payload: unknown): ConversationDeci
     nluConfidence: readNumber(record.conversation_v2_nlu_confidence),
     nluStatus: readString(record.conversation_v2_nlu_status),
     policyAction: readString(record.conversation_v2_policy_action),
+    replyDeliveryAttempts: readNumber(record.reply_delivery_attempts),
+    replyDeliveryStatus: readString(record.reply_delivery_status),
+    replyDeliverySuppressedReason: readString(record.reply_delivery_suppressed_reason),
     rendererMode: readString(record.renderer_mode),
     replyTextSource: readString(record.renderer_reply_text_source),
     routeVersion: readString(record.route_version),

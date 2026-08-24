@@ -4,7 +4,7 @@ import os from "node:os";
 
 import { isReplyStillAuthorized, processWebhookRequestBody, sendReplyPayloads, type ProcessedWebhookResult } from "../src/lib/line-webhook";
 import { loadConversationContext } from "../src/lib/conversation-context";
-import { loadConversationState, markHumanTakeover, saveConversationState } from "../src/lib/conversation-state";
+import { createEmptyConversationState, loadConversationState, markHumanTakeover, saveConversationState } from "../src/lib/conversation-state";
 import { splitWebhookResultsByDuplicate } from "../src/lib/webhook-dedupe";
 
 type MockFetch = typeof fetch;
@@ -282,18 +282,48 @@ async function caseAuthorizationUnavailable() {
   }
 }
 
-async function caseDefaultAuthorizationFailsClosed() {
+async function caseDefaultAuthorizationRetriesDurably() {
   const rawBody = await loadSingleEventPayload({
     messageId: "msg-auth-default-unavailable-001",
     replyToken: "reply-token-auth-default-unavailable-001",
     webhookEventId: "evt-auth-default-unavailable-001",
   });
   const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+  const modes: string[] = [];
   const authorized = await isReplyStillAuthorized(
     processed.results[0] as ProcessedWebhookResult,
-    async () => { throw new Error("authoritative state unavailable after takeover"); },
+    async (userId, _tenantId, mode) => {
+      modes.push(mode ?? "default");
+      if (mode === "latency_critical") {
+        throw new Error("fast authoritative read timed out");
+      }
+      return createEmptyConversationState(userId);
+    },
   );
-  return { authorized, ok: authorized === false };
+  return {
+    authorized,
+    modes,
+    ok: authorized === true && modes.join(",") === "latency_critical,durable",
+  };
+}
+
+async function caseDefaultAuthorizationFailsClosedAfterBothReadsFail() {
+  const rawBody = await loadSingleEventPayload({
+    messageId: "msg-auth-both-unavailable-001",
+    replyToken: "reply-token-auth-both-unavailable-001",
+    webhookEventId: "evt-auth-both-unavailable-001",
+  });
+  const processed = await processWebhookRequestBody(rawBody, { includePending: false });
+  let threw = false;
+  try {
+    await isReplyStillAuthorized(
+      processed.results[0] as ProcessedWebhookResult,
+      async () => { throw new Error("all authoritative reads unavailable"); },
+    );
+  } catch {
+    threw = true;
+  }
+  return { ok: threw };
 }
 
 async function main() {
@@ -303,10 +333,12 @@ async function main() {
   const takeoverBeforeSendCase = await caseTakeoverBeforeSend();
   const takeoverBeforeRetryCase = await caseTakeoverBeforeRetry();
   const authorizationUnavailableCase = await caseAuthorizationUnavailable();
-  const defaultAuthorizationUnavailableCase = await caseDefaultAuthorizationFailsClosed();
+  const defaultAuthorizationDurableRetryCase = await caseDefaultAuthorizationRetriesDurably();
+  const defaultAuthorizationUnavailableCase = await caseDefaultAuthorizationFailsClosedAfterBothReadsFail();
 
   const output = {
     authorizationUnavailableCase,
+    defaultAuthorizationDurableRetryCase,
     defaultAuthorizationUnavailableCase,
     deadLetterCase,
     duplicateCase,
@@ -317,7 +349,7 @@ async function main() {
 
   console.log(JSON.stringify(output, null, 2));
 
-  if (!authorizationUnavailableCase.ok || !defaultAuthorizationUnavailableCase.ok || !duplicateCase.ok || !retryCase.ok || !deadLetterCase.ok || !takeoverBeforeSendCase.ok || !takeoverBeforeRetryCase.ok) {
+  if (!authorizationUnavailableCase.ok || !defaultAuthorizationDurableRetryCase.ok || !defaultAuthorizationUnavailableCase.ok || !duplicateCase.ok || !retryCase.ok || !deadLetterCase.ok || !takeoverBeforeSendCase.ok || !takeoverBeforeRetryCase.ok) {
     process.exitCode = 1;
   }
 }

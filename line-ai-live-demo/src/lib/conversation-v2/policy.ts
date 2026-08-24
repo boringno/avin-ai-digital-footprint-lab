@@ -372,6 +372,10 @@ function resolvableTreatmentSubject(
   if (hasHedgedTreatmentMention(turn.text)) return undefined;
   const namedInThisTurn = explicitPriceTreatmentKey(turn.text);
   if (namedInThisTurn) return namedInThisTurn;
+  // A pending clarification is only a candidate, not the accepted owner. A
+  // subjectless follow-up such as "那多少錢" must not promote that candidate
+  // into a confirmed price subject before the customer answers the prompt.
+  if (state.awaiting?.pendingKnowledge) return undefined;
   // `subjectKey` is prefixed ("treatment:onda_pro"), so reuse the existing decoder
   // rather than comparing raw keys.
   return subjectTreatmentKeys(state.activeTask.subjectKey)[0];
@@ -956,6 +960,7 @@ export function evaluateDialoguePolicy(
     const contextualPriceTreatmentKeys = hasHedgedTreatmentMention(turn.text)
       ? []
       : contextualTreatmentKeys(state, turn.dialogueReference);
+    const activePriceTreatmentKey = resolvableTreatmentSubject(turn, state);
     // Confirmed entities already account for negation and rewording, so they outrank
     // the raw text scan. The deterministic key exists only to rescue the case where low
     // model confidence left nothing confirmed at all.
@@ -965,7 +970,9 @@ export function evaluateDialoguePolicy(
         ? [deterministicExplicitTreatment]
         : contextualPriceTreatmentKeys.length > 0
           ? contextualPriceTreatmentKeys
-          : [];
+          : activePriceTreatmentKey
+            ? [activePriceTreatmentKey]
+            : [];
     action = hasUnconfirmedTreatmentMention || treatmentKeys.length === 0
       ? {
           at: turn.receivedAt,

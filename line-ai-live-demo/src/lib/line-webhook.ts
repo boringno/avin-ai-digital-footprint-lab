@@ -33,6 +33,7 @@ import {
   shouldSuppressRepeatedHandoff,
   type ConversationState,
 } from "@/lib/conversation-state";
+import { DEFAULT_TENANT_ID } from "@/lib/conversation-store";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import {
@@ -49,6 +50,7 @@ import {
   type ConversationV2NluTelemetry,
   type ConversationV2LiveRouteResult,
 } from "@/lib/conversation-v2/live-runtime";
+import { hasConversationContextEpisodeExpired } from "@/lib/conversation-v2/episode-policy";
 
 export type WebhookProcessOptions = {
   beforeFinalStateCheck?: (sourceUserId: string) => Promise<void>;
@@ -678,13 +680,20 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   let aiReplySourceUrl: string | undefined;
   let usedAiHumanizer = false;
   let usedAiReplyGenerator = false;
+  const conversationV2EpisodeExpired = hasConversationContextEpisodeExpired(
+    existingContext.lastSeenAt,
+    currentIso,
+  );
+  const conversationV2InputContext = conversationV2EpisodeExpired
+    ? { ...existingContext, recentTurns: [] }
+    : existingContext;
 
   const v2Candidate = await (options.routeConversationV2 ?? routeConversationV2Canary)({
-    context: existingContext,
+    context: conversationV2InputContext,
     eventIdentity: event.message.id ?? event.webhookEventId ?? event.replyToken ?? "missing-event-identity",
     message: customerMessage,
     now: currentTime,
-    recentTurns: existingContext.recentTurns,
+    recentTurns: conversationV2InputContext.recentTurns,
     pendingHandoffReason: conversationState.status === "handoff_pending"
       ? conversationState.handoffReason
       : undefined,
@@ -1187,24 +1196,33 @@ export async function isReplyStillAuthorized(
   if (!result.sourceUserId) {
     return true;
   }
+  let latestState: ConversationState;
   try {
-    const latestState = applyAutoResumeIfDue(
-      await loadState(result.sourceUserId),
-      new Date(),
+    latestState = await loadState(
+      result.sourceUserId,
+      DEFAULT_TENANT_ID,
+      "latency_critical",
     );
-    return !shouldBlockAiReply(latestState.status);
-  } catch (error) {
+  } catch (latencyCriticalError) {
     await reportOperationalError({
       alert: false,
-      error,
+      error: latencyCriticalError,
       extra: { line_user_id: result.sourceUserId },
-      source: "line_reply_authorization_degraded",
+      source: "line_reply_authorization_fast_read_failed",
     });
-    // Sending without an authoritative ownership check can talk over a staff
-    // member whose takeover committed immediately before the store outage.
-    // Suppress this one reply; the webhook itself still completes normally.
-    return false;
+
+    // The latency-critical store intentionally has a short timeout and a
+    // circuit breaker. A transient fast-path failure must not silently drop a
+    // correctly planned customer reply. Retry with the independent durable
+    // client before deciding whether staff ownership blocks the AI.
+    latestState = await loadState(
+      result.sourceUserId,
+      DEFAULT_TENANT_ID,
+      "durable",
+    );
   }
+
+  return !shouldBlockAiReply(applyAutoResumeIfDue(latestState, new Date()).status);
 }
 
 async function removeSuppressedReplyFromContext(result: ProcessedWebhookResult) {

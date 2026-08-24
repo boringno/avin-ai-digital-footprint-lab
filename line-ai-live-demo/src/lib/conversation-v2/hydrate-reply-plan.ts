@@ -128,6 +128,33 @@ function contextualPriceCampaignId(input: HydrateConversationV2ReplyInput) {
   return undefined;
 }
 
+/**
+ * Resolve a clinic-approved combination offer from the treatment pack itself.
+ * This deliberately does not inspect treatment names or customer wording: the
+ * clinic's approvedCombinationTreatmentKeys is the sole relationship owner.
+ */
+function approvedCombinationPriceResolution(
+  input: HydrateConversationV2ReplyInput,
+  treatmentKeys: readonly string[],
+) {
+  if (
+    treatmentKeys.length !== 1 ||
+    input.nextState.preferences.treatmentApproach === "single"
+  ) return undefined;
+  const treatment = input.snapshot.clinic.treatmentList.find(
+    (candidate) => candidate.key === treatmentKeys[0],
+  );
+  for (const companionKey of treatment?.consultationGuide?.approvedCombinationTreatmentKeys ?? []) {
+    if (input.nextState.preferences.excludedTreatmentKeys.includes(companionKey)) continue;
+    const resolution = resolveApprovedPrice(input.snapshot, {
+      kind: "unspecified",
+      treatmentKeys: [treatmentKeys[0], companionKey],
+    });
+    if (resolution.status === "approved_current") return resolution;
+  }
+  return undefined;
+}
+
 function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
   const concernKeys = unique([
     ...input.turn.concerns
@@ -607,10 +634,16 @@ export async function hydrateConversationV2ReplyPlan(
           campaignId: contextualCampaignId,
         })
       : undefined;
+    const approvedCombinationResolution = approvedCombinationPriceResolution(
+      input,
+      replyPlan.pricingQuery.treatmentKeys,
+    );
     const alternativePriceResolution =
       genericBotoxAlternative?.status === "approved_current"
         ? genericBotoxAlternative
-        : contextualPriceResolution;
+        : contextualPriceResolution?.status === "approved_current"
+          ? contextualPriceResolution
+          : approvedCombinationResolution;
     const hasDistinctAlternative =
       priceResolution.status === "approved_current" &&
       alternativePriceResolution?.status === "approved_current" &&

@@ -289,10 +289,17 @@ function decisionTraceRows(trace: NonNullable<WorkbenchConversationDetail["messa
   addDecisionTraceRow(rows, "Renderer", trace.rendererMode);
   addDecisionTraceRow(rows, "文字來源", trace.replyTextSource);
   addDecisionTraceRow(rows, "Fallback", trace.fallbackReason);
+  addDecisionTraceRow(rows, "LINE 回覆", formatReplyDelivery(trace.replyDeliveryStatus, trace.replyDeliveryAttempts));
+  addDecisionTraceRow(rows, "未送出原因", trace.replyDeliverySuppressedReason);
   if (trace.guardReplacedText !== null) {
     rows.push(["Guard 替換", trace.guardReplacedText ? "是" : "否"]);
   }
   return rows;
+}
+
+function formatReplyDelivery(status: string | null, attempts: number | null) {
+  if (!status) return null;
+  return attempts === null ? status : `${status}（${attempts} 次送出）`;
 }
 
 function addDecisionTraceRow(rows: Array<[string, string]>, label: string, value: string | null | undefined) {
