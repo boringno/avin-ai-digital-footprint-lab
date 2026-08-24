@@ -111,8 +111,12 @@ async function main() {
       tenantId,
     });
     assert.equal(seedCalls, seedCallsBefore + 1, "each snapshot must load seed data exactly once");
-    assert.equal(runtimeCalls, runtimeCallsBefore + 1, "each snapshot must load the runtime overlay exactly once");
-    checks.push("single-load-per-source");
+    const runtimeAttempts = runtimeCalls - runtimeCallsBefore;
+    assert(
+      runtimeAttempts === 1 || runtimeAttempts === 2,
+      "each snapshot must load the runtime overlay once, plus at most one unavailable-source retry",
+    );
+    checks.push("single-seed-load-bounded-runtime-retry");
     return snapshot;
   }
 
@@ -226,6 +230,70 @@ async function main() {
   }
   checks.push("rejected-runtime-load-fails-closed");
 
+  let transientOverlayCalls = 0;
+  const transientProvider = createRuntimeClinicFactsProvider({
+    loadRuntimeContentOverlay: async () => {
+      transientOverlayCalls += 1;
+      return transientOverlayCalls === 1
+        ? overlay({
+            price: "must not be quoted",
+            releaseId: null,
+            sourceStatus: "unavailable",
+          })
+        : overlay({ releaseId: null });
+    },
+    loadSeedData: async () => ({
+      faqEntries: [],
+      handoffRules: [],
+      pregnancyRules: [],
+      pricingCampaigns: [campaign("seed after retry 16,888")],
+    }),
+  });
+  const recoveredSnapshot = await loadClinicFactsSnapshot(transientProvider, {
+    audienceKey: PRIVATE_AUDIENCE_A,
+    now: NOW,
+    tenantId: "tenant-a",
+  });
+  assert.equal(transientOverlayCalls, 2, "an unavailable runtime lookup must be retried exactly once");
+  assert.equal(
+    resolvedPrice(recoveredSnapshot),
+    "seed after retry 16,888",
+    "a successful retry must restore the verified seed baseline",
+  );
+
+  let unavailableOverlayCalls = 0;
+  const permanentlyUnavailableProvider = createRuntimeClinicFactsProvider({
+    loadRuntimeContentOverlay: async () => {
+      unavailableOverlayCalls += 1;
+      return overlay({
+        price: "must never be quoted",
+        releaseId: null,
+        sourceStatus: "unavailable",
+      });
+    },
+    loadSeedData: async () => ({
+      faqEntries: [],
+      handoffRules: [],
+      pregnancyRules: [],
+      pricingCampaigns: [campaign("must still stay hidden")],
+    }),
+  });
+  const permanentlyUnavailableSnapshot = await loadClinicFactsSnapshot(
+    permanentlyUnavailableProvider,
+    { audienceKey: PRIVATE_AUDIENCE_A, now: NOW, tenantId: "tenant-a" },
+  );
+  const permanentlyUnavailablePrice = resolveApprovedPrice(
+    permanentlyUnavailableSnapshot,
+    { kind: "campaign", treatmentKeys: ["onda_pro"] },
+  );
+  assert.equal(unavailableOverlayCalls, 2, "a persistent outage must stop after one retry");
+  assert.equal(
+    permanentlyUnavailablePrice.status,
+    "unavailable_to_quote",
+    "two unavailable lookups must remain fail closed",
+  );
+  checks.push("transient-overlay-single-retry", "persistent-overlay-outage-fails-closed");
+
   assert.deepEqual(
     runtimeRequests.map(({ audienceKey, tenantId }) => ({ audienceKey, tenantId })),
     [
@@ -235,6 +303,7 @@ async function main() {
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-b" },
+      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
@@ -266,7 +335,7 @@ async function main() {
   checks.push("snapshot-metadata-has-no-audience-pii");
 
   assert.equal(seedCalls, 11);
-  assert.equal(runtimeCalls, 11);
+  assert.equal(runtimeCalls, 12);
   console.log(JSON.stringify({ checks, passed: checks.length, total: checks.length }, null, 2));
 }
 

@@ -84,7 +84,15 @@ const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
 const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
 
 function hasDeterministicPriceInquiry(text: string) {
-  return Boolean(isPriceInquiry(text) && !isHedgedTreatmentReference(text));
+  // Mentioning that the customer lacks price information is not itself a
+  // request for a quote (for example, "我沒有費用資料想了解 ONDA"). Remove
+  // only that meta statement before applying the shared price grammar so a
+  // later explicit question such as "想問 ONDA 價格" still owns the turn.
+  const inquiryText = text.replace(
+    /(?:沒有|沒|無)(?:價格|價錢|價位|費用|收費|報價)(?:資料|資訊|概念)/gu,
+    "",
+  );
+  return Boolean(isPriceInquiry(inquiryText) && !isHedgedTreatmentReference(inquiryText));
 }
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
@@ -1280,14 +1288,26 @@ export function adaptNluFrameToConversationV2Turn(
   // "unknown" outcome. It must never outrank resolveSpeechAct's earlier conclusions --
   // urgent_safety, request_handoff, a hard decision or a selection answer -- because
   // "做完 ONDA 後臉腫得厲害，處理要多少錢" is a safety turn that also names a price.
-  const resolution =
-    resolved.speechAct === "unknown" &&
-    resolved.needsClarification &&
+  const protectedSpeechActs = new Set<TurnSpeechAct>([
+    "book_consultation",
+    "manage_booking",
+    "provide_booking_field",
+    "request_handoff",
+    "select_options",
+    "urgent_safety",
+  ]);
+  const deterministicPriceOwnsTurn =
+    hasDeterministicPriceInquiry(input.text) &&
+    !protectedSpeechActs.has(resolved.speechAct) &&
     !supplemental.selection &&
     !supplemental.clarification &&
-    hasDeterministicPriceInquiry(input.text)
-      ? { needsClarification: false, speechAct: "ask_price" as const }
-      : resolved;
+    !supplemental.negationGuard;
+  // Explicit current-text price wording is stronger than a model that calls the
+  // same sentence a treatment introduction. It still cannot outrank safety,
+  // booking, handoff, a displayed selection, or a current-text negation guard.
+  const resolution = deterministicPriceOwnsTurn
+    ? { needsClarification: false, speechAct: "ask_price" as const }
+    : resolved;
   const selectedNegationGuard =
     supplemental.valid &&
     supplemental.negationGuard &&

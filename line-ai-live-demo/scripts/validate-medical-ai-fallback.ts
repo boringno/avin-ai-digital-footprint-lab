@@ -461,6 +461,27 @@ async function main() {
 
   const qualifiedSafety = constrainMedicalAiReply("微整療程的疼痛感可能依個人狀況不同。", FOOTER);
   assert(qualifiedSafety.includes("可能依個人狀況不同"), "M9: qualified safety language must remain answerable");
+  for (const approvedPhysiology of [
+    "肉毒主要從肌肉活動與動態紋路方向評估。",
+    "如果主要在做表情時才明顯，通常會著重評估表情肌活動與動態紋位置。",
+  ]) {
+    assert(
+      constrainMedicalAiReply(approvedPhysiology, FOOTER, {
+        groundedByApprovedKnowledge: true,
+        medical: true,
+      }) === approvedPhysiology,
+      `M9: physiological activity wording must not be mistaken for a promotion: ${approvedPhysiology}`,
+    );
+  }
+  assertOutputBlocked("M9-promotion-without-price", "本院目前有優惠活動。", /優惠活動/u);
+  const safePriceGap = "目前尚未有核准價格資料，真人客服會於上班時間協助確認。";
+  assert(
+    constrainMedicalAiReply(safePriceGap, FOOTER, {
+      groundedByApprovedKnowledge: true,
+      medical: true,
+    }) === safePriceGap,
+    "M9: an amount-free approved price gap must remain customer-visible",
+  );
   const numericEducation = constrainMedicalAiReply("療程反應可能持續 2 至 4 週，實際仍需由醫師現場評估。", FOOTER);
   assert(numericEducation.includes("2 至 4 週"), "M9: non-price medical numbers must remain answerable");
   const groundedClinicCopy = constrainMedicalAiReply(

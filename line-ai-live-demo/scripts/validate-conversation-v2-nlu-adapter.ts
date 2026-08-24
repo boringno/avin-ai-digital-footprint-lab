@@ -260,6 +260,88 @@ function validateDeterministicPriceShortcutRespectsSafety() {
     "a named treatment plus explicit price wording must survive low NLU confidence",
   );
 
+  for (const message of ["ONDA怎麼收費", "ONDA 體驗價多少"] as const) {
+    const confidentlyMisclassifiedPrice = adapt(
+      v2Frame({
+        focus: "overview",
+        move: "start",
+        reference: "explicit",
+        speechAct: "learn_treatment",
+      }, {
+        confidence: 0.99,
+        intents: ["treatment"],
+        treatments: ["onda_pro"],
+      }),
+      undefined,
+      message,
+    );
+    assert.equal(
+      confidentlyMisclassifiedPrice.speechAct,
+      "ask_price",
+      `explicit current-text price wording must correct a confident model misclassification: ${message}`,
+    );
+  }
+
+  const ordinaryOverview = adapt(
+    v2Frame({
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.99,
+      intents: ["treatment"],
+      treatments: ["onda_pro"],
+    }),
+    undefined,
+    "想了解 ONDA",
+  );
+  assert.equal(
+    ordinaryOverview.speechAct,
+    "learn_treatment",
+    "a treatment overview without price wording must remain a treatment introduction",
+  );
+
+  const priceMetaStatement = adapt(
+    v2Frame({
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.99,
+      intents: ["treatment"],
+      treatments: ["onda_pro"],
+    }),
+    undefined,
+    "我沒有費用資料想了解ONDA",
+  );
+  assert.equal(
+    priceMetaStatement.speechAct,
+    "learn_treatment",
+    "stating that price information is missing must not turn a treatment introduction into a quote request",
+  );
+
+  const priceMetaThenQuestion = adapt(
+    v2Frame({
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.4,
+      intents: ["treatment"],
+      treatments: ["onda_pro"],
+    }),
+    undefined,
+    "我沒有費用資料，想問ONDA價格",
+  );
+  assert.equal(
+    priceMetaThenQuestion.speechAct,
+    "ask_price",
+    "removing a price meta statement must not hide a later explicit quote request",
+  );
+
   const lowConfidenceContextualPrice = adapt(
     frame({ confidence: 0.4, intents: ["pricing"] }),
     undefined,

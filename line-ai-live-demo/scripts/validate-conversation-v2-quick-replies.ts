@@ -28,6 +28,7 @@ import {
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { isPriceInquiry } from "@/lib/pricing-subject";
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
+import { loadSeedData } from "@/lib/seed-loader";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import type { NluFrame } from "@/lib/nlu-frame";
 
@@ -1023,6 +1024,75 @@ async function validateFinalWebhookPayload() {
     "the approved-price CTA choices must survive V2 route, renderer, and webhook formatting",
   );
 
+  const seedData = await loadSeedData();
+  const productionPriceProvider = createStaticClinicFactsProvider({
+    pricingCampaigns: seedData.pricingCampaigns,
+  });
+  for (const [suffix, message, frame] of [
+    ["nlu-outage", "ONDA怎麼收費", null],
+    [
+      "confident-wrong-act",
+      "ONDA 體驗價多少",
+      {
+        areas: [],
+        confidence: 0.99,
+        concerns: [],
+        dialogue: {
+          focus: "overview",
+          move: "start",
+          reference: "explicit",
+          speechAct: "learn_treatment",
+        },
+        intents: ["treatment"],
+        negated: [],
+        safety: {
+          complaint: false,
+          humanRequest: false,
+          postTreatmentRisk: false,
+          pregnancyNursing: false,
+        },
+        schemaVersion: 2,
+        treatments: ["onda_pro"],
+      } satisfies NluFrame,
+    ],
+  ] as const) {
+    const productionUserId = `${userId}-${suffix}`;
+    const routed = await processWebhookRequestBody(
+      webhookEvent({ id: `v2-price-${suffix}`, message, userId: productionUserId }),
+      {
+        includePending: false,
+        routeConversationV2: (input) => routeConversationV2Canary(input, {
+          factsProvider: productionPriceProvider,
+          getCanarySettings: () => ({
+            allowlistedUserIds: [productionUserId],
+            mode: "canary" as const,
+          }),
+          requestFrame: async () => ({
+            errorCode: frame ? null : "nlu_unavailable",
+            frame,
+            latencyMs: 1,
+            model: "fixture",
+            promptVersion: "fixture",
+            tokensIn: 1,
+            tokensOut: frame ? 1 : 0,
+          }),
+        }),
+        routeLegacy: async () => {
+          throw new Error("V1 must not run for an explicit V2 ONDA price question");
+        },
+      },
+    );
+    const payload = routed.results[0]?.replyPayload;
+    assert.ok(payload, `${message}: final LINE payload must exist`);
+    const visible = visibleTextFromPayload(payload.messages);
+    assert.match(visible, /16,888/u, `${message}: final LINE text must quote the approved ONDA price`);
+    assert.doesNotMatch(
+      visible,
+      /最想先確認的療程|請告訴我這次最想確認/u,
+      `${message}: price must not degrade to generic onboarding copy`,
+    );
+  }
+
   const bookingUserId = `${userId}-booking`;
   const overviewFrame: NluFrame = {
     areas: [],
@@ -1093,9 +1163,16 @@ async function validateFinalWebhookPayload() {
         tokensOut: 1,
       }),
     });
-  await processWebhookRequestBody(
+  const botoxOpening = await processWebhookRequestBody(
     webhookEvent({ id: "v2-botox-open", message: "我想了解肉毒", userId: followupUserId }),
     { includePending: false, routeConversationV2: routeFollowupJourney },
+  );
+  const botoxOpeningPayload = botoxOpening.results[0]?.replyPayload;
+  assert.ok(botoxOpeningPayload, "the final webhook payload must exist for the Botox opening");
+  assert.match(
+    visibleTextFromPayload(botoxOpeningPayload.messages),
+    /肉毒.*動態紋/su,
+    "a rejected generator must fall back to the approved Botox introduction, not generic onboarding",
   );
   const dynamicWrinkles = await processWebhookRequestBody(
     webhookEvent({ id: "v2-botox-wrinkles", message: "我想改善動態紋", userId: followupUserId }),
@@ -1103,6 +1180,11 @@ async function validateFinalWebhookPayload() {
   );
   const dynamicPayload = dynamicWrinkles.results[0]?.replyPayload;
   assert.ok(dynamicPayload, "the final webhook payload must exist for an understood Botox concern");
+  assert.match(
+    visibleTextFromPayload(dynamicPayload.messages),
+    /表情肌活動|動態紋位置/u,
+    "a Botox dynamic-wrinkle turn must retain its approved concern answer in final LINE text",
+  );
   assert.deepEqual(
     quickReplyLabelsFromPayload(dynamicPayload.messages),
     ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
