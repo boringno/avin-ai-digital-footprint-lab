@@ -193,6 +193,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Conversation State V3 與 Response Contract](line-ai-live-demo/docs/conversation-state-v3-response-contract.md)
 - [Conversation V2 cutover](line-ai-live-demo/docs/conversation-v2-cutover.md)
 - [Conversation V2 資料對齊與替換藍圖](line-ai-live-demo/docs/conversation-v2-parity-replacement-blueprint.md)
+- [平台開發管理員存取規範](line-ai-live-demo/docs/platform-developer-access.md)
 - [活動價格資料規格](line-ai-live-demo/docs/pricing-campaigns-spec.md)
 - [R1 Reporting Notes](line-ai-live-demo/docs/r1-reporting-implementation-notes.md)
 - [Runtime 回覆發布與回退](line-ai-live-demo/docs/runtime-release-operations.md)
