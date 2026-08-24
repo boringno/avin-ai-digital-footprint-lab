@@ -10,6 +10,7 @@ import type {
   PendingQuickReplyChoice,
   TrustedSemanticAnchor,
 } from "./types";
+import { isConversationV2AiAssistanceEnabled } from "./state";
 
 export type ConversationV2QuickReplySelection = {
   nextStage?: "approach" | "followup" | "initial" | "consultation";
@@ -139,7 +140,7 @@ export function resolveConversationV2QuickReplySelection(input: {
   state: ConversationV2State;
 }): ConversationV2QuickReplySelection | undefined {
   if (
-    input.state.control.mode !== "ai_active" ||
+    !isConversationV2AiAssistanceEnabled(input.state.control.mode) ||
     input.state.bookingTask.status === "collecting"
   ) {
     return undefined;

@@ -655,9 +655,9 @@ async function validateRealSeedPriceOwnership() {
   assert(onda.status === "approved_current" && onda.customerPriceText.includes("16,888"), "CF-P12: real ONDA seed owner failed");
   assert(
     botox.status === "approved_current" &&
-      /12U\s*999/u.test(botox.customerPriceText) &&
-      !/(?:奇蹟肉毒|經典肉毒|皇家肉毒|Neuronox|BOTOX|Dysport)/iu.test(botox.customerPriceText),
-    "CF-P12: generic Botox pricing must use the approved unbranded 12U offer",
+      /肉毒體驗價\s*999/u.test(botox.customerPriceText) &&
+      !/(?:12\s*U|奇蹟肉毒|經典肉毒|皇家肉毒|Neuronox|BOTOX|Dysport)/iu.test(botox.customerPriceText),
+    "CF-P12: generic Botox pricing must use the approved customer-safe offer without brand or dose",
   );
   assert(combination.status === "approved_current" && combination.customerPriceText.includes("12,999"), "CF-P12: exact combination price failed");
 

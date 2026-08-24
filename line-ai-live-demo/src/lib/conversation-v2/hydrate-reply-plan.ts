@@ -627,7 +627,7 @@ export async function hydrateConversationV2ReplyPlan(
         ? unique([
             priceGapReply(priceResolution),
             `💰 另有可直接參考的方案：${alternativePriceResolution.customerPriceText}。${alternativePriceResolution.branchScope ? `\n${alternativePriceResolution.branchScope}。` : ""}`,
-            "📅 如果您願意，我可以先幫您整理免費諮詢需求，品牌方案價格再由真人客服於上班時間確認。",
+            `📅 如果您願意，我可以先幫您整理免費諮詢需求，品牌方案價格再由真人客服協助確認。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`,
           ]).join("\n\n")
         : priceGapReply(priceResolution);
     return {
@@ -749,7 +749,7 @@ export async function hydrateConversationV2ReplyPlan(
     const expectedField = input.nextState.bookingTask.expectedField;
     const replyText = expectedField
       ? BOOKING_PROMPTS[expectedField]
-      : "已收到您提供的預約資料，真人客服會接續確認可預約時段；目前尚未完成預約。";
+      : `已收到您提供的預約資料，真人客服會接續確認可預約時段；目前尚未完成預約。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`;
     return {
       dataStatus: "ready",
       rendererPlan: deterministicPlan({
@@ -773,7 +773,7 @@ export async function hydrateConversationV2ReplyPlan(
     const action = input.result.action;
     const handoffId = action.type === "queue_handoff" ? action.handoffId : `${input.nextState.episodeId}:${replyPlan.sourceTurnId}:handoff`;
     const reason = action.type === "queue_handoff" ? action.reason : "customer_requested_human";
-    const replyText = "好的，我已幫您通知真人客服接手，客服會在服務時間內接續協助。";
+    const replyText = `好的，我已幫您通知真人客服接手，客服會在服務時間內接續協助。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`;
     return {
       dataStatus: "ready",
       rendererPlan: deterministicPlan({

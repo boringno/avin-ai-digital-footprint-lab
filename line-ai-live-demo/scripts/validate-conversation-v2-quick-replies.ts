@@ -8,6 +8,8 @@ import {
 } from "@/lib/line-webhook";
 import type { PriceCatalogEntry } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
+import { buildTreatmentReplyAssets } from "@/lib/clinic-facts/treatment-reply-assets";
+import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 import { clinicConfig } from "@/lib/clinic-config";
 import {
   projectConversationV2QuickReplies,
@@ -24,6 +26,7 @@ import {
   recordConversationV2TurnReceipt,
 } from "@/lib/conversation-v2/state";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
+import { isPriceInquiry } from "@/lib/pricing-subject";
 import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import type { NluFrame } from "@/lib/nlu-frame";
@@ -64,6 +67,24 @@ const ONDA_BOTOX_COMBO_PRICE: PriceCatalogEntry = {
   price_text: "internal",
   start_date: "2026-08-01",
   treatment_name: "ONDA PRO",
+};
+
+const BOTOX_PRICE: PriceCatalogEntry = {
+  approval_status: "approved",
+  asset_urls: "",
+  branch_scope: "all",
+  campaign_aliases: "肉毒|肉毒體驗價|999",
+  campaign_name: "肉毒體驗方案",
+  customer_price_approval_status: "approved",
+  customer_price_text: "肉毒體驗價 999 元",
+  end_date: "2026-08-31",
+  fallback_message: "",
+  id: "promo-2026-07-09-botox-wrinkle",
+  is_active: "true",
+  notes: "validator",
+  price_text: "internal: 12U",
+  start_date: "2026-08-01",
+  treatment_name: "肉毒",
 };
 
 function plan(input: { dialogueAct?: "introduce_treatment" | "answer_followup" | "quote_approved_price"; treatmentKeys?: string[] } = {}) {
@@ -196,6 +217,64 @@ function validateEveryConfiguredSemanticChoiceResolves() {
   }
 }
 
+function validateEveryConfiguredChoiceHasCustomerDestination() {
+  const assets = buildTreatmentReplyAssets(clinicConfig);
+
+  for (const treatment of clinicConfig.treatmentList) {
+    const guide = treatment.consultationGuide;
+    for (const choice of guide?.customerQuickReplies ?? []) {
+      assert.ok(choice.label.trim(), `${treatment.key}/${choice.stage} must have a visible label`);
+      assert.ok(choice.text.trim(), `${treatment.key}/${choice.stage}/${choice.label} must send customer text`);
+
+      const state = createConversationV2State({
+        episodeId: `configured-choice-${treatment.key}-${choice.stage}-${choice.label}`,
+        now: NOW,
+      });
+      state.knowledge.treatmentKeys = [treatment.key];
+      state.knowledge.concernKeys = [...(choice.concernKeys ?? [])];
+      const projected = withConversationV2QuickReplies(
+        plan({ dialogueAct: "answer_followup", treatmentKeys: [treatment.key] }),
+        state,
+        { nextStage: choice.stage },
+      );
+      assert.ok(
+        projected.quickReplyItems.some((item) =>
+          item.action.label === choice.label && item.action.text === choice.text),
+        `${treatment.key}/${choice.stage}/${choice.label} must be reachable in a LINE reply`,
+      );
+
+      if (choice.semantic) {
+        const resolved = buildConversationV2QuickReplySelection({
+          choice,
+          clinic: clinicConfig,
+          treatmentKey: treatment.key,
+        });
+        assert.ok(resolved, `${treatment.key}/${choice.label} must resolve to a trusted semantic destination`);
+        const replyAssetId = resolved.semanticAnchor.replyAssetId ??
+          `treatment:${treatment.key}:concern:${resolved.semanticAnchor.concernKeys[0] ?? ""}`;
+        const asset = assets.find((item) => item.id === replyAssetId);
+        assert.ok(asset?.customerCopy.trim(), `${treatment.key}/${choice.label} must have approved customer copy`);
+        assert.ok(
+          asset?.followup?.trim() || choice.nextStage === "consultation",
+          `${treatment.key}/${choice.label} must either guide the next question or expose consultation actions`,
+        );
+        continue;
+      }
+
+      const bookingAct = classifyBookingSpeechAct(choice.text);
+      const hasPlainDestination =
+        bookingAct === "create" ||
+        choice.text === "我要找真人客服" ||
+        isPriceInquiry(choice.text) ||
+        (guide?.quickReplies ?? []).some((item) => item.terms.includes(choice.text));
+      assert.ok(
+        hasPlainDestination,
+        `${treatment.key}/${choice.label} must route to booking, handoff, price, or an approved continuation reply`,
+      );
+    }
+  }
+}
+
 function validatePendingQuickReplyContractOwnsHistoricalState() {
   const state = createConversationV2State({ episodeId: "multi-history-buttons", now: NOW });
   state.knowledge.treatmentKeys = ["onda_pro", "botox"];
@@ -216,6 +295,15 @@ function validatePendingQuickReplyContractOwnsHistoricalState() {
   assert.equal(projected.pendingQuickReply?.choices.length, 3);
 
   state.pendingQuickReply = projected.pendingQuickReply;
+  state.control = {
+    handoff: {
+      id: "pending-human-review",
+      reason: "pregnancy_nursing_risk",
+      requestedAt: NOW,
+      status: "pending",
+    },
+    mode: "handoff_pending",
+  };
   const persisted = parsePersistedConversationV2State(JSON.parse(JSON.stringify(state)));
   assert.ok(persisted?.pendingQuickReply, "the approved visible choice contract must survive V2 JSON persistence");
   const selected = resolveConversationV2QuickReplySelection({
@@ -231,6 +319,27 @@ function validatePendingQuickReplyContractOwnsHistoricalState() {
     "the displayed ONDA choice must keep its ONDA owner even when historical state also contains Botox",
   );
   assert.equal(selected?.semanticAnchor.replyAssetId, "treatment:onda_pro:detail:jawline_expectation");
+  const humanOwned = structuredClone(persisted);
+  humanOwned.control = {
+    handoff: {
+      id: "active-human-review",
+      reason: "pregnancy_nursing_risk",
+      requestedAt: NOW,
+      status: "active",
+    },
+    mode: "human_active",
+  };
+  assert.equal(
+    resolveConversationV2QuickReplySelection({
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      now: new Date("2026-08-23T12:05:00.000+08:00"),
+      snapshotId: "snapshot-approved-buttons",
+      state: humanOwned,
+    }),
+    undefined,
+    "a human-owned conversation must still reject AI quick-reply handling",
+  );
   assert.equal(
     resolveConversationV2QuickReplySelection({
       clinic: clinicConfig,
@@ -406,7 +515,7 @@ async function validateLiveRuntimeAttachesV2Choices() {
 
 async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
   const userId = "U-v2-pending-contract";
-  const provider = createStaticClinicFactsProvider();
+  const provider = createStaticClinicFactsProvider({ pricingCampaigns: [BOTOX_PRICE] });
   const dependencies = {
     factsProvider: provider,
     getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
@@ -453,6 +562,15 @@ async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
     "onda_pro",
     "the actual ONDA reply must persist the owner of its visible semantic choices",
   );
+  context.conversationV2State!.control = {
+    handoff: {
+      id: "pending-human-review-live",
+      reason: "pregnancy_nursing_risk",
+      requestedAt: NOW,
+      status: "pending",
+    },
+    mode: "handoff_pending",
+  };
   await route("pending-contract-concern", "我想改善雙下巴／嘴邊肉");
   assert.ok(
     context.conversationV2State?.pendingQuickReply?.choices.some((choice) => choice.messageText === "脂肪堆積"),
@@ -466,6 +584,30 @@ async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
     "a tap must resolve from its delivered contract instead of guessing from multi-treatment history",
   );
   assert.doesNotMatch(fat.decision.replyText, /想先了解這個部位可評估的方向/u);
+
+  const botox = await route("pending-contract-botox", "肉毒");
+  assert.match(botox.decision.replyText, /肉毒.*動態紋/us);
+  assert.deepEqual(
+    labels(botox.decision.replyPlan?.quickReplyItems ?? []),
+    ["動態紋", "咀嚼肌／小臉", "肩頸／小腿", "腋下／手汗"],
+    "pending human review must not hide the initial Botox choices",
+  );
+  const dynamicWrinkles = await route("pending-contract-dynamic", "我想改善動態紋");
+  assert.match(dynamicWrinkles.decision.replyText, /抬頭紋.*皺眉紋.*魚尾紋/us);
+  assert.deepEqual(
+    labels(dynamicWrinkles.decision.replyPlan?.quickReplyItems ?? []),
+    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+  );
+  const price = await route("pending-contract-price", "肉毒體驗價多少");
+  assert.match(price.decision.replyText, /999/u);
+  assert.doesNotMatch(
+    price.decision.replyText,
+    /12\s*U|Neuronox|優力柔|奇蹟肉毒/iu,
+    "the customer price must not expose the intentionally omitted brand or dose",
+  );
+  const booking = await route("pending-contract-booking", "我要預約免費諮詢");
+  assert.equal(booking.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.equal(booking.decision.nextContext.conversationV2State?.bookingTask.expectedField, "branch");
 }
 
 function quickReplyLabelsFromPayload(messages: readonly LineReplyMessage[]) {
@@ -910,6 +1052,7 @@ async function main() {
   validateBotoxChoices();
   validateUndeliveredContractCleanup();
   validateEveryConfiguredSemanticChoiceResolves();
+  validateEveryConfiguredChoiceHasCustomerDestination();
   validatePendingQuickReplyContractOwnsHistoricalState();
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();

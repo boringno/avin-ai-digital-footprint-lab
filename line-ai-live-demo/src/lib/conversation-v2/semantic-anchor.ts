@@ -30,6 +30,7 @@ import {
   normalizeLeadingPositiveContentIntro,
 } from "./content-intro";
 import { isExplicitTreatmentOverviewRestart } from "./episode-policy";
+import { isConversationV2AiAssistanceEnabled } from "./state";
 
 const CONTENT_SPEECH_ACTS = new Set<DialogueSpeechAct>([
   "ask_concern",
@@ -877,7 +878,7 @@ export function resolveTrustedSemanticAnchor(
     ? input
     : { ...input, message: scopedMessage };
   if (
-    input.state.control.mode !== "ai_active" ||
+    !isConversationV2AiAssistanceEnabled(input.state.control.mode) ||
     input.state.bookingTask.status === "collecting" ||
     !contentActionAllowed(input.candidate) ||
     hasHardDomainWording(scopedMessage, input.clinic)

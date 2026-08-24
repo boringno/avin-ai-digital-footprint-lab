@@ -18,6 +18,17 @@ function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
+/**
+ * A queued human handoff is not a global AI pause. Until a human actually
+ * takes ownership, the assistant may continue ordinary treatment education
+ * and consume the choices it has already shown to the customer.
+ */
+export function isConversationV2AiAssistanceEnabled(
+  mode: ConversationV2State["control"]["mode"],
+) {
+  return mode === "ai_active" || mode === "handoff_pending";
+}
+
 function cloneDraft(draft: BookingDraft): BookingDraft {
   return {
     ...draft,

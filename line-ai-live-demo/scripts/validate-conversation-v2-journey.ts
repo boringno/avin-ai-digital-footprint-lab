@@ -78,8 +78,11 @@ const botoxCampaign = {
   asset_urls: "https://line-ai-live-demo.vercel.app/demo/promotions/summer-2026-07-09-to-07-20/botox-wrinkle-999.png",
   campaign_aliases: "肉毒|肉毒除皺|肉毒12U|12U999|999",
   campaign_name: "2026 盛夏光采肉毒除皺",
-  customer_price_text: "肉毒 12U 999 元",
-  dose: "12U",
+  customer_price_text: "肉毒體驗價 999 元",
+  // The approved customer offer deliberately hides dose. Keep the internal
+  // specification in price_text, but do not make it a customer applicability
+  // prerequisite or a generic price question could never receive the offer.
+  dose: "",
   end_date: "2026-08-31",
   id: "promo-2026-07-09-botox-wrinkle",
   price_text: "肉毒12U 999元",
@@ -692,11 +695,11 @@ async function validateMondayNaturalInputFamilies() {
       message,
       turnIndex: turnIndex++,
     });
-    assert.match(quoted.decision.replyText, /12U\s*999/u, `J7: ${message} must quote only the approved 12U offer`);
+    assert.match(quoted.decision.replyText, /肉毒體驗價\s*999/u, `J7: ${message} must quote the approved generic offer`);
     assert.doesNotMatch(
       quoted.decision.replyText,
-      /奇蹟肉毒[^\n。]*12U|Neuronox[^\n。]*12U|優力柔[^\n。]*12U/u,
-      `J7: ${message} must not attribute the generic offer to a brand`,
+      /12\s*U|奇蹟肉毒[^\n。]*999|Neuronox[^\n。]*999|優力柔[^\n。]*999/iu,
+      `J7: ${message} must not expose dose or attribute the generic offer to a brand`,
     );
   }
 
@@ -714,8 +717,10 @@ async function validateMondayNaturalInputFamilies() {
       message,
       turnIndex: turnIndex++,
     });
-    assert.match(unquoted.decision.replyText, /12U\s*999/u, `J7: ${message} must proactively offer the generic approved alternative`);
+    assert.match(unquoted.decision.replyText, /肉毒體驗價\s*999/u, `J7: ${message} must proactively offer the generic approved alternative`);
+    assert.doesNotMatch(unquoted.decision.replyText, /12\s*U/iu, `J7: ${message} must not expose the offer dose`);
     assert.match(unquoted.decision.replyText, /真人客服|上班時間/u, `J7: ${message} must offer staff price confirmation`);
+    assert.match(unquoted.decision.replyText, /週一至週五\s*09:00-18:00.*國定假日休息/su, `J7: ${message} must state staff service hours`);
     assert.equal(unquoted.toolRequest?.type, "request_fact_confirmation", `J7: ${message} must create a price confirmation obligation`);
   }
 
@@ -786,8 +791,10 @@ async function validateMondayNaturalInputFamilies() {
     message: "BOTOX價格",
     turnIndex: turnIndex++,
   });
-  assert.match(confirmedFuzzyPrice.decision.replyText, /12U\s*999/u, "J7: confirmed BOTOX may offer the generic approved alternative without attributing it to BOTOX");
+  assert.match(confirmedFuzzyPrice.decision.replyText, /肉毒體驗價\s*999/u, "J7: confirmed BOTOX may offer the generic approved alternative without attributing it to BOTOX");
+  assert.doesNotMatch(confirmedFuzzyPrice.decision.replyText, /12\s*U/iu, "J7: confirmed BOTOX must not expose the offer dose");
   assert.match(confirmedFuzzyPrice.decision.replyText, /真人客服|上班時間/u, "J7: confirmed BOTOX price must route to staff confirmation");
+  assert.match(confirmedFuzzyPrice.decision.replyText, /週一至週五\s*09:00-18:00.*國定假日休息/su, "J7: confirmed BOTOX price must state staff service hours");
 
   for (const message of ["不要ONAD", "哪間有ONAD", "做完ONAD後呼吸困難"] as const) {
     const rejected = await routeTurn({
@@ -867,6 +874,8 @@ async function validateMondayCompleteBookingJourneys() {
     assert.equal(state.bookingTask.draft.timeSlots.length, 3);
     assert.equal(completed.toolRequest?.type, "persist_booking_progress");
     assert.match(completed.decision.replyText, /真人客服|接續確認/u);
+    assert.match(completed.decision.replyText, /週一至週五\s*09:00-18:00/u);
+    assert.match(completed.decision.replyText, /國定假日休息/u);
   }
   console.log("PASS: J8 ONDA/Botox complete booking journeys");
 }

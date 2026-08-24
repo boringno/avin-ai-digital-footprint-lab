@@ -311,8 +311,8 @@ export const clinicConfig: ClinicConfig = {
       "如果是第一次到診，通常會先由現場協助基本資料與需求確認。建議您到診前先想好想了解的療程、在意的部位，以及方便的時段；若有既往治療紀錄或特殊狀況，也可以到現場一併說明。",
   },
   humanSupportHours: {
-    fallbackSummary: "真人客服服務時間為週一至週五 09:00-18:00；週末與國定假日暫不保證即時回覆。",
-    note: "如遇客服請假或非服務時間，AI 仍會先整理需求，待客服上班後接續協助。",
+    fallbackSummary: "真人客服服務時間為週一至週五 09:00-18:00，國定假日休息。",
+    note: "非服務時間 AI 仍會先整理需求，待真人客服上班後接續協助。",
     timezone: "Asia/Taipei",
     weekdayEnd: "18:00",
     weekdayStart: "09:00",
@@ -739,7 +739,7 @@ export const clinicConfig: ClinicConfig = {
         },
         {
           aliases: ["Neuronox", "優力柔", "优力柔", "奇蹟肉毒", "奇迹肉毒", "奇績肉毒", "neruonox", "neuronx"],
-          customerReply: "🌿 奇蹟肉毒是院內對 Neuronox 優力柔的稱呼。院內另有肉毒 12U 999 體驗方案，品牌與施打細節由真人客服依活動內容協助確認。",
+          customerReply: "🌿 奇蹟肉毒是院內對 Neuronox 優力柔的稱呼。院內另有肉毒體驗價 999 元，全館適用；品牌與施打細節由真人客服依活動內容協助確認。",
           key: "neuronox",
           name: "Neuronox 優力柔（奇蹟肉毒）",
         },
@@ -916,6 +916,12 @@ export const clinicConfig: ClinicConfig = {
         followupPrompt: "😊 您主要在意臉部動態紋、咀嚼肌／小臉、肩頸／小腿，還是多汗問題呢？",
         quickReplies: [
           {
+            key: "brands",
+            terms: ["品牌差異", "有哪些品牌", "肉毒品牌"],
+            reply: "🌿 奇蹟肉毒、經典肉毒及皇家肉毒都是院內可評估的品牌，醫師會依施打部位、肌肉狀況與需求建議。",
+            followupPrompt: "😊 您主要想改善動態紋、咀嚼肌／小臉，還是其他部位呢？",
+          },
+          {
             key: "features",
             terms: ["特色", "原理", "怎麼做", "功效"],
             reply: "🌿 肉毒主要從肌肉活動與動態紋路方向評估，也能依部位協助調整肌肉線條。\n✨ 常見會評估抬頭紋、皺眉紋、魚尾紋、咀嚼肌、小腿、肩頸及多汗問題。",
@@ -955,7 +961,7 @@ export const clinicConfig: ClinicConfig = {
           { label: "手汗", nextStage: "consultation", semantic: { areaKey: "hand", assetKey: "localized_sweating_hand", assetKind: "detail", concernKey: "localized_sweating", questionAspect: "benefits", type: "approved_asset" }, text: "我在意手汗", stage: "followup", concernKeys: ["localized_sweating"] },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup", concernKeys: ["localized_sweating"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["localized_sweating"] },
-          { label: "品牌差異", text: "肉毒有哪些品牌", stage: "followup" },
+          { label: "品牌差異", nextStage: "followup", semantic: { assetKey: "brands", assetKind: "quick", questionAspect: "brands", type: "approved_asset" }, text: "肉毒有哪些品牌", stage: "followup" },
           { label: "價格／活動", text: "肉毒體驗價多少", stage: "followup" },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
           { label: "真人客服協助", text: "我要找真人客服", stage: "followup" },

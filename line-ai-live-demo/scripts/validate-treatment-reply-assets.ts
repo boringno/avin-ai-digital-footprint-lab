@@ -15,7 +15,7 @@ const EXPECTED_COUNTS = {
   discovery_fallback: 1,
   feature: 3,
   intro: 42,
-  quick: 10,
+  quick: 11,
   related: 1,
 } as const;
 

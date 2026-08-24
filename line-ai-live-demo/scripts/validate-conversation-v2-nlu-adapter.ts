@@ -583,6 +583,51 @@ function validateTrustedSemanticAnchors() {
   assert.deepEqual(exactAnchor.treatmentKeys, ["onda_pro"]);
   assert.equal(exactAnchor.replyAssetId, undefined, "an ontology name alone must not invent a reply asset");
 
+  const pendingState = createConversationV2State({
+    episodeId: "semantic-anchor-pending-human",
+    now: RECEIVED_AT,
+  });
+  pendingState.control = {
+    handoff: {
+      id: "pending-human-review",
+      reason: "pregnancy_nursing_risk",
+      requestedAt: RECEIVED_AT,
+      status: "pending",
+    },
+    mode: "handoff_pending",
+  };
+  const pendingBotoxAnchor = resolveTrustedSemanticAnchor({
+    clinic: clinicConfig,
+    message: "肉毒",
+    ontology: clinicOntology,
+    state: pendingState,
+  });
+  assert.deepEqual(
+    pendingBotoxAnchor?.treatmentKeys,
+    ["botox"],
+    "a pending human review must still allow one exact treatment question to continue through V2",
+  );
+  const humanState = structuredClone(pendingState);
+  humanState.control = {
+    handoff: {
+      id: "active-human-review",
+      reason: "pregnancy_nursing_risk",
+      requestedAt: RECEIVED_AT,
+      status: "active",
+    },
+    mode: "human_active",
+  };
+  assert.equal(
+    resolveTrustedSemanticAnchor({
+      clinic: clinicConfig,
+      message: "肉毒",
+      ontology: clinicOntology,
+      state: humanState,
+    }),
+    undefined,
+    "an active human owner must still block the AI content anchor",
+  );
+
   const frameLessExactAnchor = resolveTrustedSemanticAnchor({
     clinic: clinicConfig,
     message: "ONDA",
