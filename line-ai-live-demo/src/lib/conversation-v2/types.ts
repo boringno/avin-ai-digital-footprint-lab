@@ -273,6 +273,8 @@ export type TurnUnderstanding = {
   concerns: EntityMention[];
   confidence: number;
   dialogueReference: DialogueReference;
+  /** Trusted reason supplied by deterministic handoff preflight. */
+  handoffReason?: string;
   /** Structured price qualifiers extracted by NLU or a deterministic tool. */
   priceApplicability?: PriceApplicabilityDimensions;
   questionAspect: QuestionAspect;
@@ -346,7 +348,9 @@ export type DialoguePolicyAction =
       type: "answer_price";
     })
   | (PolicyActionBase & {
+      collectBookingDetails?: boolean;
       handoffId: string;
+      initialDraft?: Partial<BookingDraft>;
       reason: string;
       type: "queue_handoff";
     })

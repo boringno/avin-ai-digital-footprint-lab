@@ -1257,6 +1257,9 @@ export function adaptNluFrameToConversationV2Turn(
             ? "explicit"
             : "none"
       ),
+      ...(supplemental.hardDecision?.reason
+        ? { handoffReason: supplemental.hardDecision.reason }
+        : {}),
       questionAspect: selectedSemanticAnchor?.questionAspect ??
         (hasResolvedAffirmation ? "overview" : "none"),
       receivedAt: input.receivedAt,
@@ -1358,6 +1361,9 @@ export function adaptNluFrameToConversationV2Turn(
       (selectedNegationGuard
         ? hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"
         : parsedFrame.dialogue.reference),
+    ...(supplemental.hardDecision?.reason
+      ? { handoffReason: supplemental.hardDecision.reason }
+      : {}),
     questionAspect: selectedSemanticAnchor?.questionAspect ??
       (selectedNegationGuard
         ? hasResolvedAffirmation ? "overview" : "none"

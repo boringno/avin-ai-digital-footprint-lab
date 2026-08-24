@@ -667,10 +667,39 @@ export function reduceConversationV2State(
         pricingSubjectTreatmentKeys: [...action.treatmentKeys],
       };
     }
-    case "queue_handoff":
+    case "queue_handoff": {
+      const shouldCollectBooking = Boolean(
+        action.collectBookingDetails && next.bookingTask.status !== "completed",
+      );
+      const existingDraft = ["collecting", "suspended"].includes(next.bookingTask.status)
+        ? next.bookingTask.draft
+        : { timeSlots: [], treatmentKeys: [] };
+      const supplied = action.initialDraft ?? {};
+      const bookingDraft: BookingDraft = {
+        ...existingDraft,
+        ...supplied,
+        timeSlots: unique(supplied.timeSlots ?? existingDraft.timeSlots),
+        treatmentKeys: unique(supplied.treatmentKeys ?? existingDraft.treatmentKeys),
+      };
+      const expectedField = shouldCollectBooking
+        ? nextMissingBookingField(bookingDraft, "create")
+        : next.bookingTask.expectedField;
       return {
         ...next,
         ...common,
+        ...(shouldCollectBooking
+          ? {
+              activeTask: nextTask(next, "booking", action.at, action.turnId),
+              awaiting: expectedField ? bookingAwaiting(action.turnId, expectedField) : undefined,
+              bookingTask: {
+                draft: bookingDraft,
+                expectedField,
+                id: next.bookingTask.id ?? `${next.episodeId}:${action.turnId}:booking`,
+                intent: "create" as const,
+                status: expectedField ? "collecting" as const : "completed" as const,
+              },
+            }
+          : {}),
         control: {
           handoff: {
             id: action.handoffId,
@@ -681,6 +710,7 @@ export function reduceConversationV2State(
           mode: "handoff_pending",
         },
       };
+    }
     case "answer_safety":
       return {
         ...next,

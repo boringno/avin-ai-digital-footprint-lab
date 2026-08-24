@@ -60,6 +60,8 @@ function validatePendingHandoffDoesNotOwnDialogue() {
   expectAction(handoff, "queue_handoff");
   const pending = apply(initial, handoff);
   assert.equal(pending.control.mode, "handoff_pending");
+  assert.equal(pending.bookingTask.status, "collecting");
+  assert.equal(pending.bookingTask.expectedField, "treatment");
 
   const treatmentInquiry = evaluateDialoguePolicy(
     pending,
@@ -76,7 +78,32 @@ function validatePendingHandoffDoesNotOwnDialogue() {
   const answered = apply(pending, treatmentInquiry);
   assert.equal(answered.activeTask.kind, "learn_treatment");
   assert.equal(answered.control.mode, "handoff_pending");
-  assert.equal(answered.bookingTask.status, "inactive");
+  assert.equal(
+    answered.bookingTask.status,
+    "suspended",
+    "a new treatment question may pause the handoff-created intake, but AI remains active",
+  );
+}
+
+function validateSafetyHandoffDoesNotStartSalesIntake() {
+  const initial = createConversationV2State({ episodeId: "episode-safety", now: AT });
+  const handoff = evaluateDialoguePolicy(
+    initial,
+    turn({
+      handoffReason: "post_procedure_issue",
+      speechAct: "request_handoff",
+      text: "打完後腫得很厲害",
+      turnId: "turn-safety",
+    }),
+  );
+  expectAction(handoff, "queue_handoff");
+  const pending = apply(initial, handoff);
+  assert.equal(pending.control.mode, "handoff_pending");
+  assert.equal(
+    pending.bookingTask.status,
+    "inactive",
+    "a safety handoff must not turn an urgent customer into a sales intake",
+  );
 }
 
 function validateOnlyExplicitBookingStartsCollection() {
@@ -1062,6 +1089,7 @@ function validateEngineIdempotency() {
 }
 
 validatePendingHandoffDoesNotOwnDialogue();
+validateSafetyHandoffDoesNotStartSalesIntake();
 validateOnlyExplicitBookingStartsCollection();
 validateBookingFieldAndPricingOwnership();
 validateBookingIntentContracts();

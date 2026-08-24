@@ -41,6 +41,7 @@ import {
 } from "./canary-gate";
 import { ensureCustomerSafeText } from "./customer-text-guard";
 import {
+  BOOKING_PROMPTS,
   hydrateConversationV2ReplyPlan,
   type HydratedConversationV2Reply,
 } from "./hydrate-reply-plan";
@@ -826,16 +827,24 @@ function preflightRoute(input: {
     );
   }
 
-  const replyPlan = legacyDecisionToReplyPlan(preflight, {
+  const bookingPrompt = preflight.matchedKey === "human_request" &&
+    state.bookingTask.status === "collecting" &&
+    state.bookingTask.expectedField
+      ? `\n\n在真人客服正式接手前，我可以先幫您整理預約資料。\n${BOOKING_PROMPTS[state.bookingTask.expectedField]}`
+      : "";
+  const replyText = `${preflight.replyText}${bookingPrompt}`;
+  const baseReplyPlan = legacyDecisionToReplyPlan({ ...preflight, replyText }, {
     dialogueAct: preflight.decisionType === "handoff_pending" ? "handoff" : "answer_safety",
-    fallbackText: preflight.replyText,
+    fallbackText: replyText,
     handoffReason: preflight.decisionType === "handoff_pending" ? effectiveHandoffReason : undefined,
     renderMode: "deterministic",
     requiresHuman: preflight.decisionType === "handoff_pending",
   });
+  const replyPlan = withConversationV2QuickReplies(baseReplyPlan, state);
   return {
     decision: {
       ...preflight,
+      replyText,
       nextContext: {
         ...input.context,
         conversationV2State: state,
