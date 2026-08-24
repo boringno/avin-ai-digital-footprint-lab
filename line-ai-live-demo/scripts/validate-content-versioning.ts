@@ -1,4 +1,12 @@
-import { canCreateContentDraft, canPublishContent, canReviewContent, canViewContent, type StaffRole } from "../src/lib/admin-auth";
+import {
+  canCreateContentDraft,
+  canEditContent,
+  canPublishContent,
+  canReviewContent,
+  canSubmitContentSource,
+  canViewContent,
+  type StaffRole,
+} from "../src/lib/admin-auth";
 import {
   assertContentDraftInput,
   canTransitionContentStatus,
@@ -143,6 +151,8 @@ const roles: StaffRole[] = ["owner", "manager", "agent", "analyst", "maintainer"
 for (const role of roles) {
   expect(canViewContent(role) === (role === "owner" || role === "manager" || role === "maintainer"), `${role} content visibility`);
   expect(canCreateContentDraft(role) === (role === "owner" || role === "manager" || role === "maintainer"), `${role} content draft permission`);
+  expect(canEditContent(role) === (role === "owner" || role === "manager" || role === "maintainer"), `${role} content edit permission`);
+  expect(canSubmitContentSource(role) === (role === "owner" || role === "manager" || role === "maintainer"), `${role} source submission permission`);
   expect(canReviewContent(role) === (role === "maintainer"), `${role} engineering review permission`);
   expect(canPublishContent(role) === (role === "owner" || role === "maintainer"), `${role} publishing permission`);
 }

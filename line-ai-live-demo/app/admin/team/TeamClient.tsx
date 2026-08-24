@@ -182,7 +182,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
           <>
             <section style={panelStyle}>
               <h2 style={{ marginTop: 0 }}>邀請診所人員</h2>
-              <p style={{ color: "#66756f", marginTop: 0 }}>可邀請客服主管、第一線客服或行銷／報表查看人員。系統維護與診所管理者由平台端管理。</p>
+              <p style={{ color: "#66756f", marginTop: 0 }}>可邀請客服主管、第一線客服或行銷／報表查看人員。平台開發管理員與診所管理者只能由受控的後台程序管理，不會出現在邀請選單。</p>
               <form onSubmit={submitInvite} style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
                 <input aria-label="顯示名稱" onChange={(event) => setDisplayName(event.target.value)} placeholder="姓名或顯示名稱" required value={displayName} style={inputStyle} />
                 <input aria-label="電子郵件" onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required type="email" value={email} style={inputStyle} />
@@ -203,7 +203,7 @@ export function TeamClient({ canManage, initialMembers }: { canManage: boolean; 
             </section>
           </>
         ) : (
-          <p style={noticeStyle}>只有診所管理者可以邀請、停用或調整人員權限。</p>
+          <p style={noticeStyle}>只有診所管理者或平台開發管理員可以邀請、停用或調整一般人員權限。</p>
         )}
 
         <section style={panelStyle}>
