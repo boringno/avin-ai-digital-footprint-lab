@@ -778,7 +778,12 @@ async function validateSemanticQuickReplyJourneys() {
           };
         },
       });
-  const send = async (input: { id: string; message: string; userId: string }) => {
+  const send = async (input: {
+    expectApprovedDeterministic?: boolean;
+    id: string;
+    message: string;
+    userId: string;
+  }) => {
     const result = await processWebhookRequestBody(webhookEvent(input), {
       includePending: false,
       routeConversationV2: routeJourney(input.userId),
@@ -788,6 +793,13 @@ async function validateSemanticQuickReplyJourneys() {
     });
     const payload = result.results[0]?.replyPayload;
     assert.ok(payload, `missing LINE payload for ${input.message}`);
+    if (input.expectApprovedDeterministic) {
+      assert.equal(
+        result.results[0]?.usedAiReplyGenerator,
+        false,
+        `a displayed quick reply must use approved deterministic copy: ${input.message}`,
+      );
+    }
     return payload;
   };
 
@@ -806,6 +818,7 @@ async function validateSemanticQuickReplyJourneys() {
     ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
   );
   const jawline = await send({
+    expectApprovedDeterministic: true,
     id: "semantic-onda-jawline",
     message: "我想改善雙下巴／嘴邊肉",
     userId: ondaUserId,
@@ -873,6 +886,7 @@ async function validateSemanticQuickReplyJourneys() {
   const botoxUserId = `U-v2-semantic-botox-${Date.now()}`;
   await send({ id: "semantic-botox-open", message: "我想了解肉毒", userId: botoxUserId });
   const masseter = await send({
+    expectApprovedDeterministic: true,
     id: "semantic-botox-masseter",
     message: "我想改善咀嚼肌／小臉",
     userId: botoxUserId,

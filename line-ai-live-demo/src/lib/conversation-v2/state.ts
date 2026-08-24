@@ -516,11 +516,15 @@ export function reduceConversationV2State(
           : "answer_concern" as const
         : action.taskKind;
       const subjectKey = knowledgeSubjectKey(taskKind, knowledge);
+      const episodeId = action.episodeRestart
+        ? `v2:${action.turnId}`
+        : next.episodeId;
       return {
         ...next,
         ...common,
+        episodeId,
         activeTask: action.episodeRestart
-          ? { id: `${next.episodeId}:${action.turnId}:${taskKind}`, kind: taskKind, startedAt: action.at, subjectKey }
+          ? { id: `${episodeId}:${taskKind}`, kind: taskKind, startedAt: action.at, subjectKey }
           : nextTask(next, taskKind, action.at, action.turnId, subjectKey),
         awaiting: undefined,
         bookingTask: suspendBooking(next),

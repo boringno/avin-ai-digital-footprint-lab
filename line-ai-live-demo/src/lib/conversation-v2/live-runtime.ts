@@ -29,7 +29,7 @@ import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { reportOperationalError } from "@/lib/monitoring";
 import { requestNluFrame } from "@/lib/nlu-shadow";
 import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
-import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
+import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import type { RouterDecision } from "@/lib/router";
 import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
@@ -69,6 +69,20 @@ import type {
 import type { ConversationV2ToolRequest } from "./data-gap-policy";
 
 const DEFAULT_TENANT_ID = "tenant_001";
+
+function useApprovedQuickReplyCopy(
+  plan: ReplyPlan,
+  wasQuickReplySelection: boolean,
+): ReplyPlan {
+  if (!wasQuickReplySelection || plan.richMessages.length > 0) return plan;
+  return {
+    ...plan,
+    // A displayed semantic choice has already resolved the customer's intent.
+    // Its hydrated fallbackText is approved clinic copy, so calling the model
+    // again only adds latency and variance without adding understanding.
+    renderMode: "deterministic",
+  };
+}
 
 const BOOKING_FIELD_PROMPTS: Record<BookingField, string> = {
   appointment_reference: "請提供原預約的姓名、電話或預約日期，方便真人客服查詢。",
@@ -853,6 +867,12 @@ export async function routeConversationV2Canary(
   if (!gate.eligible) return { gate, kind: "not_eligible" };
 
   const state = initialState(input);
+  const episodeRecentTurns = hasConversationEpisodeExpired(
+    state,
+    input.now.toISOString(),
+  )
+    ? []
+    : input.recentTurns;
   const turnId = opaqueTurnId(input.eventIdentity);
   if (state.processedTurnIds.includes(turnId)) {
     return {
@@ -1052,7 +1072,7 @@ export async function routeConversationV2Canary(
     });
     const nlu = await (dependencies.requestFrame ?? requestNluFrame)(routingMessage, {
       ontology: snapshot.ontology,
-      recentTurns: input.recentTurns,
+      recentTurns: episodeRecentTurns,
     });
     nluTelemetry = toConversationV2NluTelemetry(nlu);
     if (!nlu?.frame) {
@@ -1175,7 +1195,10 @@ export async function routeConversationV2Canary(
           ? projectQuickRepliesIntoState({
               ...(quickReplySelection?.nextStage ? { nextStage: quickReplySelection.nextStage } : {}),
               now: input.now,
-              plan: deterministicHydrated.rendererPlan,
+              plan: useApprovedQuickReplyCopy(
+                deterministicHydrated.rendererPlan,
+                Boolean(quickReplySelection),
+              ),
               snapshot,
               state: deterministicCommittedState,
             })
@@ -1380,7 +1403,10 @@ export async function routeConversationV2Canary(
       ? projectQuickRepliesIntoState({
           ...(quickReplySelection?.nextStage ? { nextStage: quickReplySelection.nextStage } : {}),
           now: input.now,
-          plan: hydrated.rendererPlan,
+          plan: useApprovedQuickReplyCopy(
+            hydrated.rendererPlan,
+            Boolean(quickReplySelection),
+          ),
           snapshot,
           state: committedState,
         })

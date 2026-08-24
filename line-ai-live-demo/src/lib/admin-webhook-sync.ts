@@ -104,7 +104,8 @@ export async function syncWebhookResultsToAdminDb(input: SyncAdminWebhookInput) 
         if (isGroupSourceResult(result) || !result.sourceUserId) return null;
 
         const conversation = await upsertConversation(result);
-        const customerMessageId = await insertCustomerMessage(conversation.id, result);
+        const replyResult = findReplyResult(result, input.replyResults);
+        const customerMessageId = await insertCustomerMessage(conversation.id, result, replyResult);
         if (!customerMessageId) return null;
 
         await safelyStoreIntentLabel(customerMessageId, result, "customer");
@@ -281,7 +282,11 @@ async function fetchLineGroupName(groupId: string) {
   }
 }
 
-async function insertCustomerMessage(conversationId: string, result: ProcessedWebhookResult) {
+async function insertCustomerMessage(
+  conversationId: string,
+  result: ProcessedWebhookResult,
+  replyResult: ReplySendResult | undefined,
+) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("conversation_messages")
@@ -309,6 +314,10 @@ async function insertCustomerMessage(conversationId: string, result: ProcessedWe
         event_type: result.eventType,
         matched_key: result.decision.matchedKey,
         matched_type: result.decision.matchedType,
+        reply_delivery_attempts: replyResult?.attempts ?? null,
+        reply_delivery_http_status: replyResult?.status ?? null,
+        reply_delivery_status: deriveSendStatus(replyResult),
+        reply_delivery_suppressed_reason: replyResult?.suppressedReason ?? null,
         route_version: result.routeVersion,
       },
       send_status: "sent",

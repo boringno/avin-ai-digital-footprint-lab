@@ -46,6 +46,9 @@ const decisionTrace = getConversationDecisionTrace({
   renderer_guard_replaced_text: true,
   renderer_mode: "fallback",
   renderer_reply_text_source: "approved_fallback",
+  reply_delivery_attempts: 1,
+  reply_delivery_status: "sent",
+  reply_delivery_suppressed_reason: null,
   route_version: "v2",
 });
 expect(decisionTrace?.routeVersion === "v2", "決策路徑應顯示實際 V1/V2 路由");
@@ -54,7 +57,8 @@ expect(decisionTrace?.nluStatus === "success" && decisionTrace.nluConfidence ===
 expect(decisionTrace?.fallbackReason === "generator_unavailable", "決策路徑應保留 fallback 原因");
 expect(decisionTrace?.guardReplacedText === true, "決策路徑應顯示 guard 是否替換客人文字");
 expect(decisionTrace?.replyTextSource === "approved_fallback", "決策路徑應顯示客人文字來源");
+expect(decisionTrace?.replyDeliveryStatus === "sent" && decisionTrace.replyDeliveryAttempts === 1, "決策路徑應顯示 LINE 送達結果");
 expect(getConversationDecisionTrace({ official_source_url: "https://internal.example" }) === null, "後台決策路徑不得暴露內部來源網址");
 expect(getConversationDecisionTrace(null) === null, "舊訊息沒有 telemetry 時應維持相容");
 
-console.log("Conversation inbox validation passed: 16 checks");
+console.log("Conversation inbox validation passed: 17 checks");

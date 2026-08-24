@@ -20,6 +20,7 @@ import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
 import {
   createEmptyConversationContext,
   type ConversationContext,
+  type RecentConversationTurn,
 } from "@/lib/conversation-context";
 import type { NluFrame } from "@/lib/nlu-frame";
 
@@ -145,6 +146,8 @@ async function routeTurn(input: {
   frame: NluFrame | null;
   message: string;
   now?: Date;
+  onRecentTurns?: (turns: readonly RecentConversationTurn[] | undefined) => void;
+  recentTurns?: readonly RecentConversationTurn[];
   turnIndex: number;
 }) {
   const result = await routeConversationV2Canary({
@@ -152,12 +155,16 @@ async function routeTurn(input: {
     eventIdentity: `journey-${input.turnIndex}`,
     message: input.message,
     now: input.now ?? NOW,
+    recentTurns: input.recentTurns ?? input.context.recentTurns,
     sourceType: "user",
     sourceUserId: USER_ID,
   }, {
     factsProvider: factsProvider(),
     getCanarySettings: canarySettings,
-    requestFrame: async () => nluResult(input.frame),
+    requestFrame: async (_message, options) => {
+      input.onRecentTurns?.(options?.recentTurns);
+      return nluResult(input.frame);
+    },
   });
   assert.equal(result.kind, "routed", `turn ${input.turnIndex} must be routed by V2`);
   assert.ok("decision" in result && result.decision, `turn ${input.turnIndex} must produce a decision`);
@@ -341,6 +348,17 @@ async function validateThirtyMinuteEpisodeBoundary() {
       frame: null,
       message: treatmentMessage,
       now: new Date(NOW.getTime() + 30 * 60 * 1000 + 1),
+      onRecentTurns: (turns) => {
+        assert.deepEqual(
+          turns,
+          [],
+          `J5/${treatment.key}: expired recent turns must not reach the NLU`,
+        );
+      },
+      recentTurns: [
+        { role: "user", text: "我上一輪只在意別的問題" },
+        { role: "assistant", text: "這是上一輪的舊回答" },
+      ],
       turnIndex: turnIndex++,
     });
     summarize(`J5-${treatment.key}`, `30 minutes later: ${treatmentMessage}`, afterBoundary.decision);
@@ -649,13 +667,22 @@ async function validateMondayNaturalInputFamilies() {
     assert.doesNotMatch(routed.decision.replyText, CLARIFY_PATTERN, `J7: ${message} must not ask which treatment`);
   }
 
-  const ondaPrice = await routeTurn({
-    context: createEmptyConversationContext("U-natural-onda-price"),
-    frame: null,
-    message: "ONDA怎麼收費?",
-    turnIndex: turnIndex++,
-  });
-  assert.match(ondaPrice.decision.replyText, /16,888/u, "J7: a natural ONDA price opening must quote the approved offer");
+  for (const message of [
+    "ONDA怎麼收費?",
+    "ONDA價格多少",
+    "ONDA有活動嗎",
+    "想問ONDA體驗價",
+  ] as const) {
+    const ondaPrice = await routeTurn({
+      context: createEmptyConversationContext(`U-natural-onda-price-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(ondaPrice.decision.replyText, /16,888/u, `J7: ${message} must quote the approved standalone offer`);
+    assert.match(ondaPrice.decision.replyText, /12,999/u, `J7: ${message} must also recommend the approved combination offer`);
+    assert.match(ondaPrice.decision.replyText, /ONDA\s*[＋+]\s*肉毒小臉組合/u, `J7: ${message} must identify the combination without inventing details`);
+  }
 
   let botoxContext = createEmptyConversationContext("U-natural-botox-short");
   const botoxOpening = await routeTurn({
@@ -876,6 +903,41 @@ async function validateMondayCompleteBookingJourneys() {
     assert.match(completed.decision.replyText, /真人客服|接續確認/u);
     assert.match(completed.decision.replyText, /週一至週五\s*09:00-18:00/u);
     assert.match(completed.decision.replyText, /國定假日休息/u);
+  }
+
+  for (const concern of [
+    "皺眉紋",
+    "抬頭紋",
+    "魚尾紋",
+    "咀嚼肌",
+    "肩頸",
+    "小腿",
+    "腋下",
+    "手汗",
+  ] as const) {
+    let concernContext = createEmptyConversationContext(`U-botox-concern-price-${turnIndex}`);
+    const opening = await routeTurn({
+      context: concernContext,
+      frame: null,
+      message: "想了解肉毒",
+      turnIndex: turnIndex++,
+    });
+    concernContext = opening.decision.nextContext;
+    const selectedConcern = await routeTurn({
+      context: concernContext,
+      frame: null,
+      message: concern,
+      turnIndex: turnIndex++,
+    });
+    concernContext = selectedConcern.decision.nextContext;
+    const quoted = await routeTurn({
+      context: concernContext,
+      frame: null,
+      message: "價格呢",
+      turnIndex: turnIndex++,
+    });
+    assert.match(quoted.decision.replyText, /肉毒體驗價\s*999/u, `J7: ${concern} must be eligible for the generic approved Botox offer`);
+    assert.doesNotMatch(quoted.decision.replyText, /12\s*U|奇蹟肉毒[^\n。]*999|經典肉毒[^\n。]*999|皇家肉毒[^\n。]*999/iu, `J7: ${concern} price must remain brand- and dose-neutral`);
   }
   console.log("PASS: J8 ONDA/Botox complete booking journeys");
 }

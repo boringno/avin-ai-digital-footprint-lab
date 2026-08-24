@@ -27,8 +27,21 @@ export function hasConversationEpisodeExpired(
   state: ConversationV2State,
   receivedAt: string,
 ) {
-  const previousAt = Date.parse(state.updatedAt);
-  const currentAt = Date.parse(receivedAt);
+  return hasTimestampEpisodeExpired(state.updatedAt, receivedAt);
+}
+
+/** Applies the same boundary before V2 receives legacy recent-turn text. */
+export function hasConversationContextEpisodeExpired(
+  lastSeenAt: string | undefined,
+  receivedAt: string,
+) {
+  if (!lastSeenAt) return false;
+  return hasTimestampEpisodeExpired(lastSeenAt, receivedAt);
+}
+
+function hasTimestampEpisodeExpired(previousValue: string, currentValue: string) {
+  const previousAt = Date.parse(previousValue);
+  const currentAt = Date.parse(currentValue);
   return Number.isFinite(previousAt) &&
     Number.isFinite(currentAt) &&
     currentAt >= previousAt + CONVERSATION_EPISODE_IDLE_MS;
