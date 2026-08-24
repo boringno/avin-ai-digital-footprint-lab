@@ -7,6 +7,38 @@ export const ADMIN_REFRESH_COOKIE = "line_ai_admin_refresh";
 
 export type StaffRole = "agent" | "analyst" | "maintainer" | "manager" | "owner";
 
+export const PLATFORM_DEVELOPER_ROLE = "maintainer" as const;
+
+const SUPABASE_AUTH_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export function isPlatformDeveloperRole(role: StaffRole) {
+  return role === PLATFORM_DEVELOPER_ROLE;
+}
+
+export function parsePlatformDeveloperAuthUserIds(value: string | undefined) {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => SUPABASE_AUTH_USER_ID_PATTERN.test(item)),
+  );
+}
+
+/**
+ * Platform developer access requires both the protected database role and an
+ * exact server-side Auth User ID allowlist entry. Missing configuration fails
+ * closed, so changing only staff_users.role can never grant developer access.
+ */
+export function isStaffAuthenticationAllowed(input: {
+  authUserId: string;
+  platformDeveloperAuthUserIds?: string;
+  role: StaffRole;
+}) {
+  if (!isPlatformDeveloperRole(input.role)) return true;
+  return parsePlatformDeveloperAuthUserIds(input.platformDeveloperAuthUserIds)
+    .has(input.authUserId.trim().toLowerCase());
+}
+
 export type AdminStaffUser = {
   authUserId: string;
   displayName: string;
@@ -68,6 +100,13 @@ export async function getAdminStaffFromAccessToken(accessToken: string): Promise
 
   const staff = await findStaffByAuthUserId(data.user.id);
   if (!staff || !staff.is_active) {
+    return null;
+  }
+  if (!isStaffAuthenticationAllowed({
+    authUserId: staff.auth_user_id,
+    platformDeveloperAuthUserIds: process.env.PLATFORM_DEVELOPER_AUTH_USER_IDS,
+    role: staff.role,
+  })) {
     return null;
   }
 
@@ -160,7 +199,7 @@ export function canViewEngineeringKnowledge(role: StaffRole) {
 }
 
 export function canReviewFaqMiss(role: StaffRole) {
-  return role === "owner" || role === "manager";
+  return role === "owner" || role === "manager" || isPlatformDeveloperRole(role);
 }
 
 export function canViewContent(role: StaffRole) {
@@ -168,7 +207,7 @@ export function canViewContent(role: StaffRole) {
 }
 
 export function canEditContent(role: StaffRole) {
-  return role === "owner" || role === "manager";
+  return role === "owner" || role === "manager" || isPlatformDeveloperRole(role);
 }
 
 export function canCreateContentDraft(role: StaffRole) {
@@ -185,7 +224,7 @@ export function canPublishContent(role: StaffRole) {
 }
 
 export function canSubmitContentSource(role: StaffRole) {
-  return role === "owner" || role === "manager";
+  return role === "owner" || role === "manager" || isPlatformDeveloperRole(role);
 }
 
 // Runtime releases alter live LINE answers. They remain separate from ordinary

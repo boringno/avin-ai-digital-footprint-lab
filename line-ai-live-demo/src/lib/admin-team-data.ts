@@ -1,4 +1,4 @@
-import { canViewTeam, type AdminStaffUser, type StaffRole } from "@/lib/admin-auth";
+import { canViewTeam, isPlatformDeveloperRole, type AdminStaffUser, type StaffRole } from "@/lib/admin-auth";
 import { writeAdminAuditLog } from "@/lib/admin-audit";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -33,8 +33,12 @@ type StaffUserRow = {
 
 const clientManagedRoles: ClientManagedRole[] = ["manager", "agent", "analyst"];
 
+export function isClientManagedRole(role: string): role is ClientManagedRole {
+  return clientManagedRoles.includes(role as ClientManagedRole);
+}
+
 export function canManageTeam(staff: AdminStaffUser) {
-  return staff.role === "owner";
+  return staff.role === "owner" || isPlatformDeveloperRole(staff.role);
 }
 
 function normalizeEmail(email: string) {
@@ -61,7 +65,7 @@ export function canRemoveTeamMember(input: { actorStaffId: string; targetRole: S
 }
 
 function assertClientManagedRole(role: string): asserts role is ClientManagedRole {
-  if (!clientManagedRoles.includes(role as ClientManagedRole)) {
+  if (!isClientManagedRole(role)) {
     throw new Error("Only manager, agent, or analyst can be assigned from the client team page.");
   }
 }
@@ -151,7 +155,7 @@ export async function inviteAdminTeamMember(input: {
   staff: AdminStaffUser;
 }) {
   if (!canManageTeam(input.staff)) {
-    throw new Error("Only the clinic owner can invite team members.");
+    throw new Error("Only the clinic owner or platform developer can invite team members.");
   }
 
   const email = normalizeEmail(input.email);
@@ -239,7 +243,7 @@ export async function inviteAdminTeamMember(input: {
 
 export async function resendAdminTeamInvitation(input: { memberId: string; staff: AdminStaffUser }) {
   if (!canManageTeam(input.staff)) {
-    throw new Error("Only the clinic owner can resend team invitations.");
+    throw new Error("Only the clinic owner or platform developer can resend team invitations.");
   }
 
   const supabase = getSupabaseServerClient();
@@ -310,7 +314,7 @@ export async function updateAdminTeamMember(input: {
   staff: AdminStaffUser;
 }) {
   if (!canManageTeam(input.staff)) {
-    throw new Error("Only the clinic owner can update team members.");
+    throw new Error("Only the clinic owner or platform developer can update team members.");
   }
 
   const supabase = getSupabaseServerClient();
@@ -325,7 +329,7 @@ export async function updateAdminTeamMember(input: {
     throw new Error("Team member was not found.");
   }
   if (!canRemoveTeamMember({ actorStaffId: input.staff.id, targetRole: before.role, targetStaffId: before.id })) {
-    throw new Error("Owner and maintainer accounts are managed outside the client team page.");
+    throw new Error("Clinic owner and platform developer accounts are managed outside the client team page.");
   }
   if (before.removed_at) {
     throw new Error("This team member has already been removed.");
@@ -369,7 +373,7 @@ export async function updateAdminTeamMember(input: {
 
 export async function removeAdminTeamMember(input: { memberId: string; staff: AdminStaffUser }) {
   if (!canManageTeam(input.staff)) {
-    throw new Error("Only the clinic owner can remove team members.");
+    throw new Error("Only the clinic owner or platform developer can remove team members.");
   }
 
   const supabase = getSupabaseServerClient();
@@ -383,7 +387,7 @@ export async function removeAdminTeamMember(input: { memberId: string; staff: Ad
     throw new Error("Team member was not found.");
   }
   if (!canRemoveTeamMember({ actorStaffId: input.staff.id, targetRole: before.role, targetStaffId: before.id })) {
-    throw new Error("You cannot remove your own, owner, or maintainer account from this page.");
+    throw new Error("You cannot remove your own, clinic owner, or platform developer account from this page.");
   }
   if (before.removed_at) {
     throw new Error("This team member has already been removed.");

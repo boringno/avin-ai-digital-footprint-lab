@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { canViewTeam, getAdminStaffFromCookies } from "@/lib/admin-auth";
-import { loadAdminTeam } from "@/lib/admin-team-data";
+import { canManageTeam, loadAdminTeam } from "@/lib/admin-team-data";
 
 import { TeamClient } from "./TeamClient";
 
@@ -15,5 +15,5 @@ export default async function AdminTeamPage() {
   }
 
   const members = await loadAdminTeam(staff);
-  return <TeamClient canManage={staff.role === "owner"} initialMembers={members} />;
+  return <TeamClient canManage={canManageTeam(staff)} initialMembers={members} />;
 }
