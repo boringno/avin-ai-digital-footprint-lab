@@ -68,6 +68,7 @@ jobs:
           npm run validate:conversation-store
           npm run validate:intent-classify
           npm run validate:admin-reports
+          npm run validate:admin-customer-reset
           npm run validate:admin-team
           npm run validate:reporting-privacy
           npm run validate:reporting-time

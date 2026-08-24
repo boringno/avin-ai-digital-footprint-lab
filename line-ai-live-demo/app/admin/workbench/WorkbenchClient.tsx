@@ -83,6 +83,8 @@ type WorkbenchData = {
   queue: QueueItem[];
 };
 
+type ConversationControlAction = "" | "complete" | "mark_human_active" | "reset_customer" | "resume_ai";
+
 const quickReplies = [
   "收到，我先幫您確認需求，稍後由真人客服接續協助。",
   "好的，館別與療程我先記下來，接著幫您確認可安排時段。",
@@ -91,9 +93,11 @@ const quickReplies = [
 ];
 
 export function WorkbenchClient({
+  canResetTestCustomer,
   initialData,
   staffName,
 }: {
+  canResetTestCustomer: boolean;
   initialData: WorkbenchData;
   staffName: string;
 }) {
@@ -104,7 +108,7 @@ export function WorkbenchClient({
   const [isCompact, setIsCompact] = useState(false);
   const [isPageVisible, setIsPageVisible] = useState(true);
   const [isSending, setIsSending] = useState(false);
-  const [controlAction, setControlAction] = useState<"" | "complete" | "mark_human_active" | "resume_ai">("");
+  const [controlAction, setControlAction] = useState<ConversationControlAction>("");
   const [leadActionId, setLeadActionId] = useState("");
   const [isPending, startTransition] = useTransition();
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -184,7 +188,7 @@ export function WorkbenchClient({
   }
 
   async function postControl(
-    action: "complete" | "mark_human_active" | "resume_ai",
+    action: "complete" | "mark_human_active" | "reset_customer" | "resume_ai",
     target?: { conversationId: string; userId: string },
   ) {
     const conversationId = target?.conversationId ?? data.detail?.conversationId ?? "";
@@ -209,7 +213,13 @@ export function WorkbenchClient({
       const result = (await response.json()) as { error?: string; ok?: boolean };
       if (!response.ok || !result.ok) {
         setErrorMessage(
-          action === "mark_human_active" ? "接手失敗，請再按一次。" : action === "complete" ? "結案失敗，請再按一次。" : "交由 AI 協助失敗，請再按一次。",
+          action === "mark_human_active"
+            ? "接手失敗，請再按一次。"
+            : action === "complete"
+              ? "結案失敗，請再按一次。"
+              : action === "reset_customer"
+                ? result.error || "重置測試狀態失敗，請再按一次。"
+                : "交由 AI 協助失敗，請再按一次。",
         );
         return;
       }
@@ -218,7 +228,13 @@ export function WorkbenchClient({
       await refresh(conversationId);
     } catch {
       setErrorMessage(
-        action === "mark_human_active" ? "接手失敗，請再按一次。" : action === "complete" ? "結案失敗，請再按一次。" : "交由 AI 協助失敗，請再按一次。",
+        action === "mark_human_active"
+          ? "接手失敗，請再按一次。"
+          : action === "complete"
+            ? "結案失敗，請再按一次。"
+            : action === "reset_customer"
+              ? "重置測試狀態失敗，請再按一次。"
+              : "交由 AI 協助失敗，請再按一次。",
       );
     } finally {
       setControlAction("");
@@ -561,6 +577,23 @@ export function WorkbenchClient({
                     >
                       {controlAction === "complete" ? "結案中..." : "結案並停止 AI"}
                     </button>
+                    {canResetTestCustomer ? (
+                      <button
+                        disabled={Boolean(controlAction)}
+                        onClick={() => {
+                          if (window.confirm("確認將此 V2 測試帳號重置為新客人？歷史訊息會保留，但未完成預約、接手與對話狀態會清除。")) {
+                            void postControl("reset_customer", {
+                              conversationId: detail.conversationId,
+                              userId: detail.lineUserId,
+                            });
+                          }
+                        }}
+                        style={secondaryButtonStyle}
+                        type="button"
+                      >
+                        {controlAction === "reset_customer" ? "重置中..." : "重置測試狀態"}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -651,7 +684,7 @@ function ConversationCard({
   onOpen,
   onPrimary,
 }: {
-  controlAction: "" | "complete" | "mark_human_active" | "resume_ai";
+  controlAction: ConversationControlAction;
   isCompact: boolean;
   isSelected: boolean;
   item: QueueItem;
@@ -718,7 +751,7 @@ function LeadSummaryCard({
   onContacted,
   onOpenConversation,
 }: {
-  controlAction: "" | "complete" | "mark_human_active" | "resume_ai";
+  controlAction: ConversationControlAction;
   isBusy: boolean;
   isCompact: boolean;
   lead: WorkbenchLeadSummary;

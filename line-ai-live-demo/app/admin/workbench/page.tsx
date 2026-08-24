@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { canUseWorkbench, getAdminStaffFromCookies } from "@/lib/admin-auth";
+import { canAccessSystemAdmin, canUseWorkbench, getAdminStaffFromCookies } from "@/lib/admin-auth";
 import { loadWorkbenchData } from "@/lib/admin-workbench-data";
 
 import { AdminPageHeader } from "../_components/AdminPageHeader";
@@ -29,7 +29,11 @@ export default async function AdminWorkbenchPage() {
           title="真人客服接手工作台"
         />
 
-        <WorkbenchClient initialData={initialData} staffName={staff.displayName} />
+        <WorkbenchClient
+          canResetTestCustomer={canAccessSystemAdmin(staff.role)}
+          initialData={initialData}
+          staffName={staff.displayName}
+        />
       </div>
     </main>
   );
