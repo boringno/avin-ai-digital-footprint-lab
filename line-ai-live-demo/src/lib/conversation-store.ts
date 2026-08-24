@@ -12,7 +12,7 @@ function getConversationStoreClient(mode: ConversationStoreMode) {
     : getLatencyCriticalSupabaseServerClient();
 }
 
-type ConversationRuntimeStateRow = {
+export type ConversationRuntimeStateRow = {
   booking_draft_json: null | Record<string, unknown>;
   context_json: null | Record<string, unknown>;
   created_at: string;
@@ -23,6 +23,12 @@ type ConversationRuntimeStateRow = {
   state_json: null | Record<string, unknown>;
   tenant_id: string;
   updated_at: string;
+};
+
+export type FreshConversationRuntimePatch = {
+  booking_draft_json: Record<string, unknown>;
+  context_json: Record<string, unknown>;
+  state_json: Record<string, unknown>;
 };
 
 type ConversationRuntimeStatePatch = Partial<

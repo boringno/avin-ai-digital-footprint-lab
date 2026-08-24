@@ -18,6 +18,7 @@
     "validate:reporting-privacy": "tsx scripts/validate-reporting-privacy.ts",
     "validate:reporting-time": "tsx scripts/validate-reporting-time.ts",
     "validate:admin-reports": "tsx scripts/validate-admin-reports.ts",
+    "validate:admin-customer-reset": "tsx scripts/validate-admin-customer-reset.ts",
     "validate:google-sheets": "tsx scripts/validate-google-sheets.ts",
     "validate:monitoring": "tsx scripts/validate-monitoring.ts",
     "validate:sample": "tsx scripts/validate-sample.ts",

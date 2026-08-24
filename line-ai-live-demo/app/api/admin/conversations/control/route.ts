@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { writeAdminAuditLog } from "@/lib/admin-audit";
-import { canUseWorkbench, requireAdminStaff } from "@/lib/admin-auth";
+import { canAccessSystemAdmin, canUseWorkbench, requireAdminStaff } from "@/lib/admin-auth";
+import { AdminCustomerResetError, resetAdminCustomerToFreshState } from "@/lib/admin-customer-reset";
 import { markHandoffTaskResolved, markHandoffTaskTaken } from "@/lib/admin-workbench-data";
 import {
   applyAuthoritativeConversationTransition,
@@ -12,7 +13,7 @@ import {
 export const runtime = "nodejs";
 
 type ControlRequestBody = {
-  action?: "close" | "complete" | "mark_human_active" | "pause_ai" | "resume_ai";
+  action?: "close" | "complete" | "mark_human_active" | "pause_ai" | "reset_customer" | "resume_ai";
   assigned_to?: string;
   auto_resume_after_minutes?: number;
   user_id?: string;
@@ -49,6 +50,21 @@ export async function POST(request: Request) {
   const body = (await request.json()) as ControlRequestBody;
   if (!body.user_id || !body.action) {
     return NextResponse.json({ ok: false, error: "user_id and action are required" }, { status: 400 });
+  }
+
+  if (body.action === "reset_customer") {
+    if (!canAccessSystemAdmin(staff.role)) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    try {
+      const summary = await resetAdminCustomerToFreshState(staff, body.user_id);
+      return NextResponse.json({ ok: true, reset: summary });
+    } catch (error) {
+      if (error instanceof AdminCustomerResetError) {
+        return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+      }
+      throw error;
+    }
   }
 
   const transitionInput = {
