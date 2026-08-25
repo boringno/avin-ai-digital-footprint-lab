@@ -3025,22 +3025,6 @@ function getPricingReply(
     now: today,
   });
 
-  if (["regular", "post_campaign", "alternate"].includes(pricingQuestionKind)) {
-    const treatmentKey = subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
-      ? subject.treatmentKey
-      : context.dialogueState?.treatmentKeys[0] ?? context.treatmentConsultation?.treatmentKey;
-    const treatment = treatmentKey ? findTreatmentByKey(treatmentKey) : null;
-    const subjectLabel = treatment ? `${treatment.name}的` : "這項療程的";
-    const requestedLabel = pricingQuestionKind === "alternate" ? "其他價格或方案" : "正常價／原價";
-    return {
-      decisionType: "pricing_auto_reply",
-      matchedKey: `pricing_unapproved:${pricingQuestionKind}:${treatmentKey ?? "unknown"}`,
-      matchedType: "guided_reply",
-      nextContext: context,
-      replyText: `目前資料只有診所核准的活動或體驗方案；${subjectLabel}${requestedLabel}尚未有核准資料，我不會自行猜價。😊 如果您願意，我可以先幫您記下療程與館別，由真人客服協助確認。`,
-    } satisfies RouterDecision;
-  }
-
   if (subject.kind === "browse" && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
     const carouselCards = buildPromotionCarouselCards(activeCampaigns);

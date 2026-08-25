@@ -334,11 +334,10 @@ export function resolveApprovedPrice(
   if (inventoryChecks.some((result) => result.status === "unknown")) {
     return unavailable(snapshot, treatmentKeys, "treatment_unconfirmed");
   }
-  if (query.kind === "regular") {
-    // The current source contains campaign prices only. A campaign must never
-    // be silently substituted when the customer explicitly asks for regular price.
-    return unavailable(snapshot, treatmentKeys, "not_provided");
-  }
+  // Product policy: the current effective, clinic-approved offer is the quote
+  // customers receive for every price wording, including original/regular price.
+  // `kind` remains in the contract for observability and future catalog support,
+  // but it must not hide an otherwise valid current offer.
 
   const campaignsById = new Map<string, PriceCatalogEntry>();
   for (const campaign of snapshot.pricingCampaigns) {

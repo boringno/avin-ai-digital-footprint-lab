@@ -57,11 +57,11 @@ async function validateBranchQuestionFamilies() {
   assert.notEqual(nonAddress.decisions[0].matchedKey, "branch_list", "a treatment mechanism's 作用位置 must not be treated as a clinic address");
 }
 
-async function validateRegularPriceFollowups() {
+async function validateEveryPriceWordingReturnsCurrentApprovedOffer() {
   const contexts = [
-    ["想了解ONDA", "雙下巴", "多少錢"],
-    ["想了解ONDA", "雙下巴", "想了解ONDA加肉毒組合", "多少錢"],
-    ["想了解肉毒", "皺眉紋", "多少錢"],
+    { amount: /16,?888/u, setup: ["想了解ONDA", "雙下巴", "多少錢"] },
+    { amount: /12,?999/u, setup: ["想了解ONDA", "雙下巴", "想了解ONDA加肉毒組合", "多少錢"] },
+    { amount: /\b999\b/u, setup: ["想了解肉毒", "皺眉紋", "多少錢"] },
   ] as const;
   const followups = [
     "那這個正常價格的話呢",
@@ -73,14 +73,13 @@ async function validateRegularPriceFollowups() {
     "非活動期間是多少",
     "平常的價位呢",
   ] as const;
-  for (const [contextIndex, setup] of contexts.entries()) {
+  for (const [contextIndex, { amount, setup }] of contexts.entries()) {
     for (const followup of followups) {
       const base = await journey(setup, `screen-price-${contextIndex}-${followup}`);
       const turn = await route(followup, base.context);
-      assert.match(turn.decision.matchedKey, /^pricing_unapproved:/u, `${followup}: must retain price-kind semantics`);
-      assert.doesNotMatch(turn.decision.replyText, /16,?888|12,?999|\b999\b/u, `${followup}: must not repeat an activity price`);
-      assert.equal(turn.decision.replyMessages?.length ?? 0, 0, `${followup}: must not attach the previous campaign card`);
-      assert.match(turn.decision.replyText, /尚未有核准資料.*真人客服/su, `${followup}: must explain the data gap and offer human confirmation`);
+      assert.equal(turn.decision.matchedType, "pricing_campaign", `${followup}: must use the approved current offer`);
+      assert.match(turn.decision.replyText, amount, `${followup}: must quote the active approved amount`);
+      assert.doesNotMatch(turn.decision.replyText, /尚未有核准資料|我不會自行猜價/u, `${followup}: must not reject a valid active offer`);
     }
   }
 
@@ -182,7 +181,7 @@ async function validateBookingPolicyDoesNotMutateDraft() {
 
 async function main() {
   await validateBranchQuestionFamilies();
-  await validateRegularPriceFollowups();
+  await validateEveryPriceWordingReturnsCurrentApprovedOffer();
   await validateBrandComparisonContinuity();
   await validateBookingPolicyDoesNotMutateDraft();
   console.log("client screenshot regressions validation passed (four semantic families)");

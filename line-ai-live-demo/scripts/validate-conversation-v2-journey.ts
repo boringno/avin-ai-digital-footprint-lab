@@ -3223,6 +3223,43 @@ async function validatePricingOwnership() {
     `P2: the reply must quote the approved ONDA amount: ${explicitSubject.decision.replyText}`,
   );
 
+  const currentOfferWordings = [
+    { aspect: "price_regular" as const, message: "ONDA 怎麼收費" },
+    { aspect: "price_regular" as const, message: "ONDA 多少錢" },
+    { aspect: "price_campaign" as const, message: "ONDA 體驗價多少" },
+    { aspect: "price_campaign" as const, message: "ONDA 活動價多少" },
+    { aspect: "price_regular" as const, message: "ONDA 原價多少" },
+    { aspect: "price_regular" as const, message: "ONDA 正常價格呢" },
+  ];
+  for (const { aspect, message } of currentOfferWordings) {
+    const quoted = await askPrice({
+      context: createEmptyConversationContext(`U-price-wording-${message}`),
+      frameOverrides: {
+        confidence: 0.4,
+        dialogue: { focus: aspect, move: "start", reference: "explicit", speechAct: "ask_price" },
+        intents: ["pricing"],
+        treatments: ["onda_pro"],
+      },
+      message,
+      userId: `U-price-wording-${message}`,
+    });
+    assert.match(
+      quoted.decision.replyText,
+      /16,888/u,
+      `P2-price-family: ${message} must quote the approved ONDA experience price`,
+    );
+    assert.match(
+      quoted.decision.replyText,
+      /12,999/u,
+      `P2-price-family: ${message} must also offer the approved ONDA + Botox combination`,
+    );
+    assert.doesNotMatch(
+      quoted.decision.replyText,
+      /尚未有核准資料|哪一項療程|不會自行猜價/u,
+      `P2-price-family: ${message} must not fall back when a current approved offer exists`,
+    );
+  }
+
   const priceAndConcern = await askPrice({
     context: activeContext,
     frameOverrides: {
