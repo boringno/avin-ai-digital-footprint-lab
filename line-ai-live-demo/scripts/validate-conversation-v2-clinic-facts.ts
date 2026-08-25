@@ -357,6 +357,12 @@ async function validatePriceStateMachine() {
   assert(approved.customerPriceText === "體驗價 16,888", "CF-P1: exact approved price changed");
   assert(!/(?:2026|08\/01|08\/31)/u.test(JSON.stringify(approved.customerFacts)), "CF-P1: activity dates leaked");
 
+  const regularWording = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["onda_pro"] });
+  assert(
+    regularWording.status === "approved_current" && regularWording.customerPriceText === "體驗價 16,888",
+    "CF-P1a: regular/original-price wording must still return the current approved offer",
+  );
+
   const noPrice = resolveApprovedPrice(await snapshot(), { kind: "unspecified", treatmentKeys: ["onda_pro"] });
   assert(noPrice.status === "unavailable_to_quote" && noPrice.reason === "not_provided", "CF-P2: missing price must fail closed");
   assert(!("customerPriceText" in noPrice), "CF-P2: missing price result carried a price field");

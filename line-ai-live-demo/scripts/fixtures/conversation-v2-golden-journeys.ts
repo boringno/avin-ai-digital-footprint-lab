@@ -476,7 +476,7 @@ export const CONVERSATION_V2_GOLDEN_JOURNEYS: GoldenJourney[] = [
         treatments: ["botox"],
         expect: {
           action: "answer_price",
-          priceKind: "unspecified",
+          priceKind: "campaign",
           priceTreatmentKeys: ["botox"],
           pricingSubjectTreatmentKeys: ["botox"],
         },
@@ -1136,7 +1136,7 @@ export const CONVERSATION_V2_GOLDEN_JOURNEYS: GoldenJourney[] = [
   },
   {
     id: "G32",
-    title: "正常價格與活動價格由結構化 priceKind 區分",
+    title: "任何價格問法都回目前核准方案",
     turns: [
       {
         semantics: { questionAspect: "overview", conversationMove: "start", dialogueReference: "explicit" },
@@ -1151,7 +1151,7 @@ export const CONVERSATION_V2_GOLDEN_JOURNEYS: GoldenJourney[] = [
         text: "那正常價格呢？",
         expect: {
           action: "answer_price",
-          priceKind: "regular",
+          priceKind: "campaign",
           priceTreatmentKeys: ["onda_pro"],
         },
       },

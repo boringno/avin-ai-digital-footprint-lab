@@ -841,10 +841,11 @@ function suppliesExpectedBookingField(state: ConversationV2State, turn: TurnUnde
   return supplied[state.bookingTask.expectedField];
 }
 
-function priceKindForTurn(turn: TurnUnderstanding) {
-  if (turn.questionAspect === "price_campaign") return "campaign" as const;
-  if (turn.questionAspect === "price_regular") return "regular" as const;
-  return "unspecified" as const;
+function priceKindForTurn(_turn: TurnUnderstanding) {
+  // The clinic's current approved offer is the customer-facing quote regardless
+  // of whether the customer says price, fee, original price, or campaign price.
+  // Keep the NLU aspect for analytics, but do not let it suppress a valid offer.
+  return "campaign" as const;
 }
 
 function priceApplicabilityForTurn(
