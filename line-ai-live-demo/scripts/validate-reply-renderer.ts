@@ -674,6 +674,33 @@ async function validateRendererTelemetryContract() {
   assert.equal(deterministicTelemetry.replyTextSource, "approved_deterministic", "RR8: deterministic source must be explicit");
   assert.equal(deterministicTelemetry.fallbackReason, undefined, "RR8: deterministic bypass must not inflate fallback metrics");
 
+  const repeatedApprovedPrice = await renderReplyPlan({
+    customerMessage: "ONDA 有活動嗎",
+    dialogueState: dialogueState({ dialogueAct: "quote_approved_price" }),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: deterministicPlan,
+    recentTurns: [{
+      role: "assistant",
+      text: `${deterministic.replyText}\n\n${FOOTER}`,
+    }],
+  });
+  assert.equal(
+    repeatedApprovedPrice.renderMode,
+    "deterministic",
+    "RR8: a reworded price question must not turn the same approved price into a generic fallback",
+  );
+  assert.equal(
+    repeatedApprovedPrice.replyText,
+    deterministic.replyText,
+    "RR8: exact approved price facts remain answerable across consecutive price questions",
+  );
+  assert.equal(
+    repeatedApprovedPrice.guardReplacedText,
+    false,
+    "RR8: grounded deterministic price repetition is not a guard replacement",
+  );
+
   const rejected = await renderReplyPlan({
     customerMessage: "想了解官方資料",
     dialogueState: dialogueState(),

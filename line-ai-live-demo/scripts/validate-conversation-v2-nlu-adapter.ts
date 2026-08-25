@@ -282,6 +282,105 @@ function validateDeterministicPriceShortcutRespectsSafety() {
     );
   }
 
+  for (const [message, treatmentKey] of [
+    ["奇蹟肉毒少錢", "botox"],
+    ["ONDA多少前", "onda_pro"],
+  ] as const) {
+    const typoPrice = adapt(
+      v2Frame({
+        focus: "overview",
+        move: "start",
+        reference: "explicit",
+        speechAct: "learn_treatment",
+      }, {
+        confidence: 0.99,
+        intents: ["treatment"],
+        treatments: [treatmentKey],
+      }),
+      undefined,
+      message,
+    );
+    assert.equal(
+      typoPrice.speechAct,
+      "ask_price",
+      `one-character price typo with an explicit treatment must reach the price resolver: ${message}`,
+    );
+  }
+
+  const frameLessTypoPrice = adapt(null, {
+    semanticAnchor: {
+      areaKeys: [],
+      concernKeys: [],
+      conversationMove: "start",
+      dialogueReference: "explicit",
+      questionAspect: "overview",
+      source: "exact_ontology",
+      speechAct: "learn_treatment",
+      treatmentKeys: ["botox"],
+    },
+  }, "奇蹟肉毒少錢");
+  assert.equal(
+    frameLessTypoPrice.speechAct,
+    "ask_price",
+    "frame-less fuzzy price evidence must outrank a generic treatment semantic anchor",
+  );
+  assert.deepEqual(
+    frameLessTypoPrice.treatments.map(({ key }) => key),
+    ["botox"],
+    "frame-less fuzzy price recovery must keep the explicit treatment owner",
+  );
+
+  const unrelatedShortMoneyPhrase = adapt(
+    v2Frame({
+      focus: "overview",
+      move: "start",
+      reference: "none",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.99,
+      intents: ["treatment"],
+      treatments: [],
+    }),
+    undefined,
+    "最近花得有點少錢",
+  );
+  assert.notEqual(
+    unrelatedShortMoneyPhrase.speechAct,
+    "ask_price",
+    "fuzzy price recovery must require an explicit clinic treatment",
+  );
+
+  for (const message of [
+    "肉毒要打多少次",
+    "肉毒要多少U",
+    "ONDA要做多少堂",
+    "肉毒要打多少針",
+    "肉毒打多少點",
+    "ONDA做多少區",
+    "ONDA要打多少層",
+    "肉毒多少毫克",
+  ] as const) {
+    const nonPriceQuantity = adapt(
+      v2Frame({
+        focus: "overview",
+        move: "start",
+        reference: "explicit",
+        speechAct: "ask_treatment_detail",
+      }, {
+        confidence: 0.99,
+        intents: ["treatment"],
+        treatments: [message.startsWith("ONDA") ? "onda_pro" : "botox"],
+      }),
+      undefined,
+      message,
+    );
+    assert.notEqual(
+      nonPriceQuantity.speechAct,
+      "ask_price",
+      `a quantity/specification question must not be fuzzily reclassified as price: ${message}`,
+    );
+  }
+
   const ordinaryOverview = adapt(
     v2Frame({
       focus: "overview",

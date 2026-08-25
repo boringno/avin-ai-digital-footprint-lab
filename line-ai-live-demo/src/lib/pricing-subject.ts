@@ -8,6 +8,75 @@ import type { ConversationContext } from "@/lib/conversation-context";
 
 export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "收費", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
 
+const FUZZY_PRICE_INQUIRY_TERMS = [
+  "多少錢",
+  "怎麼收費",
+  "價格多少",
+  "費用多少",
+  "活動價",
+  "體驗價",
+  "優惠價",
+  "正常價格",
+  "原價多少",
+] as const;
+const NON_PRICE_QUANTITY_PATTERN =
+  /多少(?:次|堂|發|單位|u|週|天|分鐘|小時|支|瓶|cc|毫升|部位|人)/iu;
+const FUZZY_PRICE_SEMANTIC_ANCHOR_PATTERN = /(?:錢|前|價|費|收費|報價|活動|優惠|折扣)/u;
+
+function isWithinOneEdit(left: string, right: string) {
+  if (Math.abs(left.length - right.length) > 1) return false;
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (left.length > right.length) {
+      leftIndex += 1;
+    } else if (right.length > left.length) {
+      rightIndex += 1;
+    } else {
+      leftIndex += 1;
+      rightIndex += 1;
+    }
+  }
+  if (leftIndex < left.length || rightIndex < right.length) edits += 1;
+  return edits <= 1;
+}
+
+function containsWithinOneEdit(message: string, term: string) {
+  for (const windowLength of [term.length - 1, term.length, term.length + 1]) {
+    if (windowLength < 2 || windowLength > message.length) continue;
+    for (let start = 0; start + windowLength <= message.length; start += 1) {
+      if (isWithinOneEdit(message.slice(start, start + windowLength), term)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Recovers a single missing, extra, or mistyped character in a price phrase.
+ * Callers must also have an explicit treatment subject; this is intentionally
+ * not a global fuzzy intent classifier.
+ */
+export function isLikelyPriceInquiryTypo(message: string) {
+  const normalized = normalizeClinicText(message).replace(/[^\p{L}\p{N}]/gu, "");
+  if (NON_PRICE_QUANTITY_PATTERN.test(normalized)) return false;
+  // Edit distance alone would make 「多少針／多少點／多少區」 look like
+  // 「多少錢」. Fuzzy recovery is only safe when the current message still
+  // contains a customer-visible price cue (including the common 錢→前 typo).
+  if (!FUZZY_PRICE_SEMANTIC_ANCHOR_PATTERN.test(normalized)) return false;
+  return Boolean(
+    normalized && FUZZY_PRICE_INQUIRY_TERMS.some((term) =>
+      containsWithinOneEdit(normalized, normalizeClinicText(term))),
+  );
+}
+
 /**
  * Hedged ways of naming a treatment ("我好像想問那個肉毒").
  *
@@ -159,6 +228,14 @@ function isCurrentTreatmentTopic(context: ConversationContext) {
 
 export function isPriceInquiry(message: string) {
   return parsePricingQuestionKind(message) !== null;
+}
+
+export function isPriceInquiryWithTypoTolerance(
+  message: string,
+  hasExplicitTreatment: boolean,
+) {
+  return isPriceInquiry(message) ||
+    (hasExplicitTreatment && isLikelyPriceInquiryTypo(message));
 }
 
 export function isPromotionBrowseIntent(message: string) {
