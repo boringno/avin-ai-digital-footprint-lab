@@ -53,6 +53,24 @@ function apply(state: ConversationV2State, result: DialoguePolicyResult) {
 
 function validatePendingHandoffDoesNotOwnDialogue() {
   const initial = createConversationV2State({ episodeId: "episode-1", now: AT });
+  const modelHallucinatedTreatment = evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "request_handoff",
+      text: "我想問一些事情",
+      treatments: [entity("botox")],
+      turnId: "turn-hallucinated-handoff-treatment",
+    }),
+  );
+  expectAction(modelHallucinatedTreatment, "queue_handoff");
+  const hallucinatedPending = apply(initial, modelHallucinatedTreatment);
+  assert.deepEqual(
+    hallucinatedPending.bookingTask.draft.treatmentKeys,
+    [],
+    "a model-only treatment must never enter a handoff-created booking draft",
+  );
+  assert.equal(hallucinatedPending.bookingTask.expectedField, "treatment");
+
   const handoff = evaluateDialoguePolicy(
     initial,
     turn({ speechAct: "request_handoff", text: "我要找真人客服", turnId: "turn-1" }),
@@ -138,7 +156,7 @@ function validateOnlyExplicitBookingStartsCollection() {
   const booking = evaluateDialoguePolicy(
     afterLearn,
     turn({
-      booking: { explicit: true, intent: "create" },
+      booking: { explicit: true, fields: { treatmentKeys: ["onda_pro"] }, intent: "create" },
       speechAct: "book_consultation",
       text: "我要預約 ONDA 諮詢",
       treatments: [entity("onda_pro")],
@@ -152,6 +170,22 @@ function validateOnlyExplicitBookingStartsCollection() {
   assert.equal(collecting.bookingTask.intent, "create");
   assert.deepEqual(collecting.bookingTask.draft.treatmentKeys, ["onda_pro"]);
   assert.equal(collecting.bookingTask.expectedField, "branch");
+
+  const branchWithWrongModelTreatment = evaluateDialoguePolicy(
+    collecting,
+    turn({
+      booking: { explicit: false, fields: { branch: "高雄館" }, intent: "none" },
+      speechAct: "provide_booking_field",
+      text: "高雄館",
+      treatments: [entity("botox")],
+      turnId: "turn-branch-with-wrong-model-treatment",
+    }),
+  );
+  expectAction(branchWithWrongModelTreatment, "capture_booking_fields");
+  const afterBranch = apply(collecting, branchWithWrongModelTreatment);
+  assert.equal(afterBranch.bookingTask.draft.branch, "高雄館");
+  assert.deepEqual(afterBranch.bookingTask.draft.treatmentKeys, ["onda_pro"]);
+  assert.equal(afterBranch.bookingTask.expectedField, "time_slots");
 
   const taskSwitch = evaluateDialoguePolicy(
     collecting,
@@ -884,6 +918,7 @@ function validateBookingEpisodesDoNotLeakDrafts() {
           name: "王小美",
           phone: "0912345678",
           timeSlots: ["8/20 下午"],
+          treatmentKeys: ["onda_pro"],
         },
         intent: "create",
       },
@@ -900,7 +935,7 @@ function validateBookingEpisodesDoNotLeakDrafts() {
   const newBooking = evaluateDialoguePolicy(
     completed,
     turn({
-      booking: { explicit: true, intent: "create" },
+      booking: { explicit: true, fields: { treatmentKeys: ["botox"] }, intent: "create" },
       speechAct: "book_consultation",
       text: "我要改預約肉毒諮詢",
       treatments: [entity("botox")],
@@ -921,7 +956,7 @@ function validateBookingEpisodesDoNotLeakDrafts() {
     turn({
       booking: {
         explicit: true,
-        fields: { branch: "林口館", name: "陳小姐" },
+        fields: { branch: "林口館", name: "陳小姐", treatmentKeys: ["onda_pro"] },
         intent: "create",
       },
       speechAct: "book_consultation",
@@ -939,6 +974,7 @@ function validateBookingEpisodesDoNotLeakDrafts() {
       booking: {
         continuation: true,
         explicit: true,
+        fields: { treatmentKeys: ["botox"] },
         intent: "create",
       } as unknown as NonNullable<TurnUnderstanding["booking"]>,
       speechAct: "book_consultation",
@@ -1009,7 +1045,7 @@ function validateBookingEpisodesDoNotLeakDrafts() {
   const afterSuspension = evaluateDialoguePolicy(
     suspended,
     turn({
-      booking: { explicit: true, intent: "create" },
+      booking: { explicit: true, fields: { treatmentKeys: ["botox"] }, intent: "create" },
       speechAct: "book_consultation",
       text: "我要預約肉毒",
       treatments: [entity("botox")],

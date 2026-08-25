@@ -1294,12 +1294,6 @@ export async function routeConversationV2Canary(
           .some((term) => normalizeClinicText(routingMessage).includes(term)),
       )
       .map((treatment) => treatment.key);
-    const rejectedExpectedTreatmentCandidate =
-      state.bookingTask.status === "collecting" &&
-      state.bookingTask.expectedField === "treatment" &&
-      !parsedBooking?.explicit &&
-      !expectedBookingFieldProvided &&
-      currentTextTreatmentKeys.length > 0;
     const booking = parsedBooking && (
       parsedBooking.explicit ||
       expectedBookingFieldProvided ||
@@ -1315,7 +1309,7 @@ export async function routeConversationV2Canary(
     )
       ? parsedBooking
       : undefined;
-    const negationGuard = booking || rejectedExpectedTreatmentCandidate
+    const provisionalNegationGuard = booking
       ? undefined
       : resolveDeterministicNegationGuard({
           candidateSpeechAct: nlu.frame.dialogue.speechAct,
@@ -1324,7 +1318,7 @@ export async function routeConversationV2Canary(
           ontology: snapshot.ontology,
           state,
         });
-    const semanticAnchor = !rejectedExpectedTreatmentCandidate && !negationGuard
+    const provisionalSemanticAnchor = !provisionalNegationGuard
       ? quickReplySelection?.semanticAnchor ?? resolveTrustedSemanticAnchor({
           candidate: {
             questionAspect: nlu.frame.dialogue.focus,
@@ -1335,6 +1329,19 @@ export async function routeConversationV2Canary(
           ontology: snapshot.ontology,
           state,
         })
+      : undefined;
+    const rejectedExpectedTreatmentCandidate =
+      state.bookingTask.status === "collecting" &&
+      state.bookingTask.expectedField === "treatment" &&
+      !parsedBooking?.explicit &&
+      !expectedBookingFieldProvided &&
+      currentTextTreatmentKeys.length > 0 &&
+      !provisionalSemanticAnchor;
+    const negationGuard = rejectedExpectedTreatmentCandidate
+      ? undefined
+      : provisionalNegationGuard;
+    const semanticAnchor = !rejectedExpectedTreatmentCandidate && !negationGuard
+      ? provisionalSemanticAnchor
       : undefined;
     const treatmentClarification =
       !booking &&

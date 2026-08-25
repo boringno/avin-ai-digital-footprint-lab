@@ -941,6 +941,103 @@ async function validateMondayCompleteBookingJourneys() {
   console.log("PASS: J8 ONDA/Botox complete booking journeys");
 }
 
+async function validateProductionAdditiveTreatmentSwitch() {
+  let turnIndex = 1600;
+  const variants: Array<{ frame: NluFrame | null; message: string }> = [
+    {
+      frame: frame({
+        confidence: 0.99,
+        dialogue: {
+          focus: "overview",
+          move: "continue",
+          reference: "active_subject",
+          speechAct: "learn_treatment",
+        },
+        treatments: ["onda_pro", "botox"],
+      }),
+      message: "也想了解肉毒",
+    },
+    { frame: frame({ confidence: 0.4, treatments: ["onda_pro"] }), message: "另外想問肉毒" },
+    { frame: null, message: "還想了解肉毒" },
+    { frame: null, message: "順便介紹肉毒" },
+  ];
+
+  for (const variant of variants) {
+    const onda = await routeTurn({
+      context: createEmptyConversationContext(`U-production-additive-switch-${turnIndex}`),
+      frame: frame({ treatments: ["onda_pro"] }),
+      message: "ONDA",
+      turnIndex: turnIndex++,
+    });
+    const botox = await routeTurn({
+      context: onda.decision.nextContext,
+      frame: variant.frame,
+      message: variant.message,
+      turnIndex: turnIndex++,
+    });
+
+    assert.match(botox.decision.replyText, /肉毒|BOTOX/u, variant.message);
+    assert.doesNotMatch(botox.decision.replyText, /想確認一下.*哪一項療程/u, variant.message);
+    assert.deepEqual(
+      botox.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+      ["botox"],
+      `${variant.message}: the new treatment must own the active reply without inheriting ONDA facts`,
+    );
+  }
+}
+
+async function validatePersistedBookingOwnsShortAnswerAfterDelay() {
+  let context = createEmptyConversationContext("U-production-booking-delay");
+  let turnIndex = 1620;
+  for (const [message, expectedField] of [
+    ["我要預約免費諮詢", "treatment"],
+    ["ONDA", "branch"],
+    ["高雄館", "time_slots"],
+    ["平日下午都有空", "first_visit"],
+  ] as const) {
+    const step = await routeTurn({
+      context,
+      frame: null,
+      message,
+      now: new Date(NOW.getTime() + turnIndex * 1000),
+      turnIndex: turnIndex++,
+    });
+    context = structuredClone(step.decision.nextContext);
+    assert.equal(context.conversationV2State?.bookingTask.expectedField, expectedField);
+  }
+
+  const persistedAt = context.conversationV2State!.updatedAt;
+  const scalarWriteAt = new Date(Date.parse(persistedAt) + 1_000).toISOString();
+  context.lastSeenAt = scalarWriteAt;
+  context.bookingSession = {
+    ...(context.bookingSession ?? { action: "use_current", status: "collecting" as const }),
+    lastActiveAt: scalarWriteAt,
+  };
+
+  const resumed = await routeTurn({
+    context: structuredClone(context),
+    frame: frame({
+      confidence: 0.99,
+      dialogue: {
+        focus: "booking_policy",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "unknown",
+      },
+      treatments: [],
+    }),
+    message: "初診",
+    now: new Date(Date.parse(persistedAt) + 5 * 60 * 1000),
+    turnIndex: turnIndex++,
+  });
+
+  assert.equal(resumed.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.equal(resumed.decision.nextContext.conversationV2State?.bookingTask.expectedField, "name");
+  assert.equal(resumed.decision.nextContext.conversationV2State?.bookingTask.draft.firstVisit, true);
+  assert.match(resumed.decision.replyText, /姓名/u);
+  assert.doesNotMatch(resumed.decision.replyText, /想先了解哪項療程|館別資訊/u);
+}
+
 function summarize(label: string, message: string, decision: { matchedKey: string; replyText: string }) {
   const reply = decision.replyText.replace(/\n/gu, " / ").slice(0, 96);
   console.log(`  ${label} [${message}]`);
@@ -1364,7 +1461,265 @@ async function validateFrameNullBookingTreatmentContinuation() {
     }
   }
 
+  const explicitBotoxBooking = await routeTurn({
+    context: createEmptyConversationContext("U-booking-deterministic-treatment-owner"),
+    frame: frame({
+      confidence: 0.95,
+      dialogue: {
+        focus: "benefits",
+        move: "start",
+        reference: "explicit",
+        speechAct: "ask_treatment_detail",
+      },
+      treatments: ["onda_pro"],
+    }),
+    message: "我要預約肉毒",
+    turnIndex: 369,
+  });
+  assert.equal(
+    explicitBotoxBooking.decision.nextContext.conversationV2State?.bookingTask.status,
+    "collecting",
+    "J1b: an explicit deterministic booking request must own the action despite stale NLU",
+  );
+  assert.deepEqual(
+    explicitBotoxBooking.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+    ["botox"],
+    "J1b: deterministic booking treatment must outrank a conflicting model entity",
+  );
+  assert.equal(
+    explicitBotoxBooking.decision.nextContext.conversationV2State?.bookingTask.expectedField,
+    "branch",
+    "J1b: the correctly captured Botox booking must advance to branch",
+  );
+
+  const subjectlessBooking = await routeTurn({
+    context: createEmptyConversationContext("U-booking-no-model-invented-treatment"),
+    frame: frame({
+      confidence: 0.95,
+      dialogue: {
+        focus: "benefits",
+        move: "start",
+        reference: "explicit",
+        speechAct: "ask_treatment_detail",
+      },
+      treatments: ["botox"],
+    }),
+    message: "我要預約",
+    turnIndex: 368,
+  });
+  assert.deepEqual(
+    subjectlessBooking.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+    [],
+    "J1b: a subjectless booking request must not inherit a model-invented treatment",
+  );
+  assert.equal(
+    subjectlessBooking.decision.nextContext.conversationV2State?.bookingTask.expectedField,
+    "treatment",
+    "J1b: a subjectless booking request must ask the customer which treatment they want",
+  );
+
   console.log("PASS: J1b booking treatment continuation across NLU variants");
+}
+
+/**
+ * Booking mutations are deterministic-only. A stale or hallucinated model
+ * treatment must not reject a valid short field answer or seed a handoff
+ * intake with a treatment the customer never named.
+ */
+async function validateBookingMutationsIgnoreModelTreatmentHallucinations() {
+  const bookingStart = await routeTurn({
+    context: createEmptyConversationContext("U-booking-field-model-treatment"),
+    frame: null,
+    message: "我要預約 ONDA",
+    turnIndex: 365,
+  });
+  assert.equal(bookingStart.decision.nextContext.conversationV2State?.bookingTask.expectedField, "branch");
+
+  const branchAnswer = await routeTurn({
+    context: bookingStart.decision.nextContext,
+    frame: frame({
+      confidence: 0.95,
+      dialogue: {
+        focus: "none",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "provide_booking_field",
+      },
+      treatments: ["botox"],
+    }),
+    message: "高雄館",
+    turnIndex: 366,
+  });
+  const progressed = branchAnswer.decision.nextContext.conversationV2State;
+  assert.equal(progressed?.bookingTask.status, "collecting");
+  assert.deepEqual(
+    progressed?.bookingTask.draft.treatmentKeys,
+    ["onda_pro"],
+    "J1c: a model-only Botox entity must not replace the canonical ONDA booking",
+  );
+  assert.equal(progressed?.bookingTask.draft.branch, "高雄館");
+  assert.equal(progressed?.bookingTask.expectedField, "time_slots");
+  assert.match(
+    branchAnswer.decision.replyText,
+    /日期|時段|時間/u,
+    "J1c: the valid branch answer must advance to the next customer-visible booking question",
+  );
+
+  const hallucinatedHandoff = await routeTurn({
+    context: createEmptyConversationContext("U-handoff-model-treatment"),
+    frame: frame({
+      confidence: 0.95,
+      dialogue: {
+        focus: "none",
+        move: "start",
+        reference: "none",
+        speechAct: "request_handoff",
+      },
+      safety: {
+        complaint: false,
+        humanRequest: true,
+        postTreatmentRisk: false,
+        pregnancyNursing: false,
+      },
+      treatments: ["botox"],
+    }),
+    message: "我想問一些事情",
+    turnIndex: 367,
+  });
+  const handoffState = hallucinatedHandoff.decision.nextContext.conversationV2State;
+  assert.equal(handoffState?.bookingTask.status, "collecting");
+  assert.deepEqual(
+    handoffState?.bookingTask.draft.treatmentKeys,
+    [],
+    "J1c: a model-only treatment must not seed the handoff booking draft",
+  );
+  assert.equal(handoffState?.bookingTask.expectedField, "treatment");
+  assert.match(
+    hallucinatedHandoff.decision.replyText,
+    /療程|困擾/u,
+    "J1c: the customer must be asked for the missing treatment rather than being booked for Botox",
+  );
+
+  console.log("PASS: J1c booking mutations ignore model-only treatment entities");
+}
+
+/**
+ * A collecting booking owns only the short field it requested. A richer,
+ * explicit treatment question must be answered first and suspend (not erase)
+ * the draft even when NLU is absent or echoes the stale ONDA subject.
+ */
+async function validateBookingSuspendsForExplicitTreatmentQuestion() {
+  console.log("### Explicit treatment questions outrank a collecting booking field");
+  const variants: Array<{ frame: NluFrame | null; label: string }> = [
+    { frame: null, label: "frame=null" },
+    { frame: frame({ confidence: 0.4 }), label: "low-confidence stale ONDA" },
+    { frame: frame({ confidence: 0.95 }), label: "high-confidence stale ONDA" },
+    {
+      frame: frame({
+        confidence: 0.4,
+        dialogue: {
+          focus: "overview",
+          move: "continue",
+          reference: "active_subject",
+          speechAct: "provide_booking_field",
+        },
+      }),
+      label: "low-confidence incorrect booking-field act",
+    },
+    {
+      frame: frame({
+        confidence: 0.95,
+        dialogue: {
+          focus: "overview",
+          move: "continue",
+          reference: "active_subject",
+          speechAct: "provide_booking_field",
+        },
+      }),
+      label: "high-confidence incorrect booking-field act",
+    },
+    {
+      frame: frame({
+        confidence: 0.95,
+        dialogue: {
+          focus: "price_unspecified",
+          move: "continue",
+          reference: "active_subject",
+          speechAct: "ask_price",
+        },
+      }),
+      label: "high-confidence incorrect price act",
+    },
+  ];
+
+  for (const [index, variant] of variants.entries()) {
+    const startIndex = 370 + index * 2;
+    const bookingStart = await routeTurn({
+      context: createEmptyConversationContext(`U-booking-topic-question-${index}`),
+      frame: null,
+      message: "我要預約諮詢",
+      turnIndex: startIndex,
+    });
+    assert.equal(bookingStart.decision.nextContext.conversationV2State?.bookingTask.expectedField, "treatment");
+
+    const contentQuestion = await routeTurn({
+      context: bookingStart.decision.nextContext,
+      frame: variant.frame,
+      message: "肉毒有哪些品牌",
+      turnIndex: startIndex + 1,
+    });
+    const state = contentQuestion.decision.nextContext.conversationV2State;
+    const label = `J1e ${variant.label}`;
+    assert.ok(state, label);
+    assert.equal(state.bookingTask.status, "suspended", `${label}: booking draft must be suspended`);
+    assert.equal(state.bookingTask.expectedField, "treatment", `${label}: expected field must be preserved`);
+    assert.deepEqual(state.bookingTask.draft.treatmentKeys, [], `${label}: a question is not booking consent`);
+    assert.notEqual(state.activeTask.kind, "booking", `${label}: current content question must own the turn`);
+    assert.deepEqual(state.knowledge.treatmentKeys, ["botox"], `${label}: current explicit Botox must replace stale ONDA`);
+    assert.match(
+      contentQuestion.decision.replyText,
+      /奇蹟肉毒|經典肉毒|皇家肉毒|肉毒品牌/u,
+      `${label}: the customer must receive the approved Botox brand answer`,
+    );
+    assert.doesNotMatch(
+      contentQuestion.decision.replyText,
+      /想預約了解哪一項療程或困擾/u,
+      `${label}: the booking field prompt must not replace the answer`,
+    );
+  }
+
+  let progressedContext = createEmptyConversationContext("U-booking-topic-question-progressed");
+  let progressedTurn = 390;
+  for (const message of [
+    "我要預約諮詢",
+    "ONDA",
+    "高雄館",
+    "8/26 下午、8/27 下午、8/28 下午",
+  ]) {
+    const step = await routeTurn({
+      context: progressedContext,
+      frame: null,
+      message,
+      turnIndex: progressedTurn++,
+    });
+    progressedContext = step.decision.nextContext;
+  }
+  assert.equal(progressedContext.conversationV2State?.bookingTask.expectedField, "first_visit");
+  const progressedQuestion = await routeTurn({
+    context: progressedContext,
+    frame: null,
+    message: "肉毒有哪些品牌",
+    turnIndex: progressedTurn,
+  });
+  const progressedState = progressedQuestion.decision.nextContext.conversationV2State;
+  assert.equal(progressedState?.bookingTask.status, "suspended");
+  assert.equal(progressedState?.bookingTask.expectedField, "first_visit");
+  assert.deepEqual(progressedState?.bookingTask.draft.treatmentKeys, ["onda_pro"]);
+  assert.equal(progressedState?.bookingTask.draft.branch, "高雄館");
+  assert.deepEqual(progressedState?.knowledge.treatmentKeys, ["botox"]);
+  assert.match(progressedQuestion.decision.replyText, /奇蹟肉毒|經典肉毒|皇家肉毒/u);
+
+  console.log("PASS: J1e collecting booking yields to explicit treatment content without losing its draft");
 }
 
 async function primeOndaJawlineContext(startIndex: number) {
@@ -3138,6 +3493,8 @@ async function main() {
   await validateSixTurnJourney();
   await validateLowConfidenceSemanticAnchorJourney();
   await validateFrameNullBookingTreatmentContinuation();
+  await validateBookingMutationsIgnoreModelTreatmentHallucinations();
+  await validateBookingSuspendsForExplicitTreatmentQuestion();
   await validateActiveSubjectFactObligationsAndTopicSwitch();
   await validateCurrentTextNegationOwnsPolarity();
   await validatePricingOwnership();
@@ -3148,6 +3505,8 @@ async function main() {
   await validateMondayConsultationCtaJourneys();
   await validateMondayNaturalInputFamilies();
   await validateMondayCompleteBookingJourneys();
+  await validateProductionAdditiveTreatmentSwitch();
+  await validatePersistedBookingOwnsShortAnswerAfterDelay();
   console.log("Conversation V2 journey validation passed");
 }
 

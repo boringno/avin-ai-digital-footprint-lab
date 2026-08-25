@@ -1,7 +1,12 @@
 const CONTENT_INTRO_LEADS = ["只想要", "只想", "想要", "想", "要"] as const;
-const CONTENT_INTRO_VERBS = ["了解", "問", "知道", "諮詢", "看看"] as const;
+const CONTENT_INTRO_VERBS = ["了解", "問", "知道", "諮詢", "看看", "介紹", "說明", "認識"] as const;
 const CONTENT_INTRO_PATTERN = `(?:${CONTENT_INTRO_LEADS.join("|")})(?:先)?(?:${CONTENT_INTRO_VERBS.join("|")})`;
-const LEADING_CONTENT_INTRO = new RegExp(`^${CONTENT_INTRO_PATTERN}`, "u");
+const ADDITIVE_CONTENT_PREFIX = "(?:另外|此外|同時|順便|也|還)";
+const LEADING_CONTENT_INTRO = new RegExp(
+  `^(?:我)?(?:(?:${ADDITIVE_CONTENT_PREFIX})?${CONTENT_INTRO_PATTERN}|` +
+    `${ADDITIVE_CONTENT_PREFIX}(?:先)?(?:${CONTENT_INTRO_VERBS.join("|")}))`,
+  "u",
+);
 const NEGATED_CONTENT_INTRO_PREFIX = /(?:(?:並)?不|不是|沒有|沒|無|並非)(?:太|很|真的|特別|那麼)?$/u;
 const NEGATIVE_INTENT_NEGATORS = [
   "並不是",

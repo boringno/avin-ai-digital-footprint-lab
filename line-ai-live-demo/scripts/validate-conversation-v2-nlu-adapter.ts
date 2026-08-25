@@ -1171,19 +1171,27 @@ function validateTrustedSemanticAnchors() {
       status: "collecting",
     },
   };
-  for (const message of ["ONDA", "脂肪堆積"]) {
-    assert.equal(
-      resolveTrustedSemanticAnchor({
-        candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
-        clinic: clinicConfig,
-        message,
-        ontology: clinicOntology,
-        state: bookingCollectingState,
-      }),
-      undefined,
-      `booking collection must disable every semantic anchor: ${message}`,
-    );
-  }
+  assert.ok(
+    resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+      clinic: clinicConfig,
+      message: "ONDA",
+      ontology: clinicOntology,
+      state: bookingCollectingState,
+    }),
+    "booking collection must still expose an explicit treatment content anchor",
+  );
+  assert.equal(
+    resolveTrustedSemanticAnchor({
+      candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+      clinic: clinicConfig,
+      message: "脂肪堆積",
+      ontology: clinicOntology,
+      state: bookingCollectingState,
+    }),
+    undefined,
+    "a concern alone must not be promoted to a treatment-detail owner",
+  );
 
   const rejectedCases = [
     {

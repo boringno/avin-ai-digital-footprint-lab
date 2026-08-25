@@ -2,15 +2,207 @@ import {
   appendRecentConversationTurns,
   createEmptyConversationContext,
   loadConversationContext,
+  loadConversationRuntimeStateWithDurableRetry,
   mergeConcurrentConversationContexts,
   removeUnsentAssistantTurn,
+  saveConversationContextToCanonicalStore,
   type ConversationContext,
 } from "../src/lib/conversation-context";
+import {
+  createEmptyConversationState,
+  loadConversationLifecycleStateWithDurableRetry,
+  saveConversationLifecycleStateToCanonicalStore,
+} from "../src/lib/conversation-state";
 import { buildCustomerServiceUserPrompt } from "../src/lib/ai-customer-policy";
-import { processWebhookRequestBody } from "../src/lib/line-webhook";
+import { persistWebhookLifecycleState, processWebhookRequestBody } from "../src/lib/line-webhook";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
 const NOW = new Date("2026-08-06T06:00:00.000Z");
+
+async function validateDurableConversationContextRetry() {
+  const modes: string[] = [];
+  const row = await loadConversationRuntimeStateWithDurableRetry(
+    "conversation-flow-durable-retry",
+    async (_userId, _tenantId, mode) => {
+      modes.push(mode ?? "latency_critical");
+      if (mode === "latency_critical") throw new Error("fast timeout");
+      return {
+        booking_draft_json: {},
+        context_json: { contextRevision: 7 },
+        created_at: NOW.toISOString(),
+        is_soft_deleted: false,
+        line_user_id: "conversation-flow-durable-retry",
+        retention_expiry: NOW.toISOString(),
+        soft_deleted_at: null,
+        state_json: {},
+        tenant_id: "tenant_001",
+        updated_at: NOW.toISOString(),
+      };
+    },
+  );
+  assert(row?.context_json?.contextRevision === 7, "CF0: durable retry must recover canonical context");
+  assert(
+    modes.join(",") === "latency_critical,durable",
+    "CF0: a fast read failure must retry through the independent durable client",
+  );
+
+  let failedClosed = false;
+  try {
+    await loadConversationRuntimeStateWithDurableRetry(
+      "conversation-flow-both-stores-fail",
+      async () => {
+        throw new Error("store unavailable");
+      },
+    );
+  } catch (error) {
+    failedClosed = error instanceof AggregateError;
+  }
+  assert(
+    failedClosed,
+    "CF0: two Supabase read failures must not fall back to an empty serverless filesystem",
+  );
+
+  const saveModes: string[] = [];
+  await saveConversationContextToCanonicalStore(
+    createEmptyConversationContext("conversation-flow-durable-context-save"),
+    undefined,
+    {
+      saveIfCurrent: async (_userId, _context, _booking, _revision, _tenantId, mode) => {
+        saveModes.push(mode ?? "latency_critical");
+        return true;
+      },
+    },
+  );
+  assert(
+    saveModes.join(",") === "durable",
+    "CF0: canonical context writes must use the durable client",
+  );
+  let contextSaveFailedClosed = false;
+  try {
+    await saveConversationContextToCanonicalStore(
+      createEmptyConversationContext("conversation-flow-context-save-failure"),
+      undefined,
+      {
+        saveIfCurrent: async () => {
+          throw new Error("canonical context unavailable");
+        },
+      },
+    );
+  } catch (error) {
+    contextSaveFailedClosed = error instanceof Error &&
+      error.message === "canonical context unavailable";
+  }
+  assert(
+    contextSaveFailedClosed,
+    "CF0: a canonical context write failure must propagate instead of writing a local serverless copy",
+  );
+
+  const lifecycleModes: string[] = [];
+  const lifecycle = await loadConversationLifecycleStateWithDurableRetry(
+    "conversation-flow-lifecycle-retry",
+    "tenant_001",
+    async (_userId, _tenantId, mode) => {
+      lifecycleModes.push(mode ?? "latency_critical");
+      if (mode === "latency_critical") throw new Error("fast lifecycle timeout");
+      return {
+        booking_draft_json: {},
+        context_json: {},
+        created_at: NOW.toISOString(),
+        is_soft_deleted: false,
+        line_user_id: "conversation-flow-lifecycle-retry",
+        retention_expiry: NOW.toISOString(),
+        soft_deleted_at: null,
+        state_json: { status: "human_active" },
+        tenant_id: "tenant_001",
+        updated_at: NOW.toISOString(),
+      };
+    },
+  );
+  assert(lifecycle.status === "human_active", "CF0: durable lifecycle read must preserve human ownership");
+  assert(
+    lifecycleModes.join(",") === "latency_critical,durable",
+    "CF0: lifecycle reads must retry through the durable client",
+  );
+  let lifecycleReadFailedClosed = false;
+  try {
+    await loadConversationLifecycleStateWithDurableRetry(
+      "conversation-flow-lifecycle-read-failure",
+      "tenant_001",
+      async () => {
+        throw new Error("lifecycle unavailable");
+      },
+    );
+  } catch (error) {
+    lifecycleReadFailedClosed = error instanceof AggregateError;
+  }
+  assert(
+    lifecycleReadFailedClosed,
+    "CF0: two lifecycle read failures must not expose an empty local ownership state",
+  );
+
+  const lifecycleSaveModes: string[] = [];
+  await saveConversationLifecycleStateToCanonicalStore(
+    createEmptyConversationState("conversation-flow-lifecycle-save"),
+    "tenant_001",
+    async (_userId, _patch, _tenantId, mode) => {
+      lifecycleSaveModes.push(mode ?? "latency_critical");
+    },
+  );
+  assert(
+    lifecycleSaveModes.join(",") === "durable",
+    "CF0: canonical lifecycle writes must use the durable client",
+  );
+  let lifecycleSaveFailedClosed = false;
+  try {
+    await saveConversationLifecycleStateToCanonicalStore(
+      createEmptyConversationState("conversation-flow-lifecycle-save-failure"),
+      "tenant_001",
+      async () => {
+        throw new Error("canonical lifecycle unavailable");
+      },
+    );
+  } catch (error) {
+    lifecycleSaveFailedClosed = error instanceof Error &&
+      error.message === "canonical lifecycle unavailable";
+  }
+  assert(
+    lifecycleSaveFailedClosed,
+    "CF0: lifecycle write failure must propagate instead of writing a local serverless copy",
+  );
+
+  const lifecycleConflictModes: string[] = [];
+  const lifecycleSaveModesAfterConflict: string[] = [];
+  let lifecycleSaveAttempts = 0;
+  const conflictBase = createEmptyConversationState("conversation-flow-lifecycle-conflict");
+  await persistWebhookLifecycleState(
+    {
+      expectedControlRevision: conflictBase.controlRevision,
+      expectedUpdatedAt: conflictBase.updatedAt,
+      proposedState: conflictBase,
+      receivedAt: NOW.toISOString(),
+    },
+    {
+      loadLatest: async (_userId, _tenantId, mode) => {
+        lifecycleConflictModes.push(mode ?? "latency_critical");
+        return conflictBase;
+      },
+      saveIfCurrent: async (_state, _updatedAt, _controlRevision, _tenantId, mode) => {
+        lifecycleSaveModesAfterConflict.push(mode ?? "latency_critical");
+        lifecycleSaveAttempts += 1;
+        return lifecycleSaveAttempts > 1;
+      },
+    },
+  );
+  assert(
+    lifecycleConflictModes.join(",") === "durable",
+    "CF0: lifecycle CAS conflict reload must stay on the durable client",
+  );
+  assert(
+    lifecycleSaveModesAfterConflict.join(",") === "durable,durable",
+    "CF0: lifecycle CAS retries must stay on the durable client",
+  );
+  console.log("PASS: CF0 canonical context and lifecycle state retry durable storage and fail closed");
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -417,6 +609,7 @@ function validateSuppressedReplyCleanupAfterConcurrentTurn() {
 }
 
 async function main() {
+  await validateDurableConversationContextRetry();
   await validateConcernAccumulation();
   await validateBookingEscape();
   await validatePromotionBrowsing();

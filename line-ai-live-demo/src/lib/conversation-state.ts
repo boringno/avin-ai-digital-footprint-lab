@@ -149,13 +149,7 @@ export async function loadConversationState(userId: string, tenantId: string = D
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    try {
-      const row = await loadConversationRuntimeState(userId, tenantId);
-      const parsed = (row?.state_json ?? {}) as Partial<ConversationState>;
-      return hydrateConversationState(userId, parsed);
-    } catch {
-      // Fallback to local file persistence until Supabase schema is ready.
-    }
+    return loadConversationLifecycleStateWithDurableRetry(userId, tenantId);
   }
 
   const filePath = buildConversationStatePath(userId, tenantId);
@@ -173,20 +167,35 @@ export async function loadConversationState(userId: string, tenantId: string = D
   }
 }
 
+export async function loadConversationLifecycleStateWithDurableRetry(
+  userId: string,
+  tenantId: string = DEFAULT_TENANT_ID,
+  loader: typeof loadConversationRuntimeState = loadConversationRuntimeState,
+) {
+  try {
+    const row = await loader(userId, tenantId, "latency_critical");
+    return hydrateConversationState(userId, (row?.state_json ?? {}) as Partial<ConversationState>);
+  } catch (fastError) {
+    try {
+      const row = await loader(userId, tenantId, "durable");
+      return hydrateConversationState(userId, (row?.state_json ?? {}) as Partial<ConversationState>);
+    } catch (durableError) {
+      throw new AggregateError(
+        [fastError, durableError],
+        "Failed to load canonical conversation lifecycle state from Supabase",
+      );
+    }
+  }
+}
+
 export async function saveConversationState(state: ConversationState, tenantId: string = DEFAULT_TENANT_ID) {
   if (!state.userId) {
     return;
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    try {
-      await saveConversationRuntimeState(state.userId, {
-        state_json: state as unknown as Record<string, unknown>,
-      }, tenantId);
-      return;
-    } catch {
-      // Fallback to local file persistence until Supabase schema is ready.
-    }
+    await saveConversationLifecycleStateToCanonicalStore(state, tenantId);
+    return;
   }
 
   const key = `${tenantId}:${state.userId}`;
@@ -195,6 +204,16 @@ export async function saveConversationState(state: ConversationState, tenantId: 
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(buildConversationStatePath(state.userId, tenantId), JSON.stringify(state, null, 2), "utf8");
   });
+}
+
+export async function saveConversationLifecycleStateToCanonicalStore(
+  state: ConversationState,
+  tenantId: string = DEFAULT_TENANT_ID,
+  saver: typeof saveConversationRuntimeState = saveConversationRuntimeState,
+) {
+  await saver(state.userId, {
+    state_json: state as unknown as Record<string, unknown>,
+  }, tenantId, "durable");
 }
 
 export async function saveConversationStateIfCurrent(
