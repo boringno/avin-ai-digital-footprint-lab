@@ -406,7 +406,7 @@ function selectIndependentPositiveContentClause(
         return normalizeIndependentContentClause(selected);
       }
     }
-    return message;
+    return normalizeIndependentContentClause(message);
   }
   const entityClauses = clauses.filter((clause) => hasOntologyEntity(clause, ontology));
   if (entityClauses.length !== 1) return message;
@@ -940,12 +940,15 @@ export function resolveTrustedSemanticAnchor(
     : { ...input, message: scopedMessage };
   if (
     !isConversationV2AiAssistanceEnabled(input.state.control.mode) ||
-    input.state.bookingTask.status === "collecting" ||
-    !contentActionAllowed(input.candidate) ||
     hasHardDomainWording(scopedMessage, input.clinic)
   ) {
     return undefined;
   }
+
+  // Booking collection does not own a richer new question merely because it
+  // is waiting for a short field. A deterministic booking answer still wins
+  // later in the adapter; this anchor only lets an explicit treatment-content
+  // question suspend the draft instead of being flattened into fallback text.
 
   const ontologyMatch = matchClinicOntology(scopedMessage, input.ontology);
   if (
@@ -994,6 +997,15 @@ export function resolveTrustedSemanticAnchor(
     scopedMessage,
     matchedTerms,
   );
+  // A deterministic, fully grounded question in the current text outranks a
+  // stale or incorrect model speech act. Hard domains (price, booking, safety,
+  // clinic info and handoff) were already rejected above, so this exception
+  // cannot let content routing take ownership of those actions. Bare booking
+  // field answers still have no high-trust question aspect and continue through
+  // the deterministic booking adapter.
+  if (!contentActionAllowed(input.candidate) && !highTrustQuestionAspect) {
+    return undefined;
+  }
   const deterministicQuestionAspect = input.candidate && !highTrustQuestionAspect
     ? undefined
     : inferDeterministicContentQuestionAspect(scopedMessage, matchedTerms);

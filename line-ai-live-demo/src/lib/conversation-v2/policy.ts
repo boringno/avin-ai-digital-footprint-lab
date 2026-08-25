@@ -756,7 +756,10 @@ function initialDraft(
 ): Partial<BookingDraft> {
   if (turn.confidence < 0.65) return {};
   const fields = turn.booking?.fields ?? {};
-  const treatmentKeys = confirmedKeys(turn, turn.treatments);
+  // Booking mutations must be owned by deterministic booking parsing or the
+  // existing canonical task. Model entities are useful for consultation
+  // understanding, but must never create or replace a booking treatment.
+  const deterministicTreatmentKeys = fields.treatmentKeys ?? [];
   if (turn.booking?.intent === "cancel") {
     return { appointmentReference: fields.appointmentReference };
   }
@@ -777,13 +780,9 @@ function initialDraft(
     name: fields.name,
     phone: fields.phone,
     timeSlots: fields.timeSlots,
-    treatmentKeys: treatmentKeys.length > 0
-      ? treatmentKeys
-      : turn.treatments.length > 0
-        ? undefined
-        : fields.treatmentKeys?.length
-          ? fields.treatmentKeys
-          : contextualBookingTreatments,
+    treatmentKeys: deterministicTreatmentKeys.length > 0
+      ? deterministicTreatmentKeys
+      : contextualBookingTreatments,
   };
 }
 
@@ -800,12 +799,10 @@ function handoffBookingDraft(state: ConversationV2State): Partial<BookingDraft> 
 function sameTreatmentTask(state: ConversationV2State, turn: TurnUnderstanding) {
   if (state.bookingTask.intent !== "create") return true;
   const current = state.bookingTask.draft.treatmentKeys;
-  const confirmedTreatments = confirmedKeys(turn, turn.treatments);
-  const incoming = confirmedTreatments.length > 0
-    ? confirmedTreatments
-    : turn.treatments.length > 0
-      ? []
-      : turn.booking?.fields?.treatmentKeys ?? [];
+  // A short booking-field answer may carry a stale or hallucinated model
+  // treatment. Only deterministic booking fields can declare a treatment
+  // switch; explicit cross-treatment wording is parsed into this field.
+  const incoming = turn.booking?.fields?.treatmentKeys ?? [];
   if (incoming.length === 0) return true;
   if (current.length === 0) return state.bookingTask.expectedField === "treatment";
   return (

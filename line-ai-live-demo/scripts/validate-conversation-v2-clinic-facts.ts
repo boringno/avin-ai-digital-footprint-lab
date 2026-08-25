@@ -1229,7 +1229,7 @@ async function validateHydrationAndNonBlockingEffects() {
   assert(!hydratedNotOfferedBooking.toolRequest, "CF-I4: explicit not-offered booking created redundant confirmation work");
 
   const bookingTurn = turn({
-    booking: { explicit: true, intent: "create" },
+    booking: { explicit: true, fields: { treatmentKeys: ["onda_pro"] }, intent: "create" },
     speechAct: "book_consultation",
     treatments: [{ confidence: 0.95, key: "onda_pro", polarity: "affirmed", resolution: "resolved" }],
     turnId: "booking-turn",

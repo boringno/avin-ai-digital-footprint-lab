@@ -144,12 +144,13 @@ export async function saveConversationRuntimeState(
   userId: string,
   patch: ConversationRuntimeStatePatch,
   tenantId: string = DEFAULT_TENANT_ID,
+  mode: ConversationStoreMode = "latency_critical",
 ) {
   if (!userId || !isSupabaseConversationStoreEnabled()) {
     return;
   }
 
-  const supabase = getLatencyCriticalSupabaseServerClient();
+  const supabase = getConversationStoreClient(mode);
   const { error } = await supabase
     .from(TABLE_NAME)
     .upsert(buildConversationRuntimeStateUpsertRow(userId, patch, tenantId), { onConflict: "line_user_id" })
@@ -279,12 +280,13 @@ export async function saveConversationRuntimeContextIfCurrent(
   bookingDraftJson: Record<string, unknown>,
   expectedContextRevision: number,
   tenantId: string = DEFAULT_TENANT_ID,
+  mode: ConversationStoreMode = "latency_critical",
 ) {
   if (!userId || !isSupabaseConversationStoreEnabled()) {
     return false;
   }
 
-  const supabase = getLatencyCriticalSupabaseServerClient();
+  const supabase = getConversationStoreClient(mode);
   const scopeFilters = buildTenantScopeFilters(userId, tenantId);
   const patch = {
     booking_draft_json: bookingDraftJson,

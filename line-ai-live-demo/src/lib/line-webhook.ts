@@ -202,13 +202,18 @@ function mergeCustomerReceiptIntoLatestState(latestState: ConversationState, rec
   };
 }
 
-async function persistWebhookLifecycleState(input: {
+export async function persistWebhookLifecycleState(input: {
   expectedControlRevision: number;
   expectedUpdatedAt: string;
   handoffTransitionReason?: string;
   proposedState: ConversationState;
   receivedAt: string;
-}) {
+}, dependencies: {
+  loadLatest?: typeof loadAuthoritativeConversationState;
+  saveIfCurrent?: typeof saveConversationStateIfCurrent;
+} = {}) {
+  const loadLatest = dependencies.loadLatest ?? loadAuthoritativeConversationState;
+  const saveIfCurrent = dependencies.saveIfCurrent ?? saveConversationStateIfCurrent;
   const proposedState = {
     ...input.proposedState,
     updatedAt: nextLifecycleVersion(input.expectedUpdatedAt, input.proposedState.updatedAt),
@@ -219,16 +224,22 @@ async function persistWebhookLifecycleState(input: {
 
   try {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      if (await saveConversationStateIfCurrent(
+      if (await saveIfCurrent(
         candidateState,
         expectedUpdatedAt,
         expectedControlRevision,
+        DEFAULT_TENANT_ID,
+        "durable",
       )) {
         return candidateState;
       }
 
       const latestState = applyAutoResumeIfDue(
-        await loadAuthoritativeConversationState(input.proposedState.userId),
+        await loadLatest(
+          input.proposedState.userId,
+          DEFAULT_TENANT_ID,
+          "durable",
+        ),
         new Date(),
       );
       const controlChanged = latestState.controlRevision !== input.expectedControlRevision;
@@ -269,11 +280,8 @@ async function persistWebhookLifecycleState(input: {
       },
       source: "line_webhook_lifecycle_conflict",
     });
-    return candidateState;
+    throw new Error("Conversation lifecycle compare-and-swap exhausted");
   } catch (error) {
-    // Preserve the webhook's availability contract. A fresh ownership check is
-    // still performed immediately before LINE send; this merely prevents a
-    // transient state-store error from turning the whole webhook into HTTP 500.
     await reportOperationalError({
       alert: false,
       error,
@@ -283,7 +291,7 @@ async function persistWebhookLifecycleState(input: {
       },
       source: "line_webhook_lifecycle_persistence",
     });
-    return candidateState;
+    throw error;
   }
 }
 

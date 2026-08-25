@@ -381,16 +381,12 @@ export async function loadConversationContext(userId: string) {
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    try {
-      const row = await loadConversationRuntimeState(userId);
-      const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
-      const bookingDraftJson =
-        ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
+    const row = await loadConversationRuntimeStateWithDurableRetry(userId);
+    const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
+    const bookingDraftJson =
+      ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
 
-      return applyConfirmedAppointmentAt(hydrateConversationContext(userId, contextJson, bookingDraftJson));
-    } catch {
-      // Fallback to local file persistence until Supabase schema is ready.
-    }
+    return applyConfirmedAppointmentAt(hydrateConversationContext(userId, contextJson, bookingDraftJson));
   }
 
   const filePath = buildContextFilePath(userId);
@@ -406,6 +402,32 @@ export async function loadConversationContext(userId: string) {
       return createEmptyConversationContext(userId);
     }
     throw error;
+  }
+}
+
+/**
+ * The latency-critical Supabase client is intentionally allowed to time out
+ * quickly. A timeout must not make a serverless instance treat a returning
+ * customer as new: its local filesystem is ephemeral and may be empty after a
+ * cold start. Retry through the independent durable client, and if both reads
+ * fail let the webhook fail/retry instead of overwriting canonical state with
+ * an empty local snapshot.
+ */
+export async function loadConversationRuntimeStateWithDurableRetry(
+  userId: string,
+  loader: typeof loadConversationRuntimeState = loadConversationRuntimeState,
+) {
+  try {
+    return await loader(userId, DEFAULT_TENANT_ID, "latency_critical");
+  } catch (fastError) {
+    try {
+      return await loader(userId, DEFAULT_TENANT_ID, "durable");
+    } catch (durableError) {
+      throw new AggregateError(
+        [fastError, durableError],
+        "Failed to load canonical conversation context from Supabase",
+      );
+    }
   }
 }
 
@@ -821,7 +843,11 @@ export function mergeConcurrentConversationContexts(
 }
 
 async function loadAuthoritativeConversationContext(userId: string) {
-  const row = await loadConversationRuntimeState(userId);
+  const row = await loadConversationRuntimeState(
+    userId,
+    DEFAULT_TENANT_ID,
+    "durable",
+  );
   const contextJson = (row?.context_json ?? {}) as Partial<ConversationContext>;
   const bookingDraftJson =
     ((row?.booking_draft_json ?? contextJson.bookingDraft ?? {}) as Partial<BookingDraft>) ?? {};
@@ -849,41 +875,55 @@ async function withLocalContextWriteLock<T>(userId: string, operation: () => Pro
   }
 }
 
+export async function saveConversationContextToCanonicalStore(
+  context: ConversationContext,
+  baseContext?: ConversationContext,
+  dependencies: {
+    loadLatest?: typeof loadAuthoritativeConversationContext;
+    saveIfCurrent?: typeof saveConversationRuntimeContextIfCurrent;
+  } = {},
+) {
+  const loadLatest = dependencies.loadLatest ?? loadAuthoritativeConversationContext;
+  const saveIfCurrent = dependencies.saveIfCurrent ?? saveConversationRuntimeContextIfCurrent;
+  let expectedRevision = normalizeContextRevision(context.contextRevision);
+  let candidate = {
+    ...context,
+    contextRevision: expectedRevision + 1,
+  } satisfies ConversationContext;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (await saveIfCurrent(
+      context.userId,
+      candidate as unknown as Record<string, unknown>,
+      candidate.bookingDraft as unknown as Record<string, unknown>,
+      expectedRevision,
+      DEFAULT_TENANT_ID,
+      "durable",
+    )) {
+      return;
+    }
+
+    const latest = await loadLatest(context.userId);
+    expectedRevision = normalizeContextRevision(latest.contextRevision);
+    candidate = {
+      ...mergeConcurrentConversationContexts(latest, context, baseContext),
+      contextRevision: expectedRevision + 1,
+    };
+  }
+
+  throw new Error("Conversation context compare-and-swap exhausted");
+}
+
 export async function saveConversationContext(context: ConversationContext, baseContext?: ConversationContext) {
   if (!context.userId) {
     return;
   }
 
   if (isSupabaseConversationStoreEnabled()) {
-    try {
-      let expectedRevision = normalizeContextRevision(context.contextRevision);
-      let candidate = {
-        ...context,
-        contextRevision: expectedRevision + 1,
-      } satisfies ConversationContext;
-
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        if (await saveConversationRuntimeContextIfCurrent(
-          context.userId,
-          candidate as unknown as Record<string, unknown>,
-          candidate.bookingDraft as unknown as Record<string, unknown>,
-          expectedRevision,
-        )) {
-          return;
-        }
-
-        const latest = await loadAuthoritativeConversationContext(context.userId);
-        expectedRevision = normalizeContextRevision(latest.contextRevision);
-        candidate = {
-          ...mergeConcurrentConversationContexts(latest, context, baseContext),
-          contextRevision: expectedRevision + 1,
-        };
-      }
-
-      throw new Error("Conversation context compare-and-swap exhausted");
-    } catch {
-      // Fallback to local file persistence until Supabase schema is ready.
-    }
+    // Production has one canonical store. Falling back to a serverless local
+    // file would create a divergent copy that disappears on the next instance.
+    await saveConversationContextToCanonicalStore(context, baseContext);
+    return;
   }
 
   await withLocalContextWriteLock(context.userId, async () => {
