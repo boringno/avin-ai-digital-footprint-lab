@@ -349,7 +349,13 @@ function renderDeterministic(
     input.plan.deterministicReply ?? input.plan.fallbackText,
     { decisionType: input.plan.decisionType, matchedKey: input.plan.matchedKey },
   ));
-  const replyText = guardFallbackCandidate(input, candidate, usedGroundedKnowledge);
+  const replyText = guardFallbackCandidate(input, candidate, usedGroundedKnowledge, {
+    // A customer may repeat or reword a factual price question. When this plan
+    // carries exact clinic-approved price facts, suppressing the same correct
+    // answer is worse than repeating it and previously produced a generic menu.
+    // Other deterministic copy keeps the ordinary anti-loop protection.
+    checkRecentReplies: input.plan.exactPriceFacts.length === 0,
+  });
   if (!replyText) {
     return renderGuardedFallback(input, "deterministic_rejected", usedGroundedKnowledge, startedAt);
   }

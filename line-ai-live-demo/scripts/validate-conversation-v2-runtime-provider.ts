@@ -13,6 +13,8 @@ import type { PricingCampaign } from "../src/lib/seed-loader";
 const NOW = new Date("2026-08-17T04:00:00.000Z");
 const PRIVATE_AUDIENCE_A = "line-user-private-a";
 const PRIVATE_AUDIENCE_B = "line-user-private-b";
+const PRIVATE_AUDIENCE_C = "line-user-private-c";
+const PRIVATE_AUDIENCE_D = "line-user-private-d";
 
 type RuntimeRequest = {
   audienceKey: string;
@@ -202,7 +204,7 @@ async function main() {
     releaseId: "release-b",
     sourceStatus: "unavailable",
   });
-  const unavailable = await load(PRIVATE_AUDIENCE_A, "tenant-a");
+  const unavailable = await load(PRIVATE_AUDIENCE_C, "tenant-a");
   const unavailablePrice = resolveApprovedPrice(unavailable, {
     kind: "campaign",
     treatmentKeys: ["onda_pro"],
@@ -218,7 +220,7 @@ async function main() {
   checks.push("declared-source-failure-closes-price-only");
 
   runtimeState = new Error("simulated runtime loader failure");
-  const rejectedRuntimeLoad = await load(PRIVATE_AUDIENCE_A, "tenant-a");
+  const rejectedRuntimeLoad = await load(PRIVATE_AUDIENCE_D, "tenant-a");
   const rejectedPrice = resolveApprovedPrice(rejectedRuntimeLoad, {
     kind: "campaign",
     treatmentKeys: ["onda_pro"],
@@ -294,6 +296,72 @@ async function main() {
   );
   checks.push("transient-overlay-single-retry", "persistent-overlay-outage-fails-closed");
 
+  let wallClockMs = 1_000_000;
+  let resilientRuntimeState = overlay({
+    price: "last known good 16,888",
+    releaseId: "resilient-release",
+  });
+  let resilientRuntimeCalls = 0;
+  const resilientProvider = createRuntimeClinicFactsProvider({
+    currentTimeMs: () => wallClockMs,
+    lastKnownGoodMaxAgeMs: 120_000,
+    loadRuntimeContentOverlay: async () => {
+      resilientRuntimeCalls += 1;
+      return resilientRuntimeState;
+    },
+    loadSeedData: async () => ({
+      faqEntries: [],
+      handoffRules: [],
+      pregnancyRules: [],
+      pricingCampaigns: [campaign("seed must remain overlaid")],
+    }),
+  });
+  const resilientRequest = {
+    audienceKey: "line-user-resilient",
+    now: NOW,
+    tenantId: "tenant-resilient",
+  };
+  const verifiedSnapshot = await loadClinicFactsSnapshot(resilientProvider, resilientRequest);
+  assert.equal(resolvedPrice(verifiedSnapshot), "last known good 16,888");
+
+  resilientRuntimeState = overlay({
+    price: "must never replace the verified snapshot",
+    releaseId: "unavailable-release",
+    sourceStatus: "unavailable",
+  });
+  wallClockMs += 30_000;
+  const recoveredFromLastKnownGood = await loadClinicFactsSnapshot(
+    resilientProvider,
+    resilientRequest,
+  );
+  assert.equal(
+    resolvedPrice(recoveredFromLastKnownGood),
+    "last known good 16,888",
+    "a brief runtime outage must reuse only the same tenant/audience's recent verified overlay",
+  );
+  assert.equal(
+    recoveredFromLastKnownGood.snapshotId,
+    verifiedSnapshot.snapshotId,
+    "last-known-good recovery must preserve the verified release snapshot identity",
+  );
+
+  wallClockMs += 120_001;
+  const expiredLastKnownGood = await loadClinicFactsSnapshot(resilientProvider, resilientRequest);
+  assert.equal(
+    resolveApprovedPrice(expiredLastKnownGood, {
+      kind: "campaign",
+      treatmentKeys: ["onda_pro"],
+    }).status,
+    "unavailable_to_quote",
+    "an expired last-known-good overlay must fail closed",
+  );
+  assert.equal(
+    resilientRuntimeCalls,
+    5,
+    "each unavailable lookup must retain the existing one-retry bound before cache fallback",
+  );
+  checks.push("recent-last-known-good-recovers-transient-outage", "expired-last-known-good-fails-closed");
+
   assert.deepEqual(
     runtimeRequests.map(({ audienceKey, tenantId }) => ({ audienceKey, tenantId })),
     [
@@ -306,9 +374,9 @@ async function main() {
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
       { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
+      { audienceKey: PRIVATE_AUDIENCE_C, tenantId: "tenant-a" },
+      { audienceKey: PRIVATE_AUDIENCE_C, tenantId: "tenant-a" },
+      { audienceKey: PRIVATE_AUDIENCE_D, tenantId: "tenant-a" },
     ],
   );
   assert(runtimeRequests.every(({ now }) => now.getTime() === NOW.getTime()));
@@ -329,8 +397,12 @@ async function main() {
   ]) {
     assert(!snapshot.snapshotId.includes(PRIVATE_AUDIENCE_A));
     assert(!snapshot.snapshotId.includes(PRIVATE_AUDIENCE_B));
+    assert(!snapshot.snapshotId.includes(PRIVATE_AUDIENCE_C));
+    assert(!snapshot.snapshotId.includes(PRIVATE_AUDIENCE_D));
     assert(!snapshot.source.includes(PRIVATE_AUDIENCE_A));
     assert(!snapshot.source.includes(PRIVATE_AUDIENCE_B));
+    assert(!snapshot.source.includes(PRIVATE_AUDIENCE_C));
+    assert(!snapshot.source.includes(PRIVATE_AUDIENCE_D));
   }
   checks.push("snapshot-metadata-has-no-audience-pii");
 

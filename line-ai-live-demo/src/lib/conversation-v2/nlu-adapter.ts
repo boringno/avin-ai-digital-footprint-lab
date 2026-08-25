@@ -9,7 +9,10 @@ import {
   type NluFrame,
   type NluSafetyFrame,
 } from "@/lib/nlu-frame";
-import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+import {
+  isHedgedTreatmentReference,
+  isPriceInquiryWithTypoTolerance,
+} from "@/lib/pricing-subject";
 import {
   CONVERSATION_MOVES,
   DIALOGUE_REFERENCES,
@@ -84,7 +87,10 @@ const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);
 const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
 const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
 
-function hasDeterministicPriceInquiry(text: string) {
+function hasDeterministicPriceInquiry(
+  text: string,
+  ontology: ClinicOntology = clinicOntology,
+) {
   // Mentioning that the customer lacks price information is not itself a
   // request for a quote (for example, "我沒有費用資料想了解 ONDA"). Remove
   // only that meta statement before applying the shared price grammar so a
@@ -93,7 +99,11 @@ function hasDeterministicPriceInquiry(text: string) {
     /(?:沒有|沒|無)(?:價格|價錢|價位|費用|收費|報價)(?:資料|資訊|概念)/gu,
     "",
   );
-  return Boolean(isPriceInquiry(inquiryText) && !isHedgedTreatmentReference(inquiryText));
+  const hasExplicitTreatment = matchClinicOntology(inquiryText, ontology).treatments.length > 0;
+  return Boolean(
+    isPriceInquiryWithTypoTolerance(inquiryText, hasExplicitTreatment) &&
+    !isHedgedTreatmentReference(inquiryText),
+  );
 }
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
@@ -1195,22 +1205,23 @@ export function adaptNluFrameToConversationV2Turn(
       !supplemental.selection
         ? supplemental.negationGuard
         : undefined;
-    const selectedSemanticAnchor = supplemental.valid &&
-      supplemental.semanticAnchor &&
-      !hasSafetyPriority &&
-      !trustedBooking &&
-      !supplemental.selection &&
-      !selectedNegationGuard
-        ? supplemental.semanticAnchor
-        : undefined;
-    const deterministicPriceInquiry =
+    const deterministicPriceSignal =
       !hasSafetyPriority &&
       !trustedBooking &&
       !supplemental.selection &&
       !supplemental.clarification &&
       !selectedNegationGuard &&
-      !selectedSemanticAnchor &&
-      hasDeterministicPriceInquiry(input.text);
+      hasDeterministicPriceInquiry(input.text, ontology);
+    const selectedSemanticAnchor = supplemental.valid &&
+      supplemental.semanticAnchor &&
+      !hasSafetyPriority &&
+      !trustedBooking &&
+      !supplemental.selection &&
+      !selectedNegationGuard &&
+      !deterministicPriceSignal
+        ? supplemental.semanticAnchor
+        : undefined;
+    const deterministicPriceInquiry = deterministicPriceSignal && !selectedSemanticAnchor;
     const deterministicSpeechAct = trustedBooking ??
       (supplemental.valid && supplemental.selection ? "select_options" as const : null) ??
       (selectedNegationGuard ? negationGuardSpeechAct(selectedNegationGuard) : null) ??
@@ -1301,7 +1312,7 @@ export function adaptNluFrameToConversationV2Turn(
     "urgent_safety",
   ]);
   const deterministicPriceOwnsTurn =
-    hasDeterministicPriceInquiry(input.text) &&
+    hasDeterministicPriceInquiry(input.text, ontology) &&
     !protectedSpeechActs.has(resolved.speechAct) &&
     !supplemental.selection &&
     !supplemental.clarification &&

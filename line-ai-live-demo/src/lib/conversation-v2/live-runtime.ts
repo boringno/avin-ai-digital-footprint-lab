@@ -13,6 +13,7 @@ import {
   normalizeClinicText,
 } from "@/lib/clinic-config";
 import type { ClinicOntology } from "@/lib/clinic-ontology";
+import { matchClinicOntology } from "@/lib/clinic-ontology-matcher";
 import {
   type ConversationContext,
   type RecentConversationTurn,
@@ -28,7 +29,11 @@ import {
 import { resolveDoctorScheduleDecision } from "@/lib/doctor-schedule";
 import { reportOperationalError } from "@/lib/monitoring";
 import { requestNluFrame } from "@/lib/nlu-shadow";
-import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+import {
+  isHedgedTreatmentReference,
+  isPriceInquiry,
+  isPriceInquiryWithTypoTolerance,
+} from "@/lib/pricing-subject";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import type { RouterDecision } from "@/lib/router";
 import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
@@ -1137,7 +1142,10 @@ export async function routeConversationV2Canary(
             state,
           });
       const deterministicPriceInquiry =
-        isPriceInquiry(routingMessage) &&
+        isPriceInquiryWithTypoTolerance(
+          routingMessage,
+          matchClinicOntology(routingMessage, snapshot.ontology).treatments.length > 0,
+        ) &&
         !isHedgedTreatmentReference(routingMessage);
       const treatmentClarification =
         trustedDeterministicBooking || negationGuard || semanticAnchor

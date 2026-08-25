@@ -13,6 +13,11 @@
 
 import assert from "node:assert/strict";
 
+import {
+  createRuntimeClinicFactsProvider,
+  loadClinicFactsSnapshot,
+  type ClinicFactsProvider,
+} from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
 import { containsInternalFieldLabel } from "@/lib/conversation-v2/customer-text-guard";
 import { isExplicitTreatmentOverviewRestart } from "@/lib/conversation-v2/episode-policy";
@@ -23,6 +28,7 @@ import {
   type RecentConversationTurn,
 } from "@/lib/conversation-context";
 import type { NluFrame } from "@/lib/nlu-frame";
+import type { RuntimeContentOverlay } from "@/lib/runtime-content-release";
 
 const NOW = new Date("2026-08-24T12:00:00+08:00");
 const USER_ID = "U-journey";
@@ -143,6 +149,7 @@ function canarySettings() {
 
 async function routeTurn(input: {
   context: ConversationContext;
+  factsProvider?: ClinicFactsProvider;
   frame: NluFrame | null;
   message: string;
   now?: Date;
@@ -159,7 +166,7 @@ async function routeTurn(input: {
     sourceType: "user",
     sourceUserId: USER_ID,
   }, {
-    factsProvider: factsProvider(),
+    factsProvider: input.factsProvider ?? factsProvider(),
     getCanarySettings: canarySettings,
     requestFrame: async (_message, options) => {
       input.onRecentTurns?.(options?.recentTurns);
@@ -681,6 +688,70 @@ async function validateMondayNaturalInputFamilies() {
     assert.match(ondaPrice.decision.replyText, /16,888/u, `J7: ${message} must quote the approved standalone offer`);
     assert.match(ondaPrice.decision.replyText, /12,999/u, `J7: ${message} must also recommend the approved combination offer`);
     assert.match(ondaPrice.decision.replyText, /ONDA\s*[＋+]\s*肉毒小臉組合/u, `J7: ${message} must identify the combination without inventing details`);
+  }
+
+  let runtimeOverlay: RuntimeContentOverlay = {
+    faqEntries: [],
+    pricingCampaigns: [],
+    releaseId: null,
+    sourceStatus: "available",
+    suppressedPricingCampaignIds: [],
+  };
+  let wallClockMs = 1_000_000;
+  const resilientPriceProvider = createRuntimeClinicFactsProvider({
+    currentTimeMs: () => wallClockMs,
+    lastKnownGoodMaxAgeMs: 120_000,
+    loadRuntimeContentOverlay: async () => runtimeOverlay,
+    loadSeedData: async () => ({
+      faqEntries: [],
+      handoffRules: [],
+      pregnancyRules: [],
+      pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign, botoxCampaign],
+    }),
+  });
+  await loadClinicFactsSnapshot(resilientPriceProvider, {
+    audienceKey: USER_ID,
+    now: NOW,
+    tenantId: "tenant_001",
+  });
+  runtimeOverlay = { ...runtimeOverlay, sourceStatus: "unavailable" };
+
+  let productionPriceContext = createEmptyConversationContext("U-production-price-family");
+  const productionRecentTurns: RecentConversationTurn[] = [];
+  for (const [message, expectedAmounts] of [
+    ["ONDA怎麼收費", ["16,888", "12,999"]],
+    ["ONDA原價多少", ["16,888", "12,999"]],
+    ["ONDA正常價格呢", ["16,888", "12,999"]],
+    ["ONDA有活動嗎", ["16,888", "12,999"]],
+    ["肉毒多少錢", ["999"]],
+    ["奇蹟肉毒少錢", ["999"]],
+  ] as const) {
+    wallClockMs += 5_000;
+    const routed = await routeTurn({
+      context: productionPriceContext,
+      factsProvider: resilientPriceProvider,
+      frame: null,
+      message,
+      recentTurns: productionRecentTurns,
+      turnIndex: turnIndex++,
+    });
+    for (const amount of expectedAmounts) {
+      assert.match(
+        routed.decision.replyText,
+        new RegExp(amount.replace(",", ",?"), "u"),
+        `J7-production-price: ${message} must return approved amount ${amount}`,
+      );
+    }
+    assert.doesNotMatch(
+      routed.decision.replyText,
+      /哪一項療程|沒有可直接提供的核准價格|最想先確認的療程|想接著了解改善方向/u,
+      `J7-production-price: ${message} must not degrade to a generic or unavailable fallback`,
+    );
+    productionRecentTurns.push(
+      { role: "user", text: message },
+      { role: "assistant", text: routed.decision.replyText },
+    );
+    productionPriceContext = routed.decision.nextContext;
   }
 
   let botoxContext = createEmptyConversationContext("U-natural-botox-short");
