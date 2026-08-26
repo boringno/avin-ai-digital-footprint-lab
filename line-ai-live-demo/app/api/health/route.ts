@@ -57,6 +57,8 @@ export async function GET() {
         ? "configured"
         : "disabled_or_missing_env",
     line_config_status: config.lineChannelSecret && config.lineAccessToken ? "configured" : "missing_env",
+    line_channel_stage: config.lineChannelStage,
+    conversation_v2_mode: config.conversationV2Mode,
     seed_status: {
       dir: config.seedDir,
       faq_count: summary.faqCount,

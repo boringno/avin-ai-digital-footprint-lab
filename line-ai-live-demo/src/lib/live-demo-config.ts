@@ -14,7 +14,7 @@ export type RuntimeConfig = {
   anthropicModel: string;
   claudeApiEnabled: boolean;
   conversationV2CanaryUserIds: string[];
-  conversationV2Mode: "canary" | "off" | "shadow";
+  conversationV2Mode: "canary" | "demo_all" | "off" | "shadow";
   cronSecret: string;
   debugToken: string;
   handoffDigestFrom: string;
@@ -30,6 +30,7 @@ export type RuntimeConfig = {
   lineAccessToken: string;
   lineAlertUserId: string;
   lineChannelSecret: string;
+  lineChannelStage: "demo" | "production" | "unconfigured";
   lineReplyRetryCount: number;
   lineReplyTimeoutMs: number;
   logDir: string;
@@ -77,10 +78,16 @@ function parseNluDecisionMode(value: string | undefined): "canary" | "off" {
   throw new Error(`Unsupported OPENAI_NLU_DECISION_MODE: ${normalized}`);
 }
 
-function parseConversationV2Mode(value: string | undefined): "canary" | "off" | "shadow" {
+function parseConversationV2Mode(value: string | undefined): "canary" | "demo_all" | "off" | "shadow" {
   const normalized = (value ?? "off").trim().toLowerCase();
-  if (normalized === "off" || normalized === "shadow" || normalized === "canary") return normalized;
+  if (normalized === "off" || normalized === "shadow" || normalized === "canary" || normalized === "demo_all") return normalized;
   throw new Error(`Unsupported CONVERSATION_V2_MODE: ${normalized}`);
+}
+
+function parseLineChannelStage(value: string | undefined): "demo" | "production" | "unconfigured" {
+  const normalized = (value ?? "unconfigured").trim().toLowerCase();
+  if (normalized === "demo" || normalized === "production" || normalized === "unconfigured") return normalized;
+  throw new Error(`Unsupported LINE_CHANNEL_STAGE: ${normalized}`);
 }
 
 function parseIdentifierList(value: string | undefined) {
@@ -142,16 +149,20 @@ export function getRuntimeConfig(): RuntimeConfig {
   const openAiNluMode = parseNluMode(process.env.OPENAI_NLU_MODE);
   const openAiNluDecisionMode = parseNluDecisionMode(process.env.OPENAI_NLU_DECISION_MODE);
   const conversationV2Mode = parseConversationV2Mode(process.env.CONVERSATION_V2_MODE);
+  const lineChannelStage = parseLineChannelStage(process.env.LINE_CHANNEL_STAGE);
   if (conversationV2Mode === "shadow"
     && openAiNluMode === "shadow"
     && openAiNluDecisionMode === "canary") {
     throw new Error("OPENAI_NLU_MODE=shadow cannot run with OPENAI_NLU_DECISION_MODE=canary; one message must make at most one NLU request");
   }
   if (
-    conversationV2Mode === "canary" &&
+    (conversationV2Mode === "canary" || conversationV2Mode === "demo_all") &&
     (openAiNluMode !== "off" || openAiNluDecisionMode !== "off")
   ) {
-    throw new Error("CONVERSATION_V2_MODE=canary requires the legacy NLU shadow and decision modes to remain off; one message must make at most one NLU request");
+    throw new Error("Customer-visible Conversation V2 modes require the legacy NLU shadow and decision modes to remain off; one message must make at most one NLU request");
+  }
+  if (conversationV2Mode === "demo_all" && lineChannelStage !== "demo") {
+    throw new Error("CONVERSATION_V2_MODE=demo_all requires LINE_CHANNEL_STAGE=demo; broad V2 routing is forbidden on an unlabelled or production LINE channel");
   }
 
   return {
@@ -183,6 +194,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "",
     lineAlertUserId: process.env.LIVE_DEMO_ALERT_LINE_USER_ID ?? "",
     lineChannelSecret: process.env.LINE_CHANNEL_SECRET ?? "",
+    lineChannelStage,
     lineReplyRetryCount: parseInteger(process.env.LINE_REPLY_RETRY_COUNT, 1),
     lineReplyTimeoutMs: parseInteger(process.env.LINE_REPLY_TIMEOUT_MS, 8000),
     logDir: process.env.LIVE_DEMO_LOG_DIR
