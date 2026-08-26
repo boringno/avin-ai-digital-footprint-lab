@@ -104,12 +104,20 @@ export type TreatmentConfig = {
   brandOptions?: Array<{
     aliases: string[];
     customerReply: string;
+    /**
+     * This brand may resolve to the clinic's approved brand-neutral offer.
+     * The customer copy must still omit the brand and dose unless separately
+     * approved; this flag only controls internal price applicability.
+     */
+    genericPriceEligible?: boolean;
     key: string;
     name: string;
   }>;
   brandReply?: string;
   category: "energy" | "injectable" | "laser" | "skin_care" | "surgery";
   educationMode?: "general_education" | "human_only";
+  /** Approved dose qualifiers that may resolve to brand-neutral customer copy. */
+  genericPriceEligibleDoses?: string[];
   officialSourceDomains: string[];
   consultationGuide?: TreatmentConversationPack;
   evaluationNote: string;
@@ -740,6 +748,7 @@ export const clinicConfig: ClinicConfig = {
         {
           aliases: ["Neuronox", "優力柔", "优力柔", "奇蹟肉毒", "奇迹肉毒", "奇績肉毒", "neruonox", "neuronx"],
           customerReply: "🌿 奇蹟肉毒是院內對 Neuronox 優力柔的稱呼。院內另有肉毒體驗價 999 元，全館適用；品牌與施打細節由真人客服依活動內容協助確認。",
+          genericPriceEligible: true,
           key: "neuronox",
           name: "Neuronox 優力柔（奇蹟肉毒）",
         },
@@ -968,6 +977,7 @@ export const clinicConfig: ClinicConfig = {
         ],
       },
       evaluationNote: "實際品項與劑量仍需依部位需求與醫師評估為主。",
+      genericPriceEligibleDoses: ["12U"],
       intro: "🌿 肉毒主要從肌肉活動與動態紋路方向評估，也能依部位協助調整肌肉線條。\n\n✨ 常見會評估抬頭紋、皺眉紋、魚尾紋、咀嚼肌、小腿、肩頸及多汗問題。",
       key: "botox",
       name: "肉毒",
