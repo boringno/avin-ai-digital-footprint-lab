@@ -1,5 +1,9 @@
 import type { FaqEntry, PricingCampaign } from "@/lib/seed-loader";
-import { getLatencyCriticalSupabaseServerClient, hasSupabaseServerConfig } from "@/lib/supabase-server";
+import {
+  getRuntimeSnapshotSupabaseServerClient,
+  getSupabaseServerClient,
+  hasSupabaseServerConfig,
+} from "@/lib/supabase-server";
 
 const DEFAULT_TENANT_ID = "tenant_001";
 
@@ -14,6 +18,19 @@ type ReleaseEntryRow = {
   end_at: string | null;
   payload_json: Record<string, unknown>;
   start_at: string | null;
+};
+
+export type RuntimeContentReleaseSnapshot = {
+  entries: ReleaseEntryRow[];
+  releaseId: string;
+  rolloutPercentage: number;
+  schemaVersion: 1;
+};
+
+type ActiveSnapshotRow = {
+  active_release_id: string | null;
+  active_snapshot_hash: string | null;
+  active_snapshot_json: unknown;
 };
 
 export type RuntimeContentOverlay = {
@@ -32,7 +49,7 @@ export async function loadRuntimeContentOverlayForRelease(input: {
   if (!hasSupabaseServerConfig()) return emptyOverlay("not_configured");
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-  const supabase = getLatencyCriticalSupabaseServerClient();
+  const supabase = getSupabaseServerClient();
   const { data: release, error: releaseError } = await supabase
     .from("runtime_content_releases")
     .select("id, rollout_percentage")
@@ -66,36 +83,33 @@ export async function loadRuntimeContentOverlay(input: {
   if (!hasSupabaseServerConfig()) return emptyOverlay("not_configured");
 
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-  const supabase = getLatencyCriticalSupabaseServerClient();
+  const supabase = getRuntimeSnapshotSupabaseServerClient();
   const { data: settings, error: settingsError } = await supabase
     .from("runtime_content_release_settings")
-    .select("active_release_id")
+    .select("active_release_id, active_snapshot_json, active_snapshot_hash")
     .eq("tenant_id", tenantId)
-    .maybeSingle<{ active_release_id: string | null }>()
+    .maybeSingle<ActiveSnapshotRow>()
     .retry(false);
   if (settingsError) return emptyOverlay("unavailable");
   if (!settings?.active_release_id) return emptyOverlay("available");
 
-  const { data: release, error: releaseError } = await supabase
-    .from("runtime_content_releases")
-    .select("id, rollout_percentage")
-    .eq("id", settings.active_release_id)
-    .eq("tenant_id", tenantId)
-    .eq("status", "active")
-    .maybeSingle<ReleaseRow>()
-    .retry(false);
-  if (releaseError || !release) {
-    return emptyOverlay("unavailable");
+  const snapshot = parseRuntimeContentReleaseSnapshot(settings.active_snapshot_json);
+  if (
+    !snapshot ||
+    !settings.active_snapshot_hash?.trim() ||
+    snapshot.releaseId !== settings.active_release_id
+  ) {
+    return emptyOverlay("unavailable", settings.active_release_id);
   }
-  if (!isReleaseAudienceIncluded(input.audienceKey, release.rollout_percentage)) {
+  if (!isReleaseAudienceIncluded(input.audienceKey, snapshot.rolloutPercentage)) {
     return emptyOverlay("available");
   }
 
-  return loadEntriesForRelease({ now: input.now, releaseId: release.id, tenantId });
+  return materializeRuntimeContentReleaseSnapshot(snapshot, input.now);
 }
 
 async function loadEntriesForRelease(input: { now: Date; releaseId: string; tenantId: string }): Promise<RuntimeContentOverlay> {
-  const supabase = getLatencyCriticalSupabaseServerClient();
+  const supabase = getSupabaseServerClient();
   const { data: entries, error: entriesError } = await supabase
     .from("runtime_content_release_entries")
     .select("content_key, content_type, payload_json, start_at, end_at")
@@ -118,6 +132,87 @@ async function loadEntriesForRelease(input: { now: Date; releaseId: string; tena
     // still returns callers to the documented seed baseline.
     suppressedPricingCampaignIds: Array.from(new Set(
       releaseEntries
+        .filter((entry) => entry.content_type === "campaign")
+        .map((entry) => entry.content_key),
+    )),
+  };
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function nullableText(value: unknown) {
+  return value === null || typeof value === "string" ? value : undefined;
+}
+
+/**
+ * Parses the immutable manifest stored atomically with the active release
+ * pointer. Invalid or partial data is rejected instead of reviving seed prices.
+ */
+export function parseRuntimeContentReleaseSnapshot(
+  value: unknown,
+): RuntimeContentReleaseSnapshot | null {
+  const source = record(value);
+  if (!source) return null;
+  const releaseId = typeof source.release_id === "string" ? source.release_id.trim() : "";
+  const rolloutPercentage = source.rollout_percentage;
+  if (
+    source.schema_version !== 1 ||
+    !releaseId ||
+    !Number.isInteger(rolloutPercentage) ||
+    Number(rolloutPercentage) < 0 ||
+    Number(rolloutPercentage) > 100 ||
+    !Array.isArray(source.entries)
+  ) return null;
+
+  const entries: ReleaseEntryRow[] = [];
+  for (const rawEntry of source.entries) {
+    const entry = record(rawEntry);
+    const payload = record(entry?.payload_json);
+    const contentKey = typeof entry?.content_key === "string" ? entry.content_key.trim() : "";
+    const contentType = entry?.content_type;
+    const startAt = nullableText(entry?.start_at);
+    const endAt = nullableText(entry?.end_at);
+    if (
+      !entry ||
+      !payload ||
+      !contentKey ||
+      !["campaign", "faq"].includes(String(contentType)) ||
+      startAt === undefined ||
+      endAt === undefined
+    ) return null;
+    entries.push({
+      content_key: contentKey,
+      content_type: contentType as ReleaseEntryRow["content_type"],
+      end_at: endAt,
+      payload_json: payload,
+      start_at: startAt,
+    });
+  }
+
+  return {
+    entries,
+    releaseId,
+    rolloutPercentage: Number(rolloutPercentage),
+    schemaVersion: 1,
+  };
+}
+
+export function materializeRuntimeContentReleaseSnapshot(
+  snapshot: RuntimeContentReleaseSnapshot,
+  now: Date,
+): RuntimeContentOverlay {
+  const activeEntries = snapshot.entries.filter((entry) => isEntryInWindow(entry, now));
+  return {
+    faqEntries: activeEntries.filter((entry) => entry.content_type === "faq").map(toFaqEntry),
+    pricingCampaigns: activeEntries.filter((entry) => entry.content_type === "campaign").map(toPricingCampaign),
+    releaseId: snapshot.releaseId,
+    sourceStatus: "available",
+    suppressedPricingCampaignIds: Array.from(new Set(
+      snapshot.entries
         .filter((entry) => entry.content_type === "campaign")
         .map((entry) => entry.content_key),
     )),

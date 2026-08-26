@@ -307,6 +307,93 @@ function validateDeterministicPriceShortcutRespectsSafety() {
     );
   }
 
+  for (const modelTreatments of [[], ["onda_pro"]] as const) {
+    const typoPriceWithUntrustedModelOwner = adapt(
+      v2Frame({
+        focus: "overview",
+        move: "start",
+        reference: "active_subject",
+        speechAct: "learn_treatment",
+      }, {
+        areas: ["abdomen"],
+        confidence: 0.99,
+        concerns: [{ area: "abdomen", key: "local_contour" }],
+        intents: ["treatment"],
+        treatments: [...modelTreatments],
+      }),
+      undefined,
+      "奇蹟肉毒少錢",
+    );
+    assert.equal(
+      typoPriceWithUntrustedModelOwner.speechAct,
+      "ask_price",
+      "deterministic current-text price evidence must own the turn even when model entities are empty or stale",
+    );
+    assert.deepEqual(
+      typoPriceWithUntrustedModelOwner.treatments.map(({ key }) => key),
+      ["botox"],
+      "the explicit current-text treatment must replace empty or stale model ownership",
+    );
+    assert.equal(
+      typoPriceWithUntrustedModelOwner.confidence,
+      1,
+      "deterministic current-text price ownership must not inherit model uncertainty",
+    );
+    assert.deepEqual(
+      typoPriceWithUntrustedModelOwner.areas,
+      [],
+      "a price turn without a current-text area must discard a stale model area",
+    );
+    assert.deepEqual(
+      typoPriceWithUntrustedModelOwner.concerns,
+      [],
+      "a price turn without a current-text concern must discard a stale model concern",
+    );
+  }
+
+  const currentTextPriceEntities = [
+    {
+      expectedAreas: ["abdomen"],
+      expectedConcerns: ["local_contour"],
+      expectedTreatment: "onda_pro",
+      message: "ONDA肚子怎麼收費",
+      modelAreas: ["jawline"],
+      modelConcerns: [{ area: "jawline", key: "jawline_looseness" }],
+      modelTreatment: "botox",
+    },
+    {
+      expectedAreas: [],
+      expectedConcerns: ["dynamic_wrinkles"],
+      expectedTreatment: "botox",
+      message: "肉毒魚尾紋多少錢",
+      modelAreas: ["abdomen"],
+      modelConcerns: [{ area: "abdomen", key: "local_contour" }],
+      modelTreatment: "onda_pro",
+    },
+  ] as const;
+  for (const testCase of currentTextPriceEntities) {
+    const currentTextOwned = adapt(
+      v2Frame({
+        focus: "overview",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "learn_treatment",
+      }, {
+        areas: [...testCase.modelAreas],
+        confidence: 0.99,
+        concerns: [...testCase.modelConcerns],
+        intents: ["treatment"],
+        treatments: [testCase.modelTreatment],
+      }),
+      undefined,
+      testCase.message,
+    );
+    assert.equal(currentTextOwned.speechAct, "ask_price");
+    assert.deepEqual(currentTextOwned.treatments.map((item) => item.key), [testCase.expectedTreatment]);
+    assert.deepEqual(currentTextOwned.areas.map((item) => item.key), [...testCase.expectedAreas]);
+    assert.deepEqual(currentTextOwned.concerns.map((item) => item.key), [...testCase.expectedConcerns]);
+  }
+
   const frameLessTypoPrice = adapt(null, {
     semanticAnchor: {
       areaKeys: [],

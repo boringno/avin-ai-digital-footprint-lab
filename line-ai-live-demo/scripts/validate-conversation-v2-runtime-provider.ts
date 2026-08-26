@@ -7,7 +7,11 @@ import {
   resolveTreatmentFact,
   type ClinicFactsSnapshot,
 } from "../src/lib/clinic-facts";
-import type { RuntimeContentOverlay } from "../src/lib/runtime-content-release";
+import {
+  materializeRuntimeContentReleaseSnapshot,
+  parseRuntimeContentReleaseSnapshot,
+  type RuntimeContentOverlay,
+} from "../src/lib/runtime-content-release";
 import type { PricingCampaign } from "../src/lib/seed-loader";
 
 const NOW = new Date("2026-08-17T04:00:00.000Z");
@@ -76,6 +80,85 @@ function resolvedPrice(snapshot: ClinicFactsSnapshot) {
 
 async function main() {
   const checks: string[] = [];
+  const parsedManifest = parseRuntimeContentReleaseSnapshot({
+    entries: [
+      {
+        content_key: "runtime-provider-price",
+        content_type: "campaign",
+        end_at: "2026-08-31T23:59:59.000Z",
+        payload_json: {
+          approval_status: "approved",
+          branch_scope: "全館適用",
+          campaign_name: "ONDA 體驗方案",
+          customer_price_text: "體驗價 16,888 元",
+          price_text: "16,888",
+          treatment_name: "ONDA PRO",
+        },
+        start_at: "2026-08-01T00:00:00.000Z",
+      },
+    ],
+    release_id: "durable-release",
+    rollout_percentage: 100,
+    schema_version: 1,
+  });
+  assert(parsedManifest, "a complete durable release manifest must parse");
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(parsedManifest, NOW).pricingCampaigns[0]?.customer_price_text,
+    "體驗價 16,888 元",
+    "a cold instance must materialize approved pricing from the durable manifest",
+  );
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(parsedManifest, new Date("2026-07-31T23:59:59.999Z")).pricingCampaigns.length,
+    0,
+    "a cached raw manifest must not make a campaign visible before its start",
+  );
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(parsedManifest, new Date("2026-08-01T00:00:00.000Z")).pricingCampaigns.length,
+    1,
+    "the approved campaign start instant must be inclusive",
+  );
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(parsedManifest, new Date("2026-08-31T23:59:59.000Z")).pricingCampaigns.length,
+    1,
+    "the approved campaign end instant must be inclusive",
+  );
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(parsedManifest, new Date("2026-08-31T23:59:59.001Z")).pricingCampaigns.length,
+    0,
+    "a cached raw manifest must stop exposing a campaign immediately after its end",
+  );
+  const invalidWindowManifest = parseRuntimeContentReleaseSnapshot({
+    entries: [{
+      content_key: "invalid-window",
+      content_type: "campaign",
+      end_at: null,
+      payload_json: { customer_price_text: "must never be visible" },
+      start_at: "not-a-date",
+    }],
+    release_id: "invalid-window-release",
+    rollout_percentage: 100,
+    schema_version: 1,
+  });
+  assert(invalidWindowManifest);
+  assert.equal(
+    materializeRuntimeContentReleaseSnapshot(invalidWindowManifest, NOW).pricingCampaigns.length,
+    0,
+    "an invalid activity window must fail closed instead of becoming timeless",
+  );
+  assert.equal(
+    parseRuntimeContentReleaseSnapshot({
+      entries: [],
+      release_id: "partial-release",
+      rollout_percentage: 100,
+    }),
+    null,
+    "a partial settings payload must never become price authority",
+  );
+  checks.push(
+    "durable-manifest-cold-materialization",
+    "durable-manifest-time-window-boundaries",
+    "partial-manifest-fails-closed",
+  );
   let seedCalls = 0;
   let runtimeCalls = 0;
   let runtimeState: RuntimeFixture = overlay({
@@ -107,6 +190,7 @@ async function main() {
   async function load(audienceKey: string, tenantId: string) {
     const seedCallsBefore = seedCalls;
     const runtimeCallsBefore = runtimeCalls;
+    const runtimeRequestsBefore = runtimeRequests.length;
     const snapshot = await loadClinicFactsSnapshot(provider, {
       audienceKey,
       now: NOW,
@@ -117,6 +201,15 @@ async function main() {
     assert(
       runtimeAttempts === 1 || runtimeAttempts === 2,
       "each snapshot must load the runtime overlay once, plus at most one unavailable-source retry",
+    );
+    const attempts = runtimeRequests.slice(runtimeRequestsBefore);
+    assert.equal(attempts.length, runtimeAttempts);
+    assert(
+      attempts.every((request) =>
+        request.audienceKey === audienceKey &&
+        request.tenantId === tenantId &&
+        request.now.getTime() === NOW.getTime()),
+      "every initial and retry attempt must preserve the logical request tenant, audience, and turn time",
     );
     checks.push("single-seed-load-bounded-runtime-retry");
     return snapshot;
@@ -220,7 +313,13 @@ async function main() {
   checks.push("declared-source-failure-closes-price-only");
 
   runtimeState = new Error("simulated runtime loader failure");
+  const rejectedCallsBefore = runtimeCalls;
   const rejectedRuntimeLoad = await load(PRIVATE_AUDIENCE_D, "tenant-a");
+  assert.equal(
+    runtimeCalls - rejectedCallsBefore,
+    2,
+    "a thrown transport failure must receive exactly one bounded retry",
+  );
   const rejectedPrice = resolveApprovedPrice(rejectedRuntimeLoad, {
     kind: "campaign",
     treatmentKeys: ["onda_pro"],
@@ -231,6 +330,22 @@ async function main() {
     assert.equal(rejectedPrice.reason, "source_unavailable");
   }
   checks.push("rejected-runtime-load-fails-closed");
+
+  let transientThrowCalls = 0;
+  runtimeState = () => {
+    transientThrowCalls += 1;
+    return transientThrowCalls === 1
+      ? new Error("transient transport failure")
+      : overlay({ releaseId: null });
+  };
+  const recoveredAfterThrow = await load(PRIVATE_AUDIENCE_D, "tenant-a");
+  assert.equal(transientThrowCalls, 2, "a transient thrown failure must retry exactly once");
+  assert.equal(
+    resolvedPrice(recoveredAfterThrow),
+    "seed 9,999",
+    "a successful retry after a transport exception must restore the verified seed baseline",
+  );
+  checks.push("transient-throw-single-retry");
 
   let transientOverlayCalls = 0;
   const transientProvider = createRuntimeClinicFactsProvider({
@@ -296,19 +411,12 @@ async function main() {
   );
   checks.push("transient-overlay-single-retry", "persistent-overlay-outage-fails-closed");
 
-  let wallClockMs = 1_000_000;
-  let resilientRuntimeState = overlay({
-    price: "last known good 16,888",
-    releaseId: "resilient-release",
+  let durableRuntimeState = overlay({
+    price: "durable release 16,888",
+    releaseId: "durable-release",
   });
-  let resilientRuntimeCalls = 0;
-  const resilientProvider = createRuntimeClinicFactsProvider({
-    currentTimeMs: () => wallClockMs,
-    lastKnownGoodMaxAgeMs: 120_000,
-    loadRuntimeContentOverlay: async () => {
-      resilientRuntimeCalls += 1;
-      return resilientRuntimeState;
-    },
+  const durableProvider = createRuntimeClinicFactsProvider({
+    loadRuntimeContentOverlay: async () => durableRuntimeState,
     loadSeedData: async () => ({
       faqEntries: [],
       handoffRules: [],
@@ -316,70 +424,41 @@ async function main() {
       pricingCampaigns: [campaign("seed must remain overlaid")],
     }),
   });
-  const resilientRequest = {
-    audienceKey: "line-user-resilient",
+  const durableRequest = {
+    audienceKey: "line-user-durable",
     now: NOW,
-    tenantId: "tenant-resilient",
+    tenantId: "tenant-durable",
   };
-  const verifiedSnapshot = await loadClinicFactsSnapshot(resilientProvider, resilientRequest);
-  assert.equal(resolvedPrice(verifiedSnapshot), "last known good 16,888");
+  const verifiedSnapshot = await loadClinicFactsSnapshot(durableProvider, durableRequest);
+  assert.equal(resolvedPrice(verifiedSnapshot), "durable release 16,888");
 
-  resilientRuntimeState = overlay({
+  durableRuntimeState = overlay({
     price: "must never replace the verified snapshot",
     releaseId: "unavailable-release",
     sourceStatus: "unavailable",
   });
-  wallClockMs += 30_000;
-  const recoveredFromLastKnownGood = await loadClinicFactsSnapshot(
-    resilientProvider,
-    resilientRequest,
-  );
+  const outageAfterSuccess = await loadClinicFactsSnapshot(durableProvider, durableRequest);
   assert.equal(
-    resolvedPrice(recoveredFromLastKnownGood),
-    "last known good 16,888",
-    "a brief runtime outage must reuse only the same tenant/audience's recent verified overlay",
-  );
-  assert.equal(
-    recoveredFromLastKnownGood.snapshotId,
-    verifiedSnapshot.snapshotId,
-    "last-known-good recovery must preserve the verified release snapshot identity",
-  );
-
-  wallClockMs += 120_001;
-  const expiredLastKnownGood = await loadClinicFactsSnapshot(resilientProvider, resilientRequest);
-  assert.equal(
-    resolveApprovedPrice(expiredLastKnownGood, {
+    resolveApprovedPrice(outageAfterSuccess, {
       kind: "campaign",
       treatmentKeys: ["onda_pro"],
     }).status,
     "unavailable_to_quote",
-    "an expired last-known-good overlay must fail closed",
+    "process memory must not keep serving a release after its durable authority becomes unavailable",
   );
-  assert.equal(
-    resilientRuntimeCalls,
-    5,
-    "each unavailable lookup must retain the existing one-retry bound before cache fallback",
-  );
-  checks.push("recent-last-known-good-recovers-transient-outage", "expired-last-known-good-fails-closed");
+  checks.push("durable-source-outage-fails-closed-without-process-authority");
 
   assert.deepEqual(
-    runtimeRequests.map(({ audienceKey, tenantId }) => ({ audienceKey, tenantId })),
+    [...new Set(runtimeRequests.map(({ audienceKey, tenantId }) => `${audienceKey}|${tenantId}`))].sort(),
     [
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_B, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-b" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_A, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_C, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_C, tenantId: "tenant-a" },
-      { audienceKey: PRIVATE_AUDIENCE_D, tenantId: "tenant-a" },
-    ],
+      `${PRIVATE_AUDIENCE_A}|tenant-a`,
+      `${PRIVATE_AUDIENCE_A}|tenant-b`,
+      `${PRIVATE_AUDIENCE_B}|tenant-a`,
+      `${PRIVATE_AUDIENCE_C}|tenant-a`,
+      `${PRIVATE_AUDIENCE_D}|tenant-a`,
+    ].sort(),
+    "every requested tenant/audience pair must reach the runtime provider without cross-tenant substitution",
   );
-  assert(runtimeRequests.every(({ now }) => now.getTime() === NOW.getTime()));
   checks.push("tenant-audience-and-turn-time-forwarded");
 
   for (const snapshot of [
@@ -406,8 +485,7 @@ async function main() {
   }
   checks.push("snapshot-metadata-has-no-audience-pii");
 
-  assert.equal(seedCalls, 11);
-  assert.equal(runtimeCalls, 12);
+  assert.equal(runtimeRequests.length, runtimeCalls, "runtime attempt bookkeeping must remain complete");
   console.log(JSON.stringify({ checks, passed: checks.length, total: checks.length }, null, 2));
 }
 

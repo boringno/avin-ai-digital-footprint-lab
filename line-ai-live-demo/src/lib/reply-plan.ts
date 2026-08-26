@@ -1,4 +1,5 @@
 import type { LineQuickReplyItem, LineReplyMessage } from "@/lib/treatment-carousel";
+import type { PriceApplicabilityDimensions } from "@/lib/clinic-facts/types";
 import {
   cloneResponseContractAttachment,
   createOffResponseContract,
@@ -39,8 +40,32 @@ export type ReplyPlanBookingTransition = {
   intent: "create" | "modify" | "cancel";
 };
 
+export type ApprovedPriceQuoteContract = {
+  applicability: PriceApplicabilityDimensions;
+  branchScope: string | null;
+  campaignId: string;
+  customerPriceText: string;
+  role: "alternative" | "primary";
+  snapshotId: string;
+  subjectLabel: string;
+  treatmentKeys: string[];
+};
+
+export type ApprovedPriceReplyContract = {
+  concernCta?: {
+    concernLabel: string;
+  };
+  quotes: ApprovedPriceQuoteContract[];
+  snapshotId: string;
+  unresolvedPrimary?: {
+    humanSupportHoursSummary: string;
+    requestedSubjectLabel: string;
+  };
+};
+
 export type ReplyPlan = {
   answerFacts: string[];
+  approvedPriceReply?: ApprovedPriceReplyContract;
   approvedFacts: string[];
   approvedKnowledge: string[];
   bookingTransition?: ReplyPlanBookingTransition;
@@ -80,6 +105,7 @@ export type LegacyReplyMetadataInput = {
 
 export type LegacyReplyPlanOptions = {
   answerFacts?: readonly string[];
+  approvedPriceReply?: ApprovedPriceReplyContract;
   approvedFacts?: readonly string[];
   approvedKnowledge?: readonly string[];
   bookingTransition?: ReplyPlanBookingTransition;
@@ -237,6 +263,22 @@ export function legacyDecisionToReplyPlan(
 
   return {
     answerFacts: normalizeStrings(options.answerFacts),
+    approvedPriceReply: options.approvedPriceReply
+      ? {
+          concernCta: options.approvedPriceReply.concernCta
+            ? { ...options.approvedPriceReply.concernCta }
+            : undefined,
+          quotes: options.approvedPriceReply.quotes.map((quote) => ({
+            ...quote,
+            applicability: { ...quote.applicability },
+            treatmentKeys: [...quote.treatmentKeys],
+          })),
+          snapshotId: options.approvedPriceReply.snapshotId,
+          unresolvedPrimary: options.approvedPriceReply.unresolvedPrimary
+            ? { ...options.approvedPriceReply.unresolvedPrimary }
+            : undefined,
+        }
+      : undefined,
     approvedFacts,
     approvedKnowledge: normalizeStrings(options.approvedKnowledge),
     bookingTransition: options.bookingTransition ? { ...options.bookingTransition } : undefined,

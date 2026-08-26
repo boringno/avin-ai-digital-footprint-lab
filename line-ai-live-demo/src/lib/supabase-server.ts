@@ -4,9 +4,11 @@ import { getRuntimeConfig } from "@/lib/live-demo-config";
 
 let cachedClient: SupabaseClient | null = null;
 let cachedLatencyCriticalClient: SupabaseClient | null = null;
+let cachedRuntimeSnapshotClient: SupabaseClient | null = null;
 
 const SUPABASE_DB_TIMEOUT_MS = 800;
 const SUPABASE_DURABLE_DB_TIMEOUT_MS = 3_000;
+const SUPABASE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 1_500;
 const SUPABASE_DB_CIRCUIT_COOLDOWN_MS = 10_000;
 let supabaseDbCircuitOpenUntil = 0;
 let supabaseDbHalfOpenProbeInFlight = false;
@@ -100,6 +102,32 @@ export function getSupabaseServerClient() {
   }
 
   return cachedClient;
+}
+
+/**
+ * Active runtime content is one immutable settings-row read. Two bounded
+ * attempts must fit inside the customer reply budget, so this client uses a
+ * shorter timeout without sharing the latency-critical circuit breaker.
+ */
+export function getRuntimeSnapshotSupabaseServerClient() {
+  const config = getRuntimeConfig();
+  if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
+    throw new Error("Supabase server config is incomplete");
+  }
+
+  if (!cachedRuntimeSnapshotClient) {
+    cachedRuntimeSnapshotClient = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      db: {
+        timeout: SUPABASE_RUNTIME_SNAPSHOT_TIMEOUT_MS,
+      },
+    });
+  }
+
+  return cachedRuntimeSnapshotClient;
 }
 
 /**
