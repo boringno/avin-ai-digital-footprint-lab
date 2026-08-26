@@ -1,4 +1,4 @@
-export type ConversationV2RuntimeMode = "canary" | "off" | "shadow";
+export type ConversationV2RuntimeMode = "canary" | "demo_all" | "off" | "shadow";
 
 export type ConversationV2CanaryGate = {
   eligible: boolean;
@@ -30,7 +30,7 @@ export function evaluateConversationV2CanaryGate(input: {
   sourceType: string;
   userId: string;
 }): ConversationV2CanaryGate {
-  if (input.mode !== "canary") {
+  if (input.mode !== "canary" && input.mode !== "demo_all") {
     return { eligible: false, reason: "mode_not_canary" };
   }
   if (input.sourceType !== "user") {
@@ -39,7 +39,7 @@ export function evaluateConversationV2CanaryGate(input: {
   if (!input.userId) {
     return { eligible: false, reason: "missing_user" };
   }
-  if (!input.allowlistedUserIds.has(input.userId)) {
+  if (input.mode === "canary" && !input.allowlistedUserIds.has(input.userId)) {
     return { eligible: false, reason: "not_allowlisted" };
   }
   return { eligible: true, reason: "eligible" };

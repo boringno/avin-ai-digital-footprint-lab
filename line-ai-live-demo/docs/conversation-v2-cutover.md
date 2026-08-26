@@ -28,6 +28,19 @@ The separately approved customer-visible test-account gate is:
 - `CONVERSATION_V2_MODE=canary`
 - `CONVERSATION_V2_CANARY_USER_IDS=<exact LINE user ids>`
 
+The DEMO-only all-staff acceptance gate is:
+
+- `LINE_CHANNEL_STAGE=demo`
+- `OPENAI_NLU_MODE=off`
+- `OPENAI_NLU_DECISION_MODE=off`
+- `CONVERSATION_V2_MODE=demo_all`
+
+`demo_all` accepts every direct user of the explicitly labelled DEMO LINE
+channel, but still rejects group and room sources. Runtime configuration fails
+closed if this mode is used on an unlabelled or `production` channel. The
+official clinic LINE must use a separate deployment with separate LINE
+credentials; it must not inherit the DEMO V2 switch.
+
 All three default to disabled or zero. Enabling them is a separately approved
 Production operation; merging the code alone does not route customers through
 V2. Runtime price merging is an independent legacy hardening: a known content
@@ -107,6 +120,9 @@ separate operational approval.
 
 - Canary is for exact LINE test accounts only. It is not approval for broad or
   percentage traffic.
+- `demo_all` is broad only inside the isolated DEMO LINE channel. It is an
+  acceptance-test switch, not approval to connect or open the official clinic
+  LINE to consumers.
 - The current webhook store plus per-event V2 receipt protects accepted canary
   turns from replay, but it is not the durable inbox/outbox required for a
   100% cutover.

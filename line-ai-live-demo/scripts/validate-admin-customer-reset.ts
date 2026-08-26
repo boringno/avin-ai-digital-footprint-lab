@@ -4,7 +4,7 @@ import path from "node:path";
 
 import {
   buildFreshCustomerRuntimePatch,
-  isResettableCanaryCustomer,
+  isResettableConversationV2Customer,
 } from "../src/lib/admin-customer-reset";
 
 const patch = buildFreshCustomerRuntimePatch({
@@ -41,9 +41,26 @@ assert.equal(patch.state_json.handoffReason, null);
 assert.equal(patch.state_json.controlRevision, 8);
 assert.equal(patch.state_json.updatedAt, "2026-08-24T01:00:00.000Z");
 
-assert.equal(isResettableCanaryCustomer("test-user", ["test-user"]), true);
-assert.equal(isResettableCanaryCustomer("customer", ["test-user"]), false);
-assert.equal(isResettableCanaryCustomer("", [""]), false);
+assert.equal(isResettableConversationV2Customer({
+  allowlistedUserIds: ["test-user"],
+  mode: "canary",
+  userId: "test-user",
+}), true);
+assert.equal(isResettableConversationV2Customer({
+  allowlistedUserIds: ["test-user"],
+  mode: "canary",
+  userId: "customer",
+}), false);
+assert.equal(isResettableConversationV2Customer({
+  allowlistedUserIds: [],
+  mode: "demo_all",
+  userId: "demo-customer",
+}), true);
+assert.equal(isResettableConversationV2Customer({
+  allowlistedUserIds: [""],
+  mode: "demo_all",
+  userId: "",
+}), false);
 
 const migration = fs.readFileSync(
   path.join(process.cwd(), "..", "supabase", "migrations", "20260824_admin_reset_canary_customer_state.sql"),

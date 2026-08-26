@@ -2,6 +2,9 @@
 
 ## 部署前
 
+- [ ] DEMO 與正式 LINE 使用不同 Vercel deployment/project 與不同 LINE 憑證，不以正式憑證覆蓋 DEMO。
+- [ ] DEMO 設定 `LINE_CHANNEL_STAGE=demo`；正式 LINE 設定 `LINE_CHANNEL_STAGE=production`。
+- [ ] `CONVERSATION_V2_MODE=demo_all` 只允許出現在 DEMO；正式 LINE 未完成切換驗收前不得使用。
 - [ ] 客戶已核准品牌、館別、療程、FAQ、活動與真人客服升級規則。
 - [ ] 客戶使用自己的 LINE Official Account、LINE Provider、Vercel 與 Supabase 專案。
 - [ ] 所有 migrations 已依檔名順序在客戶 Supabase SQL Editor 成功執行。

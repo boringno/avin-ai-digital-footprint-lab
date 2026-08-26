@@ -365,7 +365,7 @@ export type ConversationV2LiveDependencies = {
   factsProvider?: ClinicFactsProvider;
   getCanarySettings?: () => {
     allowlistedUserIds: readonly string[];
-    mode: "canary" | "off" | "shadow";
+    mode: "canary" | "demo_all" | "off" | "shadow";
   };
   requestFrame?: typeof requestNluFrame;
 };

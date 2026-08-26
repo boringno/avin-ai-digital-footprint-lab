@@ -54,8 +54,14 @@ export function buildFreshCustomerRuntimePatch(input: {
   };
 }
 
-export function isResettableCanaryCustomer(userId: string, allowlistedUserIds: readonly string[]) {
-  return Boolean(userId) && allowlistedUserIds.includes(userId);
+export function isResettableConversationV2Customer(input: {
+  allowlistedUserIds: readonly string[];
+  mode: "canary" | "demo_all" | "off" | "shadow";
+  userId: string;
+}) {
+  if (!input.userId) return false;
+  if (input.mode === "demo_all") return true;
+  return input.mode === "canary" && input.allowlistedUserIds.includes(input.userId);
 }
 
 export async function resetAdminCustomerToFreshState(
@@ -67,8 +73,13 @@ export async function resetAdminCustomerToFreshState(
     throw new AdminCustomerResetError("Supabase server config is incomplete", 500);
   }
 
-  if (!isResettableCanaryCustomer(userId, getRuntimeConfig().conversationV2CanaryUserIds)) {
-    throw new AdminCustomerResetError("Only an allowlisted Conversation V2 test customer can be reset", 403);
+  const runtime = getRuntimeConfig();
+  if (!isResettableConversationV2Customer({
+    allowlistedUserIds: runtime.conversationV2CanaryUserIds,
+    mode: runtime.conversationV2Mode,
+    userId,
+  })) {
+    throw new AdminCustomerResetError("Only a customer routed through the active Conversation V2 test mode can be reset", 403);
   }
 
   const supabase = getSupabaseServerClient();

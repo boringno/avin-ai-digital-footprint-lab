@@ -126,6 +126,7 @@ async function main() {
   const savedV2Allowlist = process.env.CONVERSATION_V2_CANARY_USER_IDS;
   const savedNluMode = process.env.OPENAI_NLU_MODE;
   const savedNluDecisionMode = process.env.OPENAI_NLU_DECISION_MODE;
+  const savedLineChannelStage = process.env.LINE_CHANNEL_STAGE;
   try {
     delete process.env.CONVERSATION_V2_MODE;
     delete process.env.CONVERSATION_V2_CANARY_USER_IDS;
@@ -138,6 +139,26 @@ async function main() {
     process.env.CONVERSATION_V2_CANARY_USER_IDS = "U-one,U-two";
     const canaryRuntime = getRuntimeConfig();
     check(canaryRuntime.conversationV2Mode === "canary" && canaryRuntime.conversationV2CanaryUserIds.join(",") === "U-one,U-two", "C4: runtime config must preserve the exact account allowlist");
+
+    process.env.CONVERSATION_V2_MODE = "demo_all";
+    delete process.env.LINE_CHANNEL_STAGE;
+    assert.throws(
+      () => getRuntimeConfig(),
+      /requires LINE_CHANNEL_STAGE=demo/u,
+      "C4: demo-wide routing must fail closed without an explicit demo channel label",
+    );
+    process.env.LINE_CHANNEL_STAGE = "production";
+    assert.throws(
+      () => getRuntimeConfig(),
+      /requires LINE_CHANNEL_STAGE=demo/u,
+      "C4: demo-wide routing must be forbidden on a production-labelled LINE channel",
+    );
+    process.env.LINE_CHANNEL_STAGE = "demo";
+    const demoAllRuntime = getRuntimeConfig();
+    check(
+      demoAllRuntime.conversationV2Mode === "demo_all" && demoAllRuntime.lineChannelStage === "demo",
+      "C4: demo-wide routing requires and preserves the explicit demo channel label",
+    );
   } finally {
     if (savedV2Mode === undefined) delete process.env.CONVERSATION_V2_MODE;
     else process.env.CONVERSATION_V2_MODE = savedV2Mode;
@@ -147,7 +168,42 @@ async function main() {
     else process.env.OPENAI_NLU_MODE = savedNluMode;
     if (savedNluDecisionMode === undefined) delete process.env.OPENAI_NLU_DECISION_MODE;
     else process.env.OPENAI_NLU_DECISION_MODE = savedNluDecisionMode;
+    if (savedLineChannelStage === undefined) delete process.env.LINE_CHANNEL_STAGE;
+    else process.env.LINE_CHANNEL_STAGE = savedLineChannelStage;
   }
+
+  const demoAllCounts = { nlu: 0, provider: 0 };
+  const demoAll = await routeConversationV2Canary({
+    context: createEmptyConversationContext("U-demo-staff"),
+    eventIdentity: "event-demo-all",
+    message: "想了解 ONDA",
+    now: NOW,
+    sourceType: "user",
+    sourceUserId: "U-demo-staff",
+  }, {
+    factsProvider: countedProvider(createStaticClinicFactsProvider(), demoAllCounts),
+    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all" }),
+    requestFrame: async () => {
+      demoAllCounts.nlu += 1;
+      return nluResult(frame());
+    },
+  });
+  check(
+    demoAll.kind === "routed" && demoAllCounts.provider === 1 && demoAllCounts.nlu === 1,
+    "C4: demo_all must route every direct LINE user without an allowlist",
+  );
+
+  const demoAllGroup = await routeConversationV2Canary({
+    context: createEmptyConversationContext("U-demo-group"),
+    eventIdentity: "event-demo-all-group",
+    message: "想了解 ONDA",
+    now: NOW,
+    sourceType: "group",
+    sourceUserId: "U-demo-group",
+  }, {
+    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all" }),
+  });
+  check(demoAllGroup.kind === "not_eligible", "C4: demo_all must keep group and room sources off V2");
 
   const emptyAllowlistCounts = { nlu: 0, provider: 0 };
   const emptyAllowlist = await routeConversationV2Canary({
