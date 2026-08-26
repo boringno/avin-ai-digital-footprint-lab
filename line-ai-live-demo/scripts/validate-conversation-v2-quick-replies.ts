@@ -1273,49 +1273,62 @@ async function validateFinalWebhookPayload() {
     );
   }
 
-  for (const [suffix, treatments] of [
-    ["empty-owner", []],
-    ["stale-onda-owner", ["onda_pro"]],
+  for (const [messageSuffix, message] of [
+    ["miracle-typo", "奇蹟肉毒少錢"],
+    ["miracle-exact", "奇蹟肉毒多少錢"],
+    ["neuronox", "Neuronox怎麼收費"],
+    ["youlirou", "優力柔原價多少"],
   ] as const) {
-    const productionUserId = `${userId}-botox-typo-${suffix}`;
-    const routed = await processWebhookRequestBody(
-      webhookEvent({
-        id: `v2-price-botox-typo-${suffix}`,
-        message: "奇蹟肉毒少錢",
-        userId: productionUserId,
-      }),
-      {
-        includePending: false,
-        routeConversationV2: (input) => routeConversationV2Canary(input, {
-          factsProvider: productionPriceProvider,
-          getCanarySettings: () => ({
-            allowlistedUserIds: [productionUserId],
-            mode: "canary" as const,
-          }),
-          requestFrame: async () => ({
-            errorCode: null,
-            frame: wrongLearnTreatmentFrame([...treatments]),
-            latencyMs: 1,
-            model: "fixture",
-            promptVersion: "fixture",
-            tokensIn: 1,
-            tokensOut: 1,
-          }),
+    for (const [ownerSuffix, treatments] of [
+      ["empty-owner", []],
+      ["stale-onda-owner", ["onda_pro"]],
+    ] as const) {
+      const suffix = `${messageSuffix}-${ownerSuffix}`;
+      const productionUserId = `${userId}-botox-price-${suffix}`;
+      const routed = await processWebhookRequestBody(
+        webhookEvent({
+          id: `v2-price-botox-${suffix}`,
+          message,
+          userId: productionUserId,
         }),
-        routeLegacy: async () => {
-          throw new Error("V1 must not run for an explicit V2 Botox price question");
+        {
+          includePending: false,
+          routeConversationV2: (input) => routeConversationV2Canary(input, {
+            factsProvider: productionPriceProvider,
+            getCanarySettings: () => ({
+              allowlistedUserIds: [productionUserId],
+              mode: "canary" as const,
+            }),
+            requestFrame: async () => ({
+              errorCode: null,
+              frame: wrongLearnTreatmentFrame([...treatments]),
+              latencyMs: 1,
+              model: "fixture",
+              promptVersion: "fixture",
+              tokensIn: 1,
+              tokensOut: 1,
+            }),
+          }),
+          routeLegacy: async () => {
+            throw new Error("V1 must not run for an explicit V2 Botox price question");
+          },
         },
-      },
-    );
-    const payload = routed.results[0]?.replyPayload;
-    assert.ok(payload, `奇蹟肉毒少錢 ${suffix}: final LINE payload must exist`);
-    const visible = visibleTextFromPayload(payload.messages);
-    assert.match(visible, /999/u, `奇蹟肉毒少錢 ${suffix}: must quote the approved Botox offer`);
-    assert.doesNotMatch(
-      visible,
-      /16,888|12,999|哪一項療程/u,
-      `奇蹟肉毒少錢 ${suffix}: must not leak an ONDA owner or generic clarification`,
-    );
+      );
+      const payload = routed.results[0]?.replyPayload;
+      assert.ok(payload, `${message} ${ownerSuffix}: final LINE payload must exist`);
+      const visible = visibleTextFromPayload(payload.messages);
+      assert.match(visible, /肉毒體驗價\s*999/u, `${message} ${ownerSuffix}: must quote the approved Botox offer`);
+      assert.doesNotMatch(
+        visible,
+        /需要由真人客服確認|16,888|12,999|哪一項療程/u,
+        `${message} ${ownerSuffix}: eligible aliases must not be rejected or inherit an ONDA owner`,
+      );
+      assert.doesNotMatch(
+        visible,
+        /12\s*U|奇蹟肉毒[^\n。]*999|Neuronox[^\n。]*999|優力柔[^\n。]*999/iu,
+        `${message} ${ownerSuffix}: customer price copy must remain brand- and dose-neutral`,
+      );
+    }
   }
 
   const brandedBotoxUserId = `${userId}-botox-brand-price`;

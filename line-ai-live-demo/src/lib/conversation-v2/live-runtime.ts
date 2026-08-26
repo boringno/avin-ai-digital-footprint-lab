@@ -305,10 +305,16 @@ function attachDeterministicPriceApplicability(
   const uniqueTreatmentKey = treatmentKeys.length === 1 ? treatmentKeys[0] : undefined;
   const brand = findTreatmentBrandInClinic(snapshot.clinic, message, uniqueTreatmentKey);
   const doseMatch = message.normalize("NFKC").match(/(\d+(?:\.\d+)?)\s*(?:u|單位)/iu);
+  const requestedDose = doseMatch?.[1] ? `${doseMatch[1]}U` : undefined;
+  const treatment = uniqueTreatmentKey
+    ? snapshot.clinic.treatmentList.find((item) => item.key === uniqueTreatmentKey)
+    : undefined;
+  const genericDoseEligible = Boolean(requestedDose) && (treatment?.genericPriceEligibleDoses ?? [])
+    .some((dose) => dose.normalize("NFKC").toLowerCase() === requestedDose?.toLowerCase());
   const priceApplicability = {
     ...(turn.priceApplicability ?? {}),
-    ...(brand ? { variant: brand.key } : {}),
-    ...(doseMatch?.[1] ? { dose: `${doseMatch[1]}U` } : {}),
+    ...(brand && !brand.genericPriceEligible ? { variant: brand.key } : {}),
+    ...(requestedDose && !genericDoseEligible ? { dose: requestedDose } : {}),
   };
   if (Object.keys(priceApplicability).length === 0) return turn;
   // Values come only from the pinned clinic snapshot's approved brand aliases
