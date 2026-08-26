@@ -122,6 +122,314 @@ async function validateDeterministicBypass() {
     /ONDA PRO目前可參考：體驗價 16,888 元/u,
     "RR1: the final LINE-visible reply must retain the approved ONDA price",
   );
+
+  const approvedContractPlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:approved_current",
+      matchedType: "pricing_campaign",
+      replyText: "這段任意文字含有未核准 19,999 元，專屬 renderer 不得使用。",
+    },
+    {
+      approvedPriceReply: {
+        concernCta: { concernLabel: "魚尾紋／抬頭紋／皺眉紋（動態紋）" },
+        quotes: [{
+          applicability: {},
+          branchScope: "全館適用",
+          campaignId: "approved-botox-999",
+          customerPriceText: "活動價 999 元",
+          role: "primary",
+          snapshotId: "snapshot-approved-price",
+          subjectLabel: "肉毒",
+          treatmentKeys: ["botox"],
+        }],
+        snapshotId: "snapshot-approved-price",
+      },
+      treatmentKeys: ["botox"],
+    },
+  );
+  const approvedContract = await renderReplyPlan({
+    customerMessage: "奇蹟肉毒少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: approvedContractPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    approvedContract.replyTextSource,
+    "approved_price_contract",
+    "RR1: V2 approved prices must use the dedicated structured renderer",
+  );
+  assert.match(approvedContract.replyText, /活動價 999 元/u);
+  assert.doesNotMatch(
+    approvedContract.replyText,
+    /19,999/u,
+    "RR1: arbitrary fallback text must not participate in an approved price reply",
+  );
+
+  const richMessageBypassPlan = structuredClone(approvedContractPlan);
+  richMessageBypassPlan.richMessages = [{
+    text: "未核准價格 19,999 元",
+    type: "text",
+  }];
+  const richMessageBypass = await renderReplyPlan({
+    customerMessage: "奇蹟肉毒少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    plan: richMessageBypassPlan,
+    recentTurns: [],
+  });
+  const richMessageVisibleText = richMessageBypass.messages
+    .filter((message) => message.type === "text")
+    .map((message) => message.text)
+    .join("\n");
+  assert.equal(richMessageBypass.replyTextSource, "approved_price_contract");
+  assert.match(richMessageVisibleText, /活動價 999 元/u);
+  assert.doesNotMatch(
+    richMessageVisibleText,
+    /19,999/u,
+    "RR1: stale rich messages must not bypass the typed approved-price contract",
+  );
+
+  const nonStringScalarQuote = structuredClone(approvedContractPlan.approvedPriceReply!.quotes[0]);
+  (nonStringScalarQuote as unknown as { subjectLabel: unknown }).subjectLabel = 7;
+  for (const [label, malformedQuotes] of [
+    ["non-array", { unexpected: true }],
+    ["null-item", [null]],
+    ["non-string-scalar", [nonStringScalarQuote]],
+  ] as const) {
+    const malformedContractPlan = structuredClone(approvedContractPlan);
+    (malformedContractPlan.approvedPriceReply as unknown as { quotes: unknown }).quotes = malformedQuotes;
+    const malformedContract = await renderReplyPlan({
+      customerMessage: "肉毒多少錢",
+      dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+      footer: FOOTER,
+      plan: malformedContractPlan,
+      recentTurns: [],
+    });
+    assert.equal(
+      malformedContract.fallbackReason,
+      "approved_price_contract_rejected",
+      `RR1: a runtime-malformed ${label} quote collection must fail closed instead of throwing`,
+    );
+    assert.doesNotMatch(malformedContract.replyText, /999|19,999/u);
+  }
+
+  const comparisonContractPlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:approved_current",
+      matchedType: "pricing_campaign",
+      replyText: "arbitrary fallback must remain unused",
+    },
+    {
+      approvedPriceReply: {
+        concernCta: { concernLabel: "雙下巴／嘴邊肉" },
+        quotes: [
+          {
+            applicability: {},
+            branchScope: "全館適用",
+            campaignId: "onda-standalone-16888",
+            customerPriceText: "體驗價 16,888 元",
+            role: "primary",
+            snapshotId: "snapshot-approved-price",
+            subjectLabel: "ONDA PRO",
+            treatmentKeys: ["onda_pro"],
+          },
+          {
+            applicability: {},
+            branchScope: "全館適用",
+            campaignId: "onda-botox-combination-12999",
+            customerPriceText: "組合體驗價 12,999 元",
+            role: "alternative",
+            snapshotId: "snapshot-approved-price",
+            subjectLabel: "ONDA PRO＋肉毒",
+            treatmentKeys: ["onda_pro", "botox"],
+          },
+        ],
+        snapshotId: "snapshot-approved-price",
+      },
+      treatmentKeys: ["onda_pro"],
+    },
+  );
+  const comparisonContract = await renderReplyPlan({
+    customerMessage: "ONDA雙下巴怎麼收費",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: comparisonContractPlan,
+    recentTurns: [],
+  });
+  assert.equal(comparisonContract.replyTextSource, "approved_price_contract");
+  assert.match(comparisonContract.replyText, /ONDA PRO.*16,888/su);
+  assert.match(
+    comparisonContract.replyText,
+    /ONDA PRO＋肉毒.*12,999/su,
+    "RR1: an alternative quote must identify its approved subject, not only its amount",
+  );
+  assert.match(comparisonContract.replyText, /雙下巴／嘴邊肉/u);
+
+  const alternativeOnlyPlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:unavailable_to_quote:applicability_mismatch",
+      matchedType: "pricing_campaign",
+      replyText: "arbitrary fallback must remain unused",
+    },
+    {
+      approvedPriceReply: {
+        concernCta: {
+          concernLabel: "魚尾紋／抬頭紋／皺眉紋（動態紋）",
+        },
+        quotes: [{
+          applicability: {},
+          branchScope: "全館適用",
+          campaignId: "approved-botox-999",
+          customerPriceText: "活動價 999 元",
+          role: "alternative",
+          snapshotId: "snapshot-approved-price",
+          subjectLabel: "肉毒活動",
+          treatmentKeys: ["botox"],
+        }],
+        snapshotId: "snapshot-approved-price",
+        unresolvedPrimary: {
+          humanSupportHoursSummary: "真人客服服務時間為週一至週五 09:00-18:00，國定假日休息。",
+          requestedSubjectLabel: "BOTOX（經典肉毒）方案",
+        },
+      },
+      treatmentKeys: ["botox"],
+    },
+  );
+  const alternativeOnly = await renderReplyPlan({
+    customerMessage: "BOTOX多少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    plan: alternativeOnlyPlan,
+    recentTurns: [],
+  });
+  assert.equal(alternativeOnly.replyTextSource, "approved_price_contract");
+  assert.match(alternativeOnly.replyText, /BOTOX（經典肉毒）方案價格需要由真人客服確認/u);
+  assert.match(alternativeOnly.replyText, /肉毒活動方案.*999/su);
+  assert.match(alternativeOnly.replyText, /週一至週五 09:00-18:00/u);
+  assert.match(
+    alternativeOnly.replyText,
+    /魚尾紋／抬頭紋／皺眉紋（動態紋）/u,
+    "RR1: an alternative-only quote must still acknowledge the compatible current concern",
+  );
+
+  const missingDisclosurePlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:unavailable_to_quote:applicability_mismatch",
+      matchedType: "pricing_campaign",
+      replyText: "這項價格目前需由真人客服確認。",
+    },
+    {
+      approvedPriceReply: {
+        quotes: alternativeOnlyPlan.approvedPriceReply!.quotes,
+        snapshotId: "snapshot-approved-price",
+      },
+      treatmentKeys: ["botox"],
+    },
+  );
+  const missingDisclosure = await renderReplyPlan({
+    customerMessage: "BOTOX多少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    plan: missingDisclosurePlan,
+    recentTurns: [],
+  });
+  assert.equal(missingDisclosure.fallbackReason, "approved_price_contract_rejected");
+  assert.doesNotMatch(
+    missingDisclosure.replyText,
+    /999/u,
+    "RR1: an alternative-only quote without an unresolved-primary disclosure must fail closed",
+  );
+
+  const contradictoryDisclosurePlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:approved_current",
+      matchedType: "pricing_campaign",
+      replyText: "這項價格目前需由真人客服確認。",
+    },
+    {
+      approvedPriceReply: {
+        quotes: [approvedContractPlan.approvedPriceReply!.quotes[0]],
+        snapshotId: "snapshot-approved-price",
+        unresolvedPrimary: {
+          humanSupportHoursSummary: "真人客服服務時間為週一至週五 09:00-18:00。",
+          requestedSubjectLabel: "肉毒方案",
+        },
+      },
+      treatmentKeys: ["botox"],
+    },
+  );
+  const contradictoryDisclosure = await renderReplyPlan({
+    customerMessage: "肉毒多少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    plan: contradictoryDisclosurePlan,
+    recentTurns: [],
+  });
+  assert.equal(contradictoryDisclosure.fallbackReason, "approved_price_contract_rejected");
+  assert.doesNotMatch(contradictoryDisclosure.replyText, /999/u);
+
+  const unknownRolePlan = structuredClone(approvedContractPlan);
+  const malformedRoleQuote = structuredClone(unknownRolePlan.approvedPriceReply!.quotes[0]);
+  (malformedRoleQuote as unknown as { role: string }).role = "unexpected";
+  unknownRolePlan.approvedPriceReply!.quotes.push(malformedRoleQuote);
+  const unknownRole = await renderReplyPlan({
+    customerMessage: "肉毒多少錢",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    plan: unknownRolePlan,
+    recentTurns: [],
+  });
+  assert.equal(unknownRole.fallbackReason, "approved_price_contract_rejected");
+  assert.doesNotMatch(
+    unknownRole.replyText,
+    /999/u,
+    "RR1: a malformed runtime quote role must reject the whole contract instead of being ignored",
+  );
+
+  const mismatchedSnapshotPlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:approved_current",
+      matchedType: "pricing_campaign",
+      replyText: "ONDA 活動價 16,888 元。",
+    },
+    {
+      approvedPriceReply: {
+        quotes: [{
+          applicability: {},
+          branchScope: "全館適用",
+          campaignId: "onda-approved",
+          customerPriceText: "活動價 16,888 元",
+          role: "primary",
+          snapshotId: "stale-snapshot",
+          subjectLabel: "ONDA PRO",
+          treatmentKeys: ["onda_pro"],
+        }],
+        snapshotId: "current-snapshot",
+      },
+      treatmentKeys: ["onda_pro"],
+    },
+  );
+  const mismatchedSnapshot = await renderReplyPlan({
+    customerMessage: "ONDA原價多少",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: mismatchedSnapshotPlan,
+    recentTurns: [],
+  });
+  assert.equal(mismatchedSnapshot.fallbackReason, "approved_price_contract_rejected");
+  assert.doesNotMatch(
+    mismatchedSnapshot.replyText,
+    /16,888/u,
+    "RR1: a stale or mismatched price snapshot must fail closed without an amount",
+  );
 }
 
 async function validateGeneratedReplyAndContext() {

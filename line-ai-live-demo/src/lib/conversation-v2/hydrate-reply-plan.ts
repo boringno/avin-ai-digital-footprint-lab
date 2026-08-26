@@ -18,6 +18,8 @@ import type { QuestionAspect } from "@/lib/dialogue-semantics";
 import {
   DEFAULT_PROHIBITED_CLAIMS,
   legacyDecisionToReplyPlan,
+  type ApprovedPriceQuoteContract,
+  type ApprovedPriceReplyContract,
   type DialogueAct,
   type ReplyPlan as RendererReplyPlan,
 } from "@/lib/reply-plan";
@@ -98,6 +100,26 @@ function customerPriceReply(
   ]).join("\n");
 }
 
+function approvedPriceQuoteContract(
+  snapshot: ClinicFactsSnapshot,
+  resolution: Extract<PriceFactResolution, { status: "approved_current" }>,
+  role: ApprovedPriceQuoteContract["role"],
+): ApprovedPriceQuoteContract {
+  const treatmentNames = resolution.treatmentKeys
+    .map((key) => snapshot.clinic.treatmentList.find((item) => item.key === key)?.name)
+    .filter((name): name is string => Boolean(name));
+  return {
+    applicability: { ...resolution.applicability },
+    branchScope: resolution.branchScope,
+    campaignId: resolution.campaignId,
+    customerPriceText: resolution.customerPriceText,
+    role,
+    snapshotId: resolution.provenance.snapshotId,
+    subjectLabel: treatmentNames.join("＋") || resolution.campaignLabel || "核准方案",
+    treatmentKeys: [...resolution.treatmentKeys],
+  };
+}
+
 function contextualPriceCampaignId(input: HydrateConversationV2ReplyInput) {
   const query = input.result.replyPlan.mode === "deterministic"
     ? input.result.replyPlan.pricingQuery
@@ -155,7 +177,7 @@ function approvedCombinationPriceResolution(
   return undefined;
 }
 
-function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
+function priceConcernLabel(input: HydrateConversationV2ReplyInput) {
   const pricedTreatmentKeys = input.result.replyPlan.mode === "deterministic"
     ? input.result.replyPlan.pricingQuery?.treatmentKeys ?? []
     : [];
@@ -175,9 +197,35 @@ function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
   const label = concernKeys
     .map((key) => input.snapshot.clinic.concernList.find((item) => item.key === key)?.label)
     .find(Boolean);
+  return label;
+}
+
+function priceConcernFollowup(input: HydrateConversationV2ReplyInput) {
+  const label = priceConcernLabel(input);
   return label
     ? `您提到在意${label}；兩個方案內容不同，可接著比較單做與搭配的差異，或安排免費諮詢😊`
     : "兩個方案內容不同，可接著比較單做與搭配的差異，或安排免費諮詢😊";
+}
+
+function requestedPriceSubjectLabel(input: HydrateConversationV2ReplyInput) {
+  const query = input.result.replyPlan.mode === "deterministic"
+    ? input.result.replyPlan.pricingQuery
+    : undefined;
+  if (!query) return "指定方案";
+  const treatments = query.treatmentKeys
+    .map((key) => input.snapshot.clinic.treatmentList.find((item) => item.key === key))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  if (treatments.length === 1 && query.applicability?.variant) {
+    const brand = treatments[0].brandOptions?.find(
+      (item) => item.key === query.applicability?.variant,
+    );
+    if (brand) return `${brand.name}方案`;
+  }
+  const treatmentNames = treatments.map((item) => item.name);
+  const base = treatmentNames.join("＋") || "指定方案";
+  return query.applicability && Object.keys(query.applicability).length > 0
+    ? `${base}指定規格`
+    : `${base}方案`;
 }
 
 function treatmentFactMode(plan: GeneratedReplyPlan) {
@@ -402,6 +450,7 @@ function bookingToolRequest(state: ConversationV2State): ConversationV2ToolReque
 
 function deterministicPlan(input: {
   action: string;
+  approvedPriceReply?: ApprovedPriceReplyContract;
   dialogueAct: DialogueAct;
   matchedKey: string;
   replyText: string;
@@ -409,6 +458,7 @@ function deterministicPlan(input: {
   requiresHuman?: boolean;
   richMessages?: RendererReplyPlan["richMessages"];
   exactPriceFacts?: string[];
+  treatmentKeys?: string[];
 }): RendererReplyPlan {
   return legacyDecisionToReplyPlan(
     {
@@ -429,12 +479,14 @@ function deterministicPlan(input: {
       replyText: input.replyText,
     },
     {
+      approvedPriceReply: input.approvedPriceReply,
       dialogueAct: input.dialogueAct,
       exactPriceFacts: input.exactPriceFacts,
       fallbackText: input.replyText,
       renderMode: "deterministic",
       responseContract: input.responseContract,
       requiresHuman: input.requiresHuman,
+      treatmentKeys: input.treatmentKeys,
     },
   );
 }
@@ -658,6 +710,7 @@ export async function hydrateConversationV2ReplyPlan(
       priceResolution.status === "approved_current" &&
       alternativePriceResolution?.status === "approved_current" &&
       alternativePriceResolution.campaignId !== priceResolution.campaignId;
+    const approvedConcernLabel = priceConcernLabel(input);
     const replyText = priceResolution.status === "approved_current"
       ? hasDistinctAlternative
         ? unique([
@@ -673,12 +726,40 @@ export async function hydrateConversationV2ReplyPlan(
             `📅 如果您願意，我可以先幫您整理免費諮詢需求，品牌方案價格再由真人客服協助確認。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`,
           ]).join("\n\n")
         : priceGapReply(priceResolution);
+    const approvedPriceReply: ApprovedPriceReplyContract | undefined =
+      priceResolution.status === "approved_current"
+        ? {
+            ...(approvedConcernLabel
+              ? { concernCta: { concernLabel: approvedConcernLabel } }
+              : {}),
+            quotes: [
+              approvedPriceQuoteContract(input.snapshot, priceResolution, "primary"),
+              ...(hasDistinctAlternative && alternativePriceResolution.status === "approved_current"
+                ? [approvedPriceQuoteContract(input.snapshot, alternativePriceResolution, "alternative")]
+                : []),
+            ],
+            snapshotId: input.snapshot.snapshotId,
+          }
+        : alternativePriceResolution?.status === "approved_current"
+          ? {
+              ...(approvedConcernLabel
+                ? { concernCta: { concernLabel: approvedConcernLabel } }
+                : {}),
+              quotes: [approvedPriceQuoteContract(input.snapshot, alternativePriceResolution, "alternative")],
+              snapshotId: input.snapshot.snapshotId,
+              unresolvedPrimary: {
+                humanSupportHoursSummary: input.snapshot.clinic.humanSupportHours.fallbackSummary,
+                requestedSubjectLabel: requestedPriceSubjectLabel(input),
+              },
+            }
+          : undefined;
     return {
       ...(alternativePriceResolution ? { alternativePriceResolution } : {}),
       dataStatus: priceResolution.status === "approved_current" ? "ready" : "unresolved",
       priceResolution,
       rendererPlan: deterministicPlan({
         action: replyPlan.action,
+        approvedPriceReply,
         dialogueAct: "quote_approved_price",
         exactPriceFacts: priceResolution.status === "approved_current"
           ? unique([
@@ -693,6 +774,7 @@ export async function hydrateConversationV2ReplyPlan(
           : `conversation_v2:price:unavailable_to_quote:${priceResolution.reason}`,
         replyText,
         responseContract: replyPlan.responseContract,
+        treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
       }),
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",

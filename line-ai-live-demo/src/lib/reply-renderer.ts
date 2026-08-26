@@ -4,6 +4,7 @@ import {
   type GeneratedAiReply,
 } from "@/lib/ai-reply-client";
 import { constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
+import { renderApprovedPriceReplyContract } from "@/lib/approved-price-reply";
 import type { RecentConversationTurn } from "@/lib/conversation-context";
 import type { DialogueState } from "@/lib/dialogue-state";
 import {
@@ -24,6 +25,7 @@ export type ReplyGenerator = (
 ) => Promise<GeneratedAiReply | null>;
 
 export type ReplyRendererFallbackReason =
+  | "approved_price_contract_rejected"
   | "deterministic_rejected"
   | "generation_disabled"
   | "generator_error"
@@ -36,6 +38,7 @@ export type ReplyRendererMode = "deterministic" | "fallback" | "generated";
 export type ReplyRendererFallbackVariant = "primary" | "secondary" | "safe";
 export type ReplyTextSource =
   | "approved_deterministic"
+  | "approved_price_contract"
   | "approved_fallback"
   | "approved_terminal_fallback"
   | "grounded_generation";
@@ -315,8 +318,9 @@ function buildMessages(
   plan: ReplyPlan,
   footer: string | undefined,
   includeFooter: boolean,
+  forceCanonicalText = false,
 ) {
-  const baseMessages = plan.richMessages.length > 0
+  const baseMessages = !forceCanonicalText && plan.richMessages.length > 0
     ? formatReplyMessages(plan.richMessages)
     : [{ type: "text", text: replyText } satisfies LineTextMessage];
   return attachApprovedQuickReplies(
@@ -345,6 +349,42 @@ function renderDeterministic(
   usedGroundedKnowledge: boolean,
   startedAt: number,
 ): ReplyRendererResult {
+  if (input.plan.approvedPriceReply) {
+    const replyText = renderApprovedPriceReplyContract(
+      input.plan.approvedPriceReply,
+      input.plan.treatmentKeys,
+    );
+    if (!replyText) {
+      return renderGuardedFallback(
+        input,
+        "approved_price_contract_rejected",
+        usedGroundedKnowledge,
+        startedAt,
+      );
+    }
+    return {
+      dialogueAct: input.plan.dialogueAct,
+      generated: false,
+      generatorInvoked: false,
+      guardReplacedText: false,
+      handoffRequired: false,
+      latencyMs: Date.now() - startedAt,
+      // A validated price contract is the sole authority for customer-visible
+      // price copy. Stale rich messages must never replace its disclosure,
+      // approved amounts, support hours, or CTA.
+      messages: buildMessages(
+        replyText,
+        input.plan,
+        input.footer,
+        input.includeFooter ?? true,
+        true,
+      ),
+      replyText,
+      replyTextSource: "approved_price_contract",
+      renderMode: "deterministic",
+      usedGroundedKnowledge,
+    };
+  }
   const candidate = formatReplyText(addCustomerReplyTone(
     input.plan.deterministicReply ?? input.plan.fallbackText,
     { decisionType: input.plan.decisionType, matchedKey: input.plan.matchedKey },
@@ -457,7 +497,10 @@ function renderGuardedFallback(
   startedAt: number,
   generationMetadata?: GeneratedAiReply,
 ): ReplyRendererResult {
-  const generatorInvoked = fallbackReason !== "deterministic_rejected";
+  const generatorInvoked = ![
+    "approved_price_contract_rejected",
+    "deterministic_rejected",
+  ].includes(fallbackReason);
   const dynamicSafeCandidates = [
     input.plan.nextQuestion,
     input.plan.treatmentKeys.length > 0 || input.plan.concernKeys.length > 0
@@ -511,6 +554,7 @@ function renderGuardedFallback(
       generated: false,
       generatorInvoked,
       guardReplacedText: guardRejectedCandidate ||
+        fallbackReason === "approved_price_contract_rejected" ||
         fallbackReason === "deterministic_rejected" ||
         fallbackReason === "generator_rejected" ||
         fallbackReason === "repeated_previous_reply",

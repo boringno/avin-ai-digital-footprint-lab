@@ -787,19 +787,25 @@ function adaptDeterministicPriceEntities(
   if (matched.negated) {
     return { areas: [], concerns: [], treatments: [], valid: true };
   }
+  const mention = (
+    key: string,
+    label?: string,
+  ): EntityMention => ({
+    confidence: 1,
+    key,
+    ...(label ? { label } : {}),
+    polarity: "affirmed",
+    resolution: "resolved",
+  });
   const treatmentKeys = Array.from(new Set(matched.treatments.map((item) => item.key)));
+  const areaKeys = Array.from(new Set(matched.areas.map((item) => item.key)));
+  const concernKeys = Array.from(new Set(matched.concerns.map((item) => item.key)));
   return {
-    areas: [],
-    concerns: [],
-    treatments: treatmentKeys.map((key) => ({
-      confidence: 1,
-      key,
-      ...(registry.treatmentLabels.get(key)
-        ? { label: registry.treatmentLabels.get(key) }
-        : {}),
-      polarity: "affirmed" as const,
-      resolution: "resolved" as const,
-    })),
+    // Price ownership is deliberately rebuilt from the current customer text.
+    // A stale or hallucinated model concern must not select a different campaign.
+    areas: areaKeys.map((key) => mention(key, registry.areaLabels.get(key))),
+    concerns: concernKeys.map((key) => mention(key, registry.concernsByKey.get(key)?.label)),
+    treatments: treatmentKeys.map((key) => mention(key, registry.treatmentLabels.get(key))),
     valid: true,
   };
 }
@@ -1338,10 +1344,16 @@ export function adaptNluFrameToConversationV2Turn(
     resolution.speechAct === supplemental.semanticAnchor.speechAct
       ? supplemental.semanticAnchor
       : undefined;
+  const deterministicPriceOwner = deterministicPriceOwnsTurn
+    ? adaptDeterministicPriceEntities(input.text, ontology, registry)
+    : undefined;
+  const deterministicPriceEntities = deterministicPriceOwner;
   const effectiveEntities = selectedNegationGuard
     ? adaptNegationGuardEntities(selectedNegationGuard, registry)
     : selectedSemanticAnchor
     ? adaptSemanticAnchorEntities(selectedSemanticAnchor, registry)
+    : deterministicPriceEntities
+    ? deterministicPriceEntities
     : entities;
   const hasResolvedNegation = Boolean(
     selectedNegationGuard &&
@@ -1365,12 +1377,14 @@ export function adaptNluFrameToConversationV2Turn(
         ? hasResolvedAffirmation ? "start" : hasResolvedNegation ? "reject" : "none"
         : parsedFrame.dialogue.move),
     concerns: makeMentionsConservative(effectiveEntities.concerns, resolution.needsClarification),
-    confidence: selectedSemanticAnchor || selectedNegationGuard || trustedBookingSpeechAct(supplemental.booking)
+    confidence: selectedSemanticAnchor || selectedNegationGuard || deterministicPriceOwnsTurn || trustedBookingSpeechAct(supplemental.booking)
       ? 1
       : parsedFrame.confidence,
     dialogueReference: selectedSemanticAnchor?.dialogueReference ??
       (selectedNegationGuard
         ? hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"
+        : deterministicPriceEntities?.treatments.length
+          ? "explicit"
         : parsedFrame.dialogue.reference),
     ...(supplemental.hardDecision?.reason
       ? { handoffReason: supplemental.hardDecision.reason }

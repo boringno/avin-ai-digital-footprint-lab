@@ -15,7 +15,6 @@ import assert from "node:assert/strict";
 
 import {
   createRuntimeClinicFactsProvider,
-  loadClinicFactsSnapshot,
   type ClinicFactsProvider,
 } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
@@ -690,17 +689,14 @@ async function validateMondayNaturalInputFamilies() {
     assert.match(ondaPrice.decision.replyText, /ONDA\s*[＋+]\s*肉毒小臉組合/u, `J7: ${message} must identify the combination without inventing details`);
   }
 
-  let runtimeOverlay: RuntimeContentOverlay = {
+  const runtimeOverlay: RuntimeContentOverlay = {
     faqEntries: [],
     pricingCampaigns: [],
     releaseId: null,
     sourceStatus: "available",
     suppressedPricingCampaignIds: [],
   };
-  let wallClockMs = 1_000_000;
   const resilientPriceProvider = createRuntimeClinicFactsProvider({
-    currentTimeMs: () => wallClockMs,
-    lastKnownGoodMaxAgeMs: 120_000,
     loadRuntimeContentOverlay: async () => runtimeOverlay,
     loadSeedData: async () => ({
       faqEntries: [],
@@ -709,13 +705,6 @@ async function validateMondayNaturalInputFamilies() {
       pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign, botoxCampaign],
     }),
   });
-  await loadClinicFactsSnapshot(resilientPriceProvider, {
-    audienceKey: USER_ID,
-    now: NOW,
-    tenantId: "tenant_001",
-  });
-  runtimeOverlay = { ...runtimeOverlay, sourceStatus: "unavailable" };
-
   let productionPriceContext = createEmptyConversationContext("U-production-price-family");
   const productionRecentTurns: RecentConversationTurn[] = [];
   for (const [message, expectedAmounts] of [
@@ -726,7 +715,6 @@ async function validateMondayNaturalInputFamilies() {
     ["肉毒多少錢", ["999"]],
     ["奇蹟肉毒少錢", ["999"]],
   ] as const) {
-    wallClockMs += 5_000;
     const routed = await routeTurn({
       context: productionPriceContext,
       factsProvider: resilientPriceProvider,
@@ -742,6 +730,10 @@ async function validateMondayNaturalInputFamilies() {
         `J7-production-price: ${message} must return approved amount ${amount}`,
       );
     }
+    assert.ok(
+      routed.decision.replyPlan?.approvedPriceReply,
+      `J7-production-price: ${message} must wire a typed approved-price contract into the renderer`,
+    );
     assert.doesNotMatch(
       routed.decision.replyText,
       /哪一項療程|沒有可直接提供的核准價格|最想先確認的療程|想接著了解改善方向/u,
@@ -752,6 +744,29 @@ async function validateMondayNaturalInputFamilies() {
       { role: "assistant", text: routed.decision.replyText },
     );
     productionPriceContext = routed.decision.nextContext;
+  }
+
+  for (const [label, nluFrame] of [
+    ["empty model owner", frame({ treatments: [] })],
+    ["stale ONDA model owner", frame({ treatments: ["onda_pro"] })],
+  ] as const) {
+    const typoBotoxPrice = await routeTurn({
+      context: createEmptyConversationContext(`U-production-botox-typo-${label}`),
+      factsProvider: resilientPriceProvider,
+      frame: nluFrame,
+      message: "奇蹟肉毒少錢",
+      turnIndex: turnIndex++,
+    });
+    assert.match(
+      typoBotoxPrice.decision.replyText,
+      /999/u,
+      `J7-production-price: current-text Botox must replace ${label}`,
+    );
+    assert.doesNotMatch(
+      typoBotoxPrice.decision.replyText,
+      /16,888|12,999|哪一項療程/u,
+      `J7-production-price: ${label} must not leak an ONDA owner or generic clarification`,
+    );
   }
 
   let botoxContext = createEmptyConversationContext("U-natural-botox-short");
@@ -818,8 +833,31 @@ async function validateMondayNaturalInputFamilies() {
     assert.doesNotMatch(unquoted.decision.replyText, /12\s*U/iu, `J7: ${message} must not expose the offer dose`);
     assert.match(unquoted.decision.replyText, /真人客服|上班時間/u, `J7: ${message} must offer staff price confirmation`);
     assert.match(unquoted.decision.replyText, /週一至週五\s*09:00-18:00.*國定假日休息/su, `J7: ${message} must state staff service hours`);
+    assert.ok(
+      unquoted.decision.replyPlan?.approvedPriceReply?.unresolvedPrimary,
+      `J7: ${message} must carry a typed disclosure before the renderer may show an alternative price`,
+    );
     assert.equal(unquoted.toolRequest?.type, "request_fact_confirmation", `J7: ${message} must create a price confirmation obligation`);
   }
+
+  const brandedConcernPrice = await routeTurn({
+    context: createEmptyConversationContext(`U-unquoted-concern-${turnIndex}`),
+    frame: null,
+    message: "BOTOX 魚尾紋 12U多少錢",
+    turnIndex: turnIndex++,
+  });
+  assert.match(brandedConcernPrice.decision.replyText, /肉毒體驗價\s*999/u);
+  assert.match(brandedConcernPrice.decision.replyText, /週一至週五\s*09:00-18:00.*國定假日休息/su);
+  assert.doesNotMatch(
+    brandedConcernPrice.decision.replyText,
+    /12\s*U|BOTOX[^\n。]*999/iu,
+    "J7: the generic approved alternative must not expose dose or attribute 999 to the requested brand",
+  );
+  assert.match(
+    brandedConcernPrice.decision.replyPlan?.approvedPriceReply?.concernCta?.concernLabel ?? "",
+    /魚尾紋/u,
+    "J7: hydration must carry the current concern into the typed alternative-only contract",
+  );
 
   for (const [label, candidateFrame] of [
     ["frame-null", null],

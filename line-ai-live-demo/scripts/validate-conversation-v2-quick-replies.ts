@@ -1166,6 +1166,27 @@ async function validateFinalWebhookPayload() {
   const productionPriceProvider = createStaticClinicFactsProvider({
     pricingCampaigns: seedData.pricingCampaigns,
   });
+  const wrongLearnTreatmentFrame = (treatments: string[]): NluFrame => ({
+    areas: [],
+    confidence: 0.99,
+    concerns: [],
+    dialogue: {
+      focus: "overview",
+      move: "start",
+      reference: "active_subject",
+      speechAct: "learn_treatment",
+    },
+    intents: ["treatment"],
+    negated: [],
+    safety: {
+      complaint: false,
+      humanRequest: false,
+      postTreatmentRisk: false,
+      pregnancyNursing: false,
+    },
+    schemaVersion: 2,
+    treatments,
+  });
   for (const [suffix, message, frame] of [
     ["nlu-outage", "ONDA怎麼收費", null],
     [
@@ -1191,6 +1212,17 @@ async function validateFinalWebhookPayload() {
         },
         schemaVersion: 2,
         treatments: ["onda_pro"],
+      } satisfies NluFrame,
+    ],
+    ["original-price-empty-owner", "ONDA原價多少", wrongLearnTreatmentFrame([])],
+    ["fee-empty-owner", "ONDA怎麼收費", wrongLearnTreatmentFrame([])],
+    [
+      "campaign-stale-owner",
+      "ONDA有活動嗎",
+      {
+        ...wrongLearnTreatmentFrame(["botox"]),
+        areas: ["face"],
+        concerns: [{ area: "face", key: "dynamic_wrinkles" }],
       } satisfies NluFrame,
     ],
   ] as const) {
@@ -1224,12 +1256,123 @@ async function validateFinalWebhookPayload() {
     assert.ok(payload, `${message}: final LINE payload must exist`);
     const visible = visibleTextFromPayload(payload.messages);
     assert.match(visible, /16,888/u, `${message}: final LINE text must quote the approved ONDA price`);
+    assert.match(
+      visible,
+      /ONDA PRO＋肉毒.*12,999/su,
+      `${message}: final LINE text must also identify and quote the approved combination offer`,
+    );
     assert.doesNotMatch(
       visible,
       /最想先確認的療程|請告訴我這次最想確認/u,
       `${message}: price must not degrade to generic onboarding copy`,
     );
+    assert.doesNotMatch(
+      visible,
+      /魚尾紋|抬頭紋|皺眉紋|動態紋/u,
+      `${message}: stale model concerns must not alter the current-text price campaign or CTA`,
+    );
   }
+
+  for (const [suffix, treatments] of [
+    ["empty-owner", []],
+    ["stale-onda-owner", ["onda_pro"]],
+  ] as const) {
+    const productionUserId = `${userId}-botox-typo-${suffix}`;
+    const routed = await processWebhookRequestBody(
+      webhookEvent({
+        id: `v2-price-botox-typo-${suffix}`,
+        message: "奇蹟肉毒少錢",
+        userId: productionUserId,
+      }),
+      {
+        includePending: false,
+        routeConversationV2: (input) => routeConversationV2Canary(input, {
+          factsProvider: productionPriceProvider,
+          getCanarySettings: () => ({
+            allowlistedUserIds: [productionUserId],
+            mode: "canary" as const,
+          }),
+          requestFrame: async () => ({
+            errorCode: null,
+            frame: wrongLearnTreatmentFrame([...treatments]),
+            latencyMs: 1,
+            model: "fixture",
+            promptVersion: "fixture",
+            tokensIn: 1,
+            tokensOut: 1,
+          }),
+        }),
+        routeLegacy: async () => {
+          throw new Error("V1 must not run for an explicit V2 Botox price question");
+        },
+      },
+    );
+    const payload = routed.results[0]?.replyPayload;
+    assert.ok(payload, `奇蹟肉毒少錢 ${suffix}: final LINE payload must exist`);
+    const visible = visibleTextFromPayload(payload.messages);
+    assert.match(visible, /999/u, `奇蹟肉毒少錢 ${suffix}: must quote the approved Botox offer`);
+    assert.doesNotMatch(
+      visible,
+      /16,888|12,999|哪一項療程/u,
+      `奇蹟肉毒少錢 ${suffix}: must not leak an ONDA owner or generic clarification`,
+    );
+  }
+
+  const brandedBotoxUserId = `${userId}-botox-brand-price`;
+  const brandedBotox = await processWebhookRequestBody(
+    webhookEvent({
+      id: "v2-price-botox-brand",
+      message: "BOTOX 魚尾紋 12U原價多少",
+      userId: brandedBotoxUserId,
+    }),
+    {
+      includePending: false,
+      routeConversationV2: (input) => routeConversationV2Canary(input, {
+        factsProvider: productionPriceProvider,
+        getCanarySettings: () => ({
+          allowlistedUserIds: [brandedBotoxUserId],
+          mode: "canary" as const,
+        }),
+        requestFrame: async () => ({
+          errorCode: null,
+          frame: wrongLearnTreatmentFrame(["botox"]),
+          latencyMs: 1,
+          model: "fixture",
+          promptVersion: "fixture",
+          tokensIn: 1,
+          tokensOut: 1,
+        }),
+      }),
+      routeLegacy: async () => {
+        throw new Error("V1 must not run for an explicit V2 branded Botox price question");
+      },
+    },
+  );
+  const brandedBotoxPayload = brandedBotox.results[0]?.replyPayload;
+  assert.ok(brandedBotoxPayload, "BOTOX原價多少: final LINE payload must exist");
+  const brandedBotoxVisible = visibleTextFromPayload(brandedBotoxPayload.messages);
+  assert.match(
+    brandedBotoxVisible,
+    /BOTOX（經典肉毒）方案價格需要由真人客服確認/u,
+    "a requested brand without an approved price must be disclosed before offering a generic alternative",
+  );
+  assert.match(brandedBotoxVisible, /肉毒.*999/su);
+  assert.doesNotMatch(
+    brandedBotoxVisible,
+    /BOTOX[^\n。]*999/iu,
+    "the generic 999 offer must not be attributed to BOTOX",
+  );
+  assert.match(brandedBotoxVisible, /週一至週五\s*09:00-18:00.*國定假日休息/su);
+  assert.match(
+    brandedBotoxVisible,
+    /魚尾紋/u,
+    "the final LINE reply must preserve the compatible current concern in its consultation CTA",
+  );
+  assert.doesNotMatch(
+    brandedBotoxVisible,
+    /12\s*U/iu,
+    "the final LINE reply must not expose the intentionally omitted dose",
+  );
 
   const bookingUserId = `${userId}-booking`;
   const overviewFrame: NluFrame = {
