@@ -265,6 +265,19 @@ function knowledgeModeForTurn(
     return "replace_active_subject" as const;
   }
   if (
+    input.concernKeys.length > 0 &&
+    state.knowledge.concernKeys.length > 0 &&
+    input.concernKeys.some((key) => !state.knowledge.concernKeys.includes(key))
+  ) {
+    // An explicitly resolved concern in the current message owns the next
+    // answer, even when it belongs to the same treatment.  Otherwise a
+    // customer who moves from "動態紋" to "小腿" keeps the old concern in the
+    // active query and receives the old dynamic-wrinkle buttons.  Previous
+    // interests remain in persisted turns; this only resets the active reply
+    // subject to what the customer is asking about now.
+    return "replace_active_subject" as const;
+  }
+  if (
     state.knowledge.treatmentKeys.length > 0 &&
     input.treatmentKeys.length > 0 &&
     (

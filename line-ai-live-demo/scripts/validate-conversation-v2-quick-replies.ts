@@ -570,6 +570,57 @@ async function validateLiveRuntimeAttachesV2Choices() {
   );
 }
 
+/**
+ * A new explicit Botox concern must replace the active concern for the current
+ * answer.  Keeping the previous concern makes LINE display the previous
+ * question's buttons (for example dynamic-wrinkle buttons after "小腿").
+ */
+async function validateExplicitBotoxConcernSwitchReplacesOldButtons() {
+  const userId = "U-v2-botox-concern-switch";
+  const dependencies = {
+    factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: [BOTOX_PRICE] }),
+    getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+    requestFrame: async () => ({
+      errorCode: "nlu_unavailable",
+      frame: null,
+      latencyMs: 1,
+      model: "fixture",
+      promptVersion: "fixture",
+      tokensIn: 0,
+      tokensOut: 0,
+    }),
+  };
+  let context = createEmptyConversationContext(userId);
+  const route = async (eventIdentity: string, message: string) => {
+    const result = await routeConversationV2Canary({
+      context,
+      eventIdentity,
+      message,
+      now: new Date(NOW),
+      sourceType: "user",
+      sourceUserId: userId,
+    }, dependencies);
+    assert.equal(result.kind, "routed");
+    context = result.decision.nextContext;
+    return result;
+  };
+
+  await route("botox-open", "肉毒");
+  const wrinkles = await route("botox-wrinkles", "動態紋");
+  assert.deepEqual(
+    labels(wrinkles.decision.replyPlan?.quickReplyItems ?? []),
+    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+  );
+
+  const calf = await route("botox-calf", "小腿");
+  assert.match(calf.decision.replyText, /小腿.*肌肉線條|肌肉線條.*小腿/us);
+  assert.deepEqual(
+    labels(calf.decision.replyPlan?.quickReplyItems ?? []),
+    ["肌肉線條", "緊繃感", "價格／活動", "預約免費諮詢"],
+    "an explicit calf concern must not inherit dynamic-wrinkle buttons",
+  );
+}
+
 function validateFallbackChoicesRespectConversationOwnership() {
   const state = createConversationV2State({ episodeId: "fallback-buttons", now: NOW });
   const fallback = withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state);
@@ -1553,6 +1604,7 @@ async function main() {
   validatePriceCallToAction();
   validateFallbackChoicesRespectConversationOwnership();
   await validateLiveRuntimeAttachesV2Choices();
+  await validateExplicitBotoxConcernSwitchReplacesOldButtons();
   await validateLiveRuntimePersistsAndConsumesVisibleContract();
   await validateSemanticQuickReplyJourneys();
   await validatePriceDeclinePausesSameTreatmentInvitation();
