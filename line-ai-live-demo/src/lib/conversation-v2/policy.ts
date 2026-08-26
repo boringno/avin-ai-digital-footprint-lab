@@ -257,11 +257,26 @@ function knowledgeModeForTurn(
   state: ConversationV2State,
   input: Parameters<typeof activeSubjectKey>[0],
   responseContext: TreatmentResponseContext,
+  message: string,
 ) {
   if (responseContext.conversationMove === "replace") {
     return "replace_active_subject" as const;
   }
   if (responseContext.conversationMove === "prefer_single") {
+    return "replace_active_subject" as const;
+  }
+  if (
+    input.concernKeys.length > 0 &&
+    state.knowledge.concernKeys.length > 0 &&
+    input.concernKeys.some((key) => !state.knowledge.concernKeys.includes(key)) &&
+    !isNegatedFollowUpQuestion(message)
+  ) {
+    // An explicitly resolved concern in the current message owns the next
+    // answer, even when it belongs to the same treatment.  Otherwise a
+    // customer who moves from "動態紋" to "小腿" keeps the old concern in the
+    // active query and receives the old dynamic-wrinkle buttons.  Previous
+    // interests remain in persisted turns; this only resets the active reply
+    // subject to what the customer is asking about now.
     return "replace_active_subject" as const;
   }
   if (
@@ -287,6 +302,16 @@ function knowledgeModeForTurn(
   return state.activeTask.subjectKey === activeSubjectKey(input)
     ? "merge" as const
     : "replace_active_subject" as const;
+}
+
+/**
+ * "ONDA 不是也可以改善肚子嗎？" adds a related concern to the ongoing
+ * consultation; it is not a correction that discards the earlier concern.
+ * This is deliberately narrower than a generic question check: a clear new
+ * selection such as "小腿可以嗎？" still owns the active response.
+ */
+function isNegatedFollowUpQuestion(message: string) {
+  return /(?:不是|不也|並非).{0,40}(?:嗎|呢|[?？])\s*$/u.test(message.trim());
 }
 
 const EXPLICIT_TREATMENT_OVERVIEW_PATTERN = /(?:想|希望|可以|要).{0,6}(?:了解|介紹|認識|問問|諮詢)/u;
@@ -1216,7 +1241,12 @@ export function evaluateDialoguePolicy(
           : responseContext;
         const knowledgeMode = episodeRestart
           ? "replace_active_subject" as const
-          : knowledgeModeForTurn(state, actionSubject, effectiveResponseContext);
+          : knowledgeModeForTurn(
+              state,
+              actionSubject,
+              effectiveResponseContext,
+              turn.text,
+            );
         action = awaiting
           ? {
               at: turn.receivedAt,
