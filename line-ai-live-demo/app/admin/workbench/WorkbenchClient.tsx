@@ -65,6 +65,7 @@ type Detail = {
     preferredBranch: string | null;
     preferredTimeSlots: string[];
   };
+  consultedTreatments: string[];
   conversationId: string;
   displayName: string;
   leadStage: string;
@@ -464,11 +465,12 @@ export function WorkbenchClient({
                   }
                 />
                 <InfoTile
-                  label="客人摘要"
+                  label="本輪曾詢問"
                   value={
+                    detail.consultedTreatments.join("、") ||
                     detail.bookingLead?.interestedTreatments.join("、") ||
                     detail.bookingLead?.preferredBranch ||
-                    "尚未補齊療程／館別"
+                    "尚未記錄療程"
                   }
                 />
               </div>

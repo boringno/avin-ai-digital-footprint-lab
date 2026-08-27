@@ -2763,7 +2763,13 @@ async function validateCurrentTextNegationOwnsPolarity() {
     assert.ok(state, `${variant.label}: canonical V2 state must exist`);
     assert.deepEqual(
       state.knowledge,
-      { approvedFactIds: [], areaKeys: [], concernKeys: [], treatmentKeys: [] },
+      {
+        approvedFactIds: [],
+        areaKeys: [],
+        consultedTreatmentKeys: [],
+        concernKeys: [],
+        treatmentKeys: [],
+      },
       `${variant.label}: no model-positive entity may enter canonical knowledge`,
     );
     assert.equal(
@@ -3026,7 +3032,13 @@ async function validateCurrentTextNegationOwnsPolarity() {
       assert.ok(state);
       assert.deepEqual(
         state.knowledge,
-        { approvedFactIds: [], areaKeys: [], concernKeys: [], treatmentKeys: [] },
+        {
+          approvedFactIds: [],
+          areaKeys: [],
+          concernKeys: [],
+          consultedTreatmentKeys: [],
+          treatmentKeys: [],
+        },
         `${variant.label}: a postfix-negated ${item.type} must not become positive knowledge`,
       );
       assert.equal(

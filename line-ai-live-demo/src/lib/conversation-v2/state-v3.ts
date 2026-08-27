@@ -279,6 +279,7 @@ function cloneKnowledge(knowledge: KnowledgeContext): KnowledgeContext {
   return {
     approvedFactIds: [...knowledge.approvedFactIds],
     areaKeys: [...knowledge.areaKeys],
+    consultedTreatmentKeys: [...knowledge.consultedTreatmentKeys],
     concernKeys: [...knowledge.concernKeys],
     treatmentKeys: [...knowledge.treatmentKeys],
   };
@@ -291,6 +292,7 @@ function filterKnowledgeForDialogueProgress(
   return {
     approvedFactIds: uniqueStrings(knowledge.approvedFactIds).filter((key) => registry.approvedFactIds.has(key)),
     areaKeys: uniqueStrings(knowledge.areaKeys).filter((key) => registry.areaKeys.has(key)),
+    consultedTreatmentKeys: uniqueStrings(knowledge.consultedTreatmentKeys).filter((key) => registry.treatmentKeys.has(key)),
     concernKeys: uniqueStrings(knowledge.concernKeys).filter((key) => registry.concernKeys.has(key)),
     treatmentKeys: uniqueStrings(knowledge.treatmentKeys).filter((key) => registry.treatmentKeys.has(key)),
   };
@@ -501,11 +503,15 @@ function parseKnowledge(
   const raw: KnowledgeContext = {
     approvedFactIds: uniqueStrings(value.approvedFactIds as string[]),
     areaKeys: uniqueStrings(value.areaKeys as string[]),
+    consultedTreatmentKeys: Array.isArray(value.consultedTreatmentKeys) && value.consultedTreatmentKeys.every((item) => typeof item === "string")
+      ? uniqueStrings(value.consultedTreatmentKeys as string[])
+      : [],
     concernKeys: uniqueStrings(value.concernKeys as string[]),
     treatmentKeys: uniqueStrings(value.treatmentKeys as string[]),
   };
   const accepted = filterKnowledgeForDialogueProgress(raw, registry);
-  return fields.every((field) => accepted[field].length === raw[field].length)
+  return fields.every((field) => accepted[field].length === raw[field].length) &&
+    accepted.consultedTreatmentKeys.length === raw.consultedTreatmentKeys.length
     ? accepted
     : null;
 }
@@ -722,6 +728,10 @@ function mergeKnowledge(left: KnowledgeContext, right: KnowledgeContext): Knowle
   return {
     approvedFactIds: uniqueStrings([...left.approvedFactIds, ...right.approvedFactIds]),
     areaKeys: uniqueStrings([...left.areaKeys, ...right.areaKeys]),
+    consultedTreatmentKeys: uniqueStrings([
+      ...left.consultedTreatmentKeys,
+      ...right.consultedTreatmentKeys,
+    ]),
     concernKeys: uniqueStrings([...left.concernKeys, ...right.concernKeys]),
     treatmentKeys: uniqueStrings([...left.treatmentKeys, ...right.treatmentKeys]),
   };

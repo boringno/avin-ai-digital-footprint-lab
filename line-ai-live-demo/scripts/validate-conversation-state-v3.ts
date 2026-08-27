@@ -99,6 +99,7 @@ function completeV2Fixture() {
   state.knowledge = {
     approvedFactIds: ["fact-onda", "fact-botox"],
     areaKeys: ["lower_face"],
+    consultedTreatmentKeys: ["onda_pro", "botox"],
     concernKeys: ["jawline_looseness"],
     treatmentKeys: ["onda_pro", "botox"],
   };
@@ -122,12 +123,17 @@ function v2Projection(state: ConversationStateV3): ConversationV2State {
 }
 
 function knowledge(overrides: Partial<KnowledgeContext> = {}): KnowledgeContext {
-  return {
+  const base: KnowledgeContext = {
     approvedFactIds: [],
     areaKeys: [],
+    consultedTreatmentKeys: [],
     concernKeys: [],
     treatmentKeys: [],
+  };
+  return {
+    ...base,
     ...overrides,
+    consultedTreatmentKeys: overrides.consultedTreatmentKeys ?? base.consultedTreatmentKeys,
   };
 }
 
@@ -230,6 +236,7 @@ function validateTenantScopedOntologyAndPiiBoundaries() {
   contaminated.knowledge = {
     approvedFactIds: ["fact-onda", "0912345678", "王小美", "wang_xiaomei"],
     areaKeys: ["lower_face", "0912345678", "王小美", "onda_pro"],
+    consultedTreatmentKeys: ["botox", "onda_pro", "0912345678", "王小美"],
     concernKeys: ["jawline_looseness", "0912345678", "王小美", "onda_pro"],
     treatmentKeys: ["botox", "onda_pro", "0912345678", "王小美", "lower_face"],
   };
@@ -243,6 +250,7 @@ function validateTenantScopedOntologyAndPiiBoundaries() {
   assert.deepEqual(migrated.dialogueProgress.subjects[0]?.knowledge, {
     approvedFactIds: ["fact-onda"],
     areaKeys: ["lower_face"],
+    consultedTreatmentKeys: ["botox", "onda_pro"],
     concernKeys: ["jawline_looseness"],
     treatmentKeys: ["botox", "onda_pro"],
   }, "SV3-PII-1: only keys allowed for their exact ontology category may seed progress");
@@ -260,6 +268,7 @@ function validateTenantScopedOntologyAndPiiBoundaries() {
   allContaminated.knowledge = {
     approvedFactIds: ["wang_xiaomei"],
     areaKeys: ["王小美"],
+    consultedTreatmentKeys: ["tel_0912345678"],
     concernKeys: ["0912345678"],
     treatmentKeys: ["tel_0912345678"],
   };

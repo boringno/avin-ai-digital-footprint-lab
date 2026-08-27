@@ -1,9 +1,11 @@
 import { matchesConversationSearch, type ConversationInboxItem } from "../src/lib/admin-conversation-inbox-data";
 import {
   ADMIN_CONVERSATION_MESSAGE_LIMIT,
+  getConsultedTreatmentNames,
   orderNewestMessagesChronologically,
 } from "../src/lib/admin-workbench-data";
 import { getConversationDecisionTrace } from "../src/lib/admin-conversation-decision-trace";
+import { createConversationV2State } from "../src/lib/conversation-v2/state";
 
 function expect(condition: unknown, message: string) {
   if (!condition) {
@@ -36,6 +38,26 @@ expect(timelineMessages.length === 80, "對話時間軸應保留最新 80 筆");
 expect(timelineMessages[0] === 2, "最新 80 筆應排除最舊的一筆");
 expect(timelineMessages.at(-1) === 81, "時間軸最後一筆應是最新訊息");
 
+const consultedState = createConversationV2State({
+  episodeId: "workbench-consulted-treatments",
+  now: "2026-08-27T00:00:00.000Z",
+});
+consultedState.knowledge.treatmentKeys = ["botox"];
+consultedState.knowledge.consultedTreatmentKeys = ["onda_pro", "botox"];
+expect(
+  JSON.stringify(getConsultedTreatmentNames({ conversationV2State: consultedState })) ===
+    JSON.stringify(["ONDA PRO", "肉毒"]),
+  "後台應分開顯示本輪曾詢問療程，不只顯示目前預約療程",
+);
+const legacyConsultedState = structuredClone(consultedState) as unknown as {
+  knowledge: Record<string, unknown>;
+};
+delete legacyConsultedState.knowledge.consultedTreatmentKeys;
+expect(
+  getConsultedTreatmentNames({ conversationV2State: legacyConsultedState }).length === 0,
+  "舊狀態沒有本輪曾詢問欄位時應向後相容",
+);
+
 const decisionTrace = getConversationDecisionTrace({
   conversation_v2_nlu_confidence: 0.84,
   conversation_v2_nlu_status: "success",
@@ -61,4 +83,4 @@ expect(decisionTrace?.replyDeliveryStatus === "sent" && decisionTrace.replyDeliv
 expect(getConversationDecisionTrace({ official_source_url: "https://internal.example" }) === null, "後台決策路徑不得暴露內部來源網址");
 expect(getConversationDecisionTrace(null) === null, "舊訊息沒有 telemetry 時應維持相容");
 
-console.log("Conversation inbox validation passed: 17 checks");
+console.log("Conversation inbox validation passed: 19 checks");

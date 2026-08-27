@@ -1081,6 +1081,73 @@ function validateReducerIsPureAndPolicyIsSingular() {
   assert.equal(reduced.revision, initial.revision + 1);
 }
 
+function validateConsultedTreatmentsAreSeparateFromBookingOwnership() {
+  const initial = createConversationV2State({ episodeId: "episode-consulted", now: AT });
+  const onda = apply(initial, evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "learn_treatment",
+      text: "想了解 ONDA",
+      treatments: [entity("onda_pro")],
+      turnId: "consulted-onda",
+    }),
+  ));
+  assert.deepEqual(onda.knowledge.treatmentKeys, ["onda_pro"]);
+  assert.deepEqual(onda.knowledge.consultedTreatmentKeys, ["onda_pro"]);
+
+  const botox = apply(onda, evaluateDialoguePolicy(
+    onda,
+    turn({
+      speechAct: "learn_treatment",
+      text: "也想了解肉毒",
+      treatments: [entity("botox")],
+      turnId: "consulted-botox",
+    }),
+  ));
+  assert.deepEqual(botox.knowledge.treatmentKeys, ["botox"]);
+  assert.deepEqual(
+    botox.knowledge.consultedTreatmentKeys,
+    ["onda_pro", "botox"],
+    "switching the active treatment must retain the current episode's consultation history",
+  );
+
+  const booking = apply(botox, evaluateDialoguePolicy(
+    botox,
+    turn({
+      booking: { explicit: true, fields: { treatmentKeys: ["botox"] }, intent: "create" },
+      speechAct: "book_consultation",
+      text: "我要預約肉毒",
+      treatments: [entity("botox")],
+      turnId: "consulted-booking",
+    }),
+  ));
+  assert.deepEqual(
+    booking.bookingTask.draft.treatmentKeys,
+    ["botox"],
+    "the booking draft must continue to own only the treatment being booked",
+  );
+  assert.deepEqual(booking.knowledge.consultedTreatmentKeys, ["onda_pro", "botox"]);
+
+  const restartedResult = evaluateDialoguePolicy(
+    booking,
+    turn({
+      receivedAt: "2026-08-14T04:31:00.000Z",
+      speechAct: "learn_treatment",
+      text: "想了解 ONDA",
+      treatments: [entity("onda_pro")],
+      turnId: "consulted-new-episode",
+    }),
+  );
+  const restartedAction = expectAction(restartedResult, "learn_treatment");
+  assert.equal(restartedAction.episodeRestart, true);
+  const restarted = apply(booking, restartedResult);
+  assert.deepEqual(
+    restarted.knowledge.consultedTreatmentKeys,
+    ["onda_pro"],
+    "a new 30-minute episode must start a fresh consultation summary",
+  );
+}
+
 function validateEngineIdempotency() {
   const initial = createConversationV2State({ episodeId: "episode-idempotency", now: AT });
   const input = turn({
@@ -1136,6 +1203,7 @@ validateUnderspecifiedFineLinesClarifies();
 validateSelectionCommitsTreatmentSubjects();
 validateNegatedEntitiesNeverOwnDialogueKnowledge();
 validateBookingEpisodesDoNotLeakDrafts();
+validateConsultedTreatmentsAreSeparateFromBookingOwnership();
 validateReducerIsPureAndPolicyIsSingular();
 validateEngineIdempotency();
 

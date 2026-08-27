@@ -828,6 +828,7 @@ function activeOndaJawlineState(): ConversationV2State {
     knowledge: {
       approvedFactIds: [],
       areaKeys: ["jawline"],
+      consultedTreatmentKeys: ["onda_pro"],
       concernKeys: ["jawline_looseness"],
       treatmentKeys: ["onda_pro"],
     },
