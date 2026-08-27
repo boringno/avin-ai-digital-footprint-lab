@@ -122,6 +122,8 @@ export type AwaitingState = {
 export type KnowledgeContext = {
   approvedFactIds: string[];
   areaKeys: string[];
+  /** Clinic-approved treatments explicitly discussed in the current episode. */
+  consultedTreatmentKeys: string[];
   concernKeys: string[];
   treatmentKeys: string[];
 };

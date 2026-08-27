@@ -69,6 +69,9 @@ function cloneKnowledge(knowledge: KnowledgeContext): KnowledgeContext {
   return {
     approvedFactIds: [...knowledge.approvedFactIds],
     areaKeys: [...knowledge.areaKeys],
+    // Persisted schema-v2 rows created before this field existed are upgraded
+    // in memory instead of invalidating the customer's whole dialogue state.
+    consultedTreatmentKeys: [...(knowledge.consultedTreatmentKeys ?? [])],
     concernKeys: [...knowledge.concernKeys],
     treatmentKeys: [...knowledge.treatmentKeys],
   };
@@ -134,6 +137,7 @@ export function createConversationV2State(input: {
     knowledge: {
       approvedFactIds: [],
       areaKeys: [],
+      consultedTreatmentKeys: [],
       concernKeys: [],
       treatmentKeys: [],
     },
@@ -247,6 +251,7 @@ export function parsePersistedConversationV2State(value: unknown): ConversationV
     !isRecord(knowledge) ||
     !isStringArray(knowledge.approvedFactIds) ||
     !isStringArray(knowledge.areaKeys) ||
+    (knowledge.consultedTreatmentKeys !== undefined && !isStringArray(knowledge.consultedTreatmentKeys)) ||
     !isStringArray(knowledge.concernKeys) ||
     !isStringArray(knowledge.treatmentKeys) ||
     !isStringArray(value.pricingSubjectTreatmentKeys) ||
@@ -298,7 +303,13 @@ function mergeKnowledge(
   responseContext?: TreatmentResponseContext,
 ): KnowledgeContext {
   const base = mode === "replace_active_subject"
-    ? { approvedFactIds: [], areaKeys: [], concernKeys: [], treatmentKeys: [] }
+    ? {
+        approvedFactIds: [],
+        areaKeys: [],
+        consultedTreatmentKeys: [...state.knowledge.consultedTreatmentKeys],
+        concernKeys: [],
+        treatmentKeys: [],
+      }
     : cloneKnowledge(state.knowledge);
   const excludedAreaKeys = new Set(responseContext?.excludedAreaKeys ?? []);
   const excludedConcernKeys = new Set(responseContext?.excludedConcernKeys ?? []);
@@ -308,12 +319,32 @@ function mergeKnowledge(
     areaKeys: unique([...base.areaKeys, ...(values.areaKeys ?? [])]).filter(
       (key) => !excludedAreaKeys.has(key),
     ),
+    // Consultation history is append-only within one episode. A later
+    // rejection changes the active subject but does not erase what staff need
+    // to know was already discussed.
+    consultedTreatmentKeys: unique([
+      ...base.consultedTreatmentKeys,
+      ...(values.treatmentKeys ?? []).filter((key) => !excludedTreatmentKeys.has(key)),
+    ]),
     concernKeys: unique([...base.concernKeys, ...(values.concernKeys ?? [])]).filter(
       (key) => !excludedConcernKeys.has(key),
     ),
     treatmentKeys: unique([...base.treatmentKeys, ...(values.treatmentKeys ?? [])]).filter(
       (key) => !excludedTreatmentKeys.has(key),
     ),
+  };
+}
+
+function recordConsultedTreatments(
+  knowledge: KnowledgeContext,
+  treatmentKeys: readonly string[],
+): KnowledgeContext {
+  return {
+    ...cloneKnowledge(knowledge),
+    consultedTreatmentKeys: unique([
+      ...knowledge.consultedTreatmentKeys,
+      ...treatmentKeys,
+    ]),
   };
 }
 
@@ -506,12 +537,20 @@ export function reduceConversationV2State(
 
   switch (action.type) {
     case "learn_treatment": {
-      const knowledge = mergeKnowledge(
+      const mergedKnowledge = mergeKnowledge(
         next,
         action,
         action.knowledgeMode,
         action.responseContext,
       );
+      const knowledge = action.episodeRestart
+        ? {
+            ...mergedKnowledge,
+            consultedTreatmentKeys: unique(action.treatmentKeys).filter(
+              (key) => !action.responseContext.excludedTreatmentKeys.includes(key),
+            ),
+          }
+        : mergedKnowledge;
       const taskKind = action.taskKind === "compare_treatments" && knowledge.treatmentKeys.length < 2
         ? knowledge.treatmentKeys.length > 0
           ? "learn_treatment" as const
@@ -601,6 +640,7 @@ export function reduceConversationV2State(
           intent: action.intent,
           status: expectedField ? "collecting" : "completed",
         },
+        knowledge: recordConsultedTreatments(next.knowledge, draft.treatmentKeys),
       };
     }
     case "capture_booking_fields": {
@@ -627,6 +667,7 @@ export function reduceConversationV2State(
           expectedField,
           status: expectedField ? "collecting" : "completed",
         },
+        knowledge: recordConsultedTreatments(next.knowledge, draft.treatmentKeys),
       };
     }
     case "answer_clinic_info": {
@@ -657,6 +698,7 @@ export function reduceConversationV2State(
             ...next.bookingTask,
             draft: cloneDraft(next.bookingTask.draft),
           },
+          knowledge: recordConsultedTreatments(next.knowledge, action.treatmentKeys),
           pricingSubjectTreatmentKeys: [...action.treatmentKeys],
         };
       }
@@ -666,6 +708,7 @@ export function reduceConversationV2State(
         activeTask: nextTask(next, "pricing", action.at, action.turnId),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
+        knowledge: recordConsultedTreatments(next.knowledge, action.treatmentKeys),
         pricingSubjectTreatmentKeys: [...action.treatmentKeys],
       };
     }
@@ -702,6 +745,7 @@ export function reduceConversationV2State(
               },
             }
           : {}),
+        knowledge: recordConsultedTreatments(next.knowledge, bookingDraft.treatmentKeys),
         control: {
           handoff: {
             id: action.handoffId,

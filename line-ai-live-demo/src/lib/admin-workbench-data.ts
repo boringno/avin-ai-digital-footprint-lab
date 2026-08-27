@@ -5,6 +5,8 @@ import { createEmptyConversationState } from "@/lib/conversation-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { reportOperationalError } from "@/lib/monitoring";
 import { hasCurrentPregnancyRiskMarker, hasPregnancyRiskMarker } from "@/lib/admin-risk-flags";
+import { findTreatmentByKey } from "@/lib/clinic-config";
+import { parsePersistedConversationV2State } from "@/lib/conversation-v2/state";
 import {
   getConversationDecisionTrace,
   type ConversationDecisionTrace,
@@ -66,6 +68,7 @@ export type WorkbenchConversationDetail = {
     preferredBranch: string | null;
     preferredTimeSlots: string[];
   };
+  consultedTreatments: string[];
   conversationId: string;
   displayName: string;
   leadStage: string;
@@ -126,6 +129,16 @@ export const ADMIN_CONVERSATION_MESSAGE_LIMIT = 80;
 
 export function orderNewestMessagesChronologically<T>(newestFirstMessages: T[]) {
   return [...newestFirstMessages].reverse();
+}
+
+export function getConsultedTreatmentNames(
+  contextJson: Record<string, unknown> | undefined,
+) {
+  const state = parsePersistedConversationV2State(contextJson?.conversationV2State);
+  if (!state) return [];
+  return Array.from(new Set(state.knowledge.consultedTreatmentKeys.map((key) =>
+    findTreatmentByKey(key)?.name ?? key,
+  )));
 }
 
 export async function loadWorkbenchData(staff: AdminStaffUser, selectedConversationId?: string) {
@@ -207,6 +220,7 @@ export async function loadConversationDetail(staff: AdminStaffUser, conversation
           preferredTimeSlots: normalizeStringArray(bookingLead.preferred_time_slots),
         }
       : null,
+    consultedTreatments: getConsultedTreatmentNames(runtimeState?.context_json),
     conversationId: conversation.id,
     displayName: conversation.display_name || shortLineUserId(conversation.line_user_id),
     leadStage: conversation.lead_stage,

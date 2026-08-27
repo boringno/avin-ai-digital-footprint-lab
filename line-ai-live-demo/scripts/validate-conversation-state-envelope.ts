@@ -42,6 +42,7 @@ function knownEnvelope(input: {
   state.knowledge = {
     approvedFactIds: [],
     areaKeys: ["lower_face"],
+    consultedTreatmentKeys: ["onda_pro"],
     concernKeys: ["jawline_looseness"],
     treatmentKeys: ["onda_pro"],
   };
