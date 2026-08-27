@@ -68,6 +68,8 @@ export type ResponseContract = {
   mustNotRepeat: ResponseAspect[];
   nextStep: ResponseNextStep;
   schemaVersion: typeof RESPONSE_CONTRACT_SCHEMA_VERSION;
+  /** Canonical treatment subjects that the obligations refer to. */
+  subjectKeys: string[];
 };
 
 /**
@@ -120,6 +122,7 @@ export function isResponseContract(value: unknown): value is ResponseContract {
   if (!Array.isArray(value.mustAnswer) || !Array.isArray(value.mustNotRepeat)) return false;
   const mustAnswer = value.mustAnswer;
   const mustNotRepeat = value.mustNotRepeat;
+  const subjectKeys = value.subjectKeys;
   if (
     !CTA_POLICIES.has(value.ctaPolicy as ResponseContract["ctaPolicy"]) ||
     mustAnswer.length === 0 ||
@@ -127,6 +130,9 @@ export function isResponseContract(value: unknown): value is ResponseContract {
     new Set(mustAnswer).size !== mustAnswer.length ||
     !mustNotRepeat.every(isResponseAspect) ||
     new Set(mustNotRepeat).size !== mustNotRepeat.length ||
+    !Array.isArray(subjectKeys) ||
+    !subjectKeys.every((key) => typeof key === "string" && key.trim().length > 0) ||
+    new Set(subjectKeys).size !== subjectKeys.length ||
     mustAnswer.some((aspect) => mustNotRepeat.includes(aspect)) ||
     !isResponseNextStep(value.nextStep)
   ) return false;
@@ -150,6 +156,7 @@ export function createResponseContract(value: ResponseContract): ResponseContrac
     mustAnswer: [...value.mustAnswer],
     mustNotRepeat: [...value.mustNotRepeat],
     nextStep: { ...value.nextStep },
+    subjectKeys: [...value.subjectKeys],
   };
 }
 
@@ -167,6 +174,7 @@ export function cloneResponseContractAttachment(
       mustAnswer: [...attachment.contract.mustAnswer],
       mustNotRepeat: [...attachment.contract.mustNotRepeat],
       nextStep: { ...attachment.contract.nextStep },
+      subjectKeys: [...attachment.contract.subjectKeys],
     },
     mode: attachment.mode,
   };

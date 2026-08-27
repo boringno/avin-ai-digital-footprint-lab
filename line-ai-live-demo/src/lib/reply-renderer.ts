@@ -7,6 +7,7 @@ import { constrainMedicalAiReply } from "@/lib/ai-fallback-guard";
 import { renderApprovedPriceReplyContract } from "@/lib/approved-price-reply";
 import type { RecentConversationTurn } from "@/lib/conversation-context";
 import type { DialogueState } from "@/lib/dialogue-state";
+import type { ResponseAspect, ResponseContractAttachment } from "@/lib/response-contract";
 import {
   buildApprovedKnowledge,
   buildReplyPlanGuidance,
@@ -43,6 +44,24 @@ export type ReplyTextSource =
   | "approved_terminal_fallback"
   | "grounded_generation";
 
+export type ResponseContractShadowObservation = {
+  completedAspects: ResponseAspect[];
+  coverageBasis:
+    | "approved_deterministic_handoff"
+    | "approved_price_contract"
+    | "approved_price_subject_mismatch"
+    | "not_measurable"
+    | "off";
+  coverageStatus: "missing" | "off" | "unmeasured" | "verified";
+  ctaPolicy: "allow" | "forbid" | "require" | null;
+  missingAspects: ResponseAspect[];
+  mode: ResponseContractAttachment["mode"];
+  mustAnswer: ResponseAspect[];
+  mustNotRepeat: ResponseAspect[];
+  nextStepKind: "ask" | "collect_booking" | "handoff" | "invite_consultation" | "none" | null;
+  subjectKeys: string[];
+};
+
 export type ReplyRendererTelemetry = {
   dialogueAct: DialogueAct;
   fallbackReason?: ReplyRendererFallbackReason;
@@ -53,6 +72,7 @@ export type ReplyRendererTelemetry = {
   latencyMs: number;
   replyTextSource: ReplyTextSource;
   renderMode: ReplyRendererMode;
+  responseContract: ResponseContractShadowObservation;
 };
 
 export type ReplyRendererInput = {
@@ -83,11 +103,95 @@ export type ReplyRendererResult = {
   replyText: string;
   replyTextSource: ReplyTextSource;
   renderMode: ReplyRendererMode;
+  responseContract: ResponseContractShadowObservation;
   sourceUrl?: string;
   tokensIn?: number;
   tokensOut?: number;
   usedGroundedKnowledge: boolean;
 };
+
+type UnobservedReplyRendererResult = Omit<ReplyRendererResult, "responseContract">;
+
+const PRICE_RESPONSE_ASPECTS = new Set<ResponseAspect>([
+  "price_campaign",
+  "price_regular",
+  "price_unspecified",
+]);
+
+export function observeResponseContractShadow(input: {
+  attachment: ResponseContractAttachment;
+  dialogueAct: DialogueAct;
+  plan?: Pick<ReplyPlan, "approvedPriceReply">;
+  replyTextSource: ReplyTextSource;
+}): ResponseContractShadowObservation {
+  if (input.attachment.mode === "off") {
+    return {
+      completedAspects: [],
+      coverageBasis: "off",
+      coverageStatus: "off",
+      ctaPolicy: null,
+      missingAspects: [],
+      mode: "off",
+      mustAnswer: [],
+      mustNotRepeat: [],
+      nextStepKind: null,
+      subjectKeys: [],
+    };
+  }
+
+  const contract = input.attachment.contract;
+  let completedAspects: ResponseAspect[] = [];
+  let coverageBasis: ResponseContractShadowObservation["coverageBasis"] = "not_measurable";
+  let measurable = false;
+  const quotedTreatmentKeys = new Set(
+    input.plan?.approvedPriceReply?.quotes.flatMap((quote) => quote.treatmentKeys) ?? [],
+  );
+  const priceSubjectMatches = contract.subjectKeys.length === 0 ||
+    contract.subjectKeys.every((key) => quotedTreatmentKeys.has(key));
+
+  if (
+    input.dialogueAct === "quote_approved_price" &&
+    input.replyTextSource === "approved_price_contract"
+  ) {
+    measurable = true;
+    if (priceSubjectMatches) {
+      completedAspects = contract.mustAnswer.filter((aspect) => PRICE_RESPONSE_ASPECTS.has(aspect));
+      coverageBasis = "approved_price_contract";
+    } else {
+      coverageBasis = "approved_price_subject_mismatch";
+    }
+  } else if (
+    input.dialogueAct === "handoff" &&
+    input.replyTextSource === "approved_deterministic"
+  ) {
+    completedAspects = contract.mustAnswer.filter((aspect) => aspect === "handoff_confirmation");
+    coverageBasis = "approved_deterministic_handoff";
+    measurable = true;
+  } else if (input.dialogueAct === "quote_approved_price" || input.dialogueAct === "handoff") {
+    measurable = true;
+  }
+
+  const missingAspects = measurable
+    ? contract.mustAnswer.filter((aspect) => !completedAspects.includes(aspect))
+    : [];
+
+  return {
+    completedAspects,
+    coverageBasis,
+    coverageStatus: !measurable
+      ? "unmeasured"
+      : missingAspects.length > 0
+        ? "missing"
+        : "verified",
+    ctaPolicy: contract.ctaPolicy,
+    missingAspects,
+    mode: input.attachment.mode,
+    mustAnswer: [...contract.mustAnswer],
+    mustNotRepeat: [...contract.mustNotRepeat],
+    nextStepKind: contract.nextStep.kind,
+    subjectKeys: [...contract.subjectKeys],
+  };
+}
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 6_000;
 export const RENDERER_TERMINAL_SAFE_FALLBACK =
@@ -221,6 +325,14 @@ export function toReplyRendererTelemetry(result: ReplyRendererResult): ReplyRend
     latencyMs: result.latencyMs,
     replyTextSource: result.replyTextSource,
     renderMode: result.renderMode,
+    responseContract: {
+      ...result.responseContract,
+      completedAspects: [...result.responseContract.completedAspects],
+      missingAspects: [...result.responseContract.missingAspects],
+      mustAnswer: [...result.responseContract.mustAnswer],
+      mustNotRepeat: [...result.responseContract.mustNotRepeat],
+      subjectKeys: [...result.responseContract.subjectKeys],
+    },
   };
 }
 
@@ -235,6 +347,16 @@ export function toReplyRendererPayloadJson(telemetry: ReplyRendererTelemetry | u
     renderer_latency_ms: telemetry?.latencyMs ?? null,
     renderer_reply_text_source: telemetry?.replyTextSource ?? null,
     renderer_mode: telemetry?.renderMode ?? null,
+    response_contract_completed_aspects: telemetry?.responseContract.completedAspects ?? null,
+    response_contract_coverage_basis: telemetry?.responseContract.coverageBasis ?? null,
+    response_contract_coverage_status: telemetry?.responseContract.coverageStatus ?? null,
+    response_contract_cta_policy: telemetry?.responseContract.ctaPolicy ?? null,
+    response_contract_missing_aspects: telemetry?.responseContract.missingAspects ?? null,
+    response_contract_mode: telemetry?.responseContract.mode ?? null,
+    response_contract_must_answer: telemetry?.responseContract.mustAnswer ?? null,
+    response_contract_must_not_repeat: telemetry?.responseContract.mustNotRepeat ?? null,
+    response_contract_next_step_kind: telemetry?.responseContract.nextStepKind ?? null,
+    response_contract_subject_keys: telemetry?.responseContract.subjectKeys ?? null,
   };
 }
 
@@ -348,7 +470,7 @@ function renderDeterministic(
   input: ReplyRendererInput,
   usedGroundedKnowledge: boolean,
   startedAt: number,
-): ReplyRendererResult {
+): UnobservedReplyRendererResult {
   if (input.plan.approvedPriceReply) {
     const replyText = renderApprovedPriceReplyContract(
       input.plan.approvedPriceReply,
@@ -496,7 +618,7 @@ function renderGuardedFallback(
   usedGroundedKnowledge: boolean,
   startedAt: number,
   generationMetadata?: GeneratedAiReply,
-): ReplyRendererResult {
+): UnobservedReplyRendererResult {
   const generatorInvoked = ![
     "approved_price_contract_rejected",
     "deterministic_rejected",
@@ -609,7 +731,9 @@ function renderGuardedFallback(
   };
 }
 
-export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyRendererResult> {
+async function renderReplyPlanUnobserved(
+  input: ReplyRendererInput,
+): Promise<UnobservedReplyRendererResult> {
   const startedAt = Date.now();
   const replyPlanGuidance = buildReplyPlanGuidance(input.plan);
   const approvedKnowledge = normalizeKnowledge([
@@ -693,5 +817,18 @@ export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyR
     tokensIn: generatedReply.tokensIn,
     tokensOut: generatedReply.tokensOut,
     usedGroundedKnowledge,
+  };
+}
+
+export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyRendererResult> {
+  const result = await renderReplyPlanUnobserved(input);
+  return {
+    ...result,
+    responseContract: observeResponseContractShadow({
+      attachment: input.plan.responseContract,
+      dialogueAct: result.dialogueAct,
+      plan: input.plan,
+      replyTextSource: result.replyTextSource,
+    }),
   };
 }

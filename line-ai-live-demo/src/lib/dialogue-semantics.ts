@@ -68,6 +68,8 @@ export const DIALOGUE_REFERENCES = [
 export type DialogueReference = (typeof DIALOGUE_REFERENCES)[number];
 
 export type NluDialogueFrame = {
+  /** Ordered current-message NLU candidate aspects; shadow-only and never fact/state/action ownership. */
+  aspects?: QuestionAspect[];
   focus: QuestionAspect;
   move: ConversationMove;
   reference: DialogueReference;
@@ -75,6 +77,7 @@ export type NluDialogueFrame = {
 };
 
 export const DEFAULT_NLU_DIALOGUE_FRAME: NluDialogueFrame = {
+  aspects: [],
   focus: "none",
   move: "none",
   reference: "none",

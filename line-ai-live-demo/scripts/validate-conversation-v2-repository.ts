@@ -181,6 +181,64 @@ expect(
   "different semantic axes for one LINE identity must stop replay instead of choosing a winner",
 );
 
+const multiAspect = record({
+  lineTimestamp: 3_100,
+  messageId: "msg-multi-aspect",
+  turn: turn({
+    questionAspect: "suitability",
+    questionAspects: ["suitability", "price_campaign"],
+    speechAct: "ask_price",
+    text: "ONDA 適合我嗎？最近有活動嗎？",
+  }),
+});
+const multiAspectReplay = repository.replay({
+  episodeId: EPISODE,
+  records: [multiAspect],
+  tenantId: TENANT,
+  userId: USER,
+});
+expect(
+  multiAspectReplay.appliedRecordCount === 1 &&
+    multiAspectReplay.steps[0]?.result.replyPlan.responseContract.mode === "shadow",
+  "ordered multi-aspect turns survive replay and reach the shadow response contract",
+);
+
+for (const [label, questionAspects] of [
+  ["wrong primary", ["price_campaign", "suitability"]],
+  ["duplicate", ["suitability", "suitability"]],
+  ["none mixed in", ["suitability", "none"]],
+  ["more than four", ["suitability", "price_campaign", "benefits", "duration", "sessions"]],
+] as const) {
+  const invalid = structuredClone(multiAspect);
+  invalid.messageId = `msg-invalid-aspects-${label}`;
+  invalid.turn.questionAspects = [...questionAspects] as TurnUnderstanding["questionAspects"];
+  const replay = repository.replay({
+    episodeId: EPISODE,
+    records: [invalid],
+    tenantId: TENANT,
+    userId: USER,
+  });
+  expect(
+    replay.invalidRecords[0]?.reason === "invalid_turn" && replay.appliedRecordCount === 0,
+    `invalid questionAspects are rejected: ${label}`,
+  );
+}
+
+const legacySingleAspect = repository.replay({
+  episodeId: EPISODE,
+  records: [record({
+    lineTimestamp: 3_200,
+    messageId: "msg-legacy-single-aspect",
+    turn: turn({ questionAspect: "benefits", speechAct: "ask_treatment_detail" }),
+  })],
+  tenantId: TENANT,
+  userId: USER,
+});
+expect(
+  legacySingleAspect.appliedRecordCount === 1,
+  "legacy replay turns without questionAspects remain accepted",
+);
+
 function approvedAssetTurn(replyAssetId: string, overrides: Partial<TurnUnderstanding> = {}) {
   return turn({
     areas: [{ confidence: 1, key: "jawline", polarity: "affirmed", resolution: "resolved" }],

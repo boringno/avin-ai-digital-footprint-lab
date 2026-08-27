@@ -2,6 +2,7 @@ import { findAllTreatmentsByMessage, findTreatmentByMessage } from "@/lib/clinic
 import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
 import { createOffResponseContract } from "@/lib/response-contract";
 
+import { buildShadowResponseContractForAction } from "./response-contract-policy";
 import {
   isPureAwaitingSelectionAnswer,
   resolveAwaitingSelection,
@@ -759,20 +760,29 @@ function deterministicPlan(
   }
 }
 
-function planForAction(state: ConversationV2State, action: DialoguePolicyAction): ReplyPlan {
+function planForAction(
+  state: ConversationV2State,
+  turn: TurnUnderstanding,
+  action: DialoguePolicyAction,
+): ReplyPlan {
+  let plan: ReplyPlan;
   if (action.type === "do_not_reply") {
-    return {
+    plan = {
       action: action.type,
       mode: "silent",
       reason: action.reason,
       responseContract: createOffResponseContract(),
       sourceTurnId: action.turnId,
     };
+  } else if (action.type === "learn_treatment" || action.type === "answer_selection") {
+    plan = generatedPlan(state, action);
+  } else {
+    plan = deterministicPlan(action);
   }
-  if (action.type === "learn_treatment" || action.type === "answer_selection") {
-    return generatedPlan(state, action);
-  }
-  return deterministicPlan(action);
+  return {
+    ...plan,
+    responseContract: buildShadowResponseContractForAction({ action, plan, turn }),
+  };
 }
 
 function initialDraft(
@@ -1359,5 +1369,5 @@ export function evaluateDialoguePolicy(
   if (hasTurnPreferenceSignal && action.type !== "do_not_reply") {
     action = { ...action, preferenceContext: cloneResponseContext(turnPreferenceContext) };
   }
-  return { action, replyPlan: planForAction(state, action) };
+  return { action, replyPlan: planForAction(state, turn, action) };
 }

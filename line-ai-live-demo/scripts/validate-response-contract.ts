@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 
 import { createStaticClinicFactsProvider } from "../src/lib/clinic-facts";
+import type { DialogueState } from "../src/lib/dialogue-state";
 import { hydrateConversationV2ReplyPlan } from "../src/lib/conversation-v2/hydrate-reply-plan";
+import { adaptNluFrameToConversationV2Turn } from "../src/lib/conversation-v2/nlu-adapter";
 import { evaluateDialoguePolicy } from "../src/lib/conversation-v2/policy";
 import { createConversationV2State } from "../src/lib/conversation-v2/state";
 import type { DialoguePolicyResult, TurnUnderstanding } from "../src/lib/conversation-v2/types";
+import { parseNluFrame } from "../src/lib/nlu-frame";
 import {
   buildReplyPlanGuidance,
   legacyDecisionToReplyPlan,
 } from "../src/lib/reply-plan";
+import { renderReplyPlan } from "../src/lib/reply-renderer";
 import {
   cloneResponseContractAttachment,
   createOffResponseContract,
@@ -17,8 +21,29 @@ import {
   RESPONSE_CONTRACT_SCHEMA_VERSION,
   type ResponseContractAttachment,
 } from "../src/lib/response-contract";
+import { loadSeedData } from "../src/lib/seed-loader";
 
 const NOW = "2026-08-20T08:00:00.000Z";
+const FOOTER = "以上為 AI 客服順順初步回覆。";
+
+function rendererDialogueState(treatmentKey: string): DialogueState {
+  return {
+    answeredTopics: [],
+    areaKeys: [],
+    bookingAction: null,
+    bookingIntent: "none",
+    concernKeys: [],
+    dialogueAct: "answer_followup",
+    episodeId: `response-contract-${treatmentKey}`,
+    handoffStatus: "ai_active",
+    knownNeeds: [],
+    lastTransitionAt: NOW,
+    primaryConcernKey: undefined,
+    schemaVersion: 1,
+    topic: "treatment",
+    treatmentKeys: [treatmentKey],
+  };
+}
 
 function turn(overrides: Partial<TurnUnderstanding> = {}): TurnUnderstanding {
   return {
@@ -54,6 +79,7 @@ function shadowAttachment(): ResponseContractAttachment {
         kind: "ask",
       },
       schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+      subjectKeys: ["onda_pro"],
     },
     mode: "shadow",
   };
@@ -70,8 +96,261 @@ function validateExplicitDefaultOff() {
 
   const state = createConversationV2State({ episodeId: "episode-contract", now: NOW });
   const result = evaluateDialoguePolicy(state, turn());
-  assert.deepEqual(result.replyPlan.responseContract, { mode: "off" }, "RC1: every V2 policy plan must explicitly default off");
+  assert.deepEqual(
+    result.replyPlan.responseContract,
+    {
+      contract: {
+        ctaPolicy: "allow",
+        mustAnswer: ["overview", "benefits", "need_discovery"],
+        mustNotRepeat: [],
+        nextStep: {
+          aspect: "need_discovery",
+          expectedAnswerType: "concern",
+          kind: "ask",
+        },
+        schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+        subjectKeys: ["onda_pro"],
+      },
+      mode: "shadow",
+    },
+    "RC1: customer-visible V2 plans must expose a shadow contract",
+  );
   assert.deepEqual(createOffResponseContract(), { mode: "off" });
+}
+
+function validateDeterministicShadowPilot() {
+  const state = createConversationV2State({ episodeId: "episode-contract-pilot", now: NOW });
+  const price = evaluateDialoguePolicy(state, turn({
+    questionAspect: "suitability",
+    speechAct: "ask_price",
+    text: "我雙下巴肉很多，ONDA 適合嗎？最近有活動嗎？",
+    turnId: "turn-contract-price-multi-intent",
+  }));
+  assert.equal(price.action.type, "answer_price", "RC1b: deterministic price must remain the winning action");
+  assert.deepEqual(
+    price.replyPlan.responseContract,
+    {
+      contract: {
+        ctaPolicy: "allow",
+        mustAnswer: ["price_campaign", "suitability"],
+        mustNotRepeat: [],
+        nextStep: { kind: "none" },
+        schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+        subjectKeys: ["onda_pro"],
+      },
+      mode: "shadow",
+    },
+    "RC1b: the shadow contract must preserve a non-price secondary obligation",
+  );
+
+  const handoff = evaluateDialoguePolicy(state, turn({
+    handoffReason: "human_request",
+    questionAspect: "none",
+    speechAct: "request_handoff",
+    text: "我要找真人客服",
+    treatments: [],
+    turnId: "turn-contract-handoff",
+  }));
+  assert.equal(handoff.action.type, "queue_handoff", "RC1b: handoff policy must remain deterministic");
+  assert.deepEqual(
+    handoff.replyPlan.responseContract,
+    {
+      contract: {
+        ctaPolicy: "require",
+        mustAnswer: ["handoff_confirmation"],
+        mustNotRepeat: [],
+        nextStep: { kind: "handoff" },
+        schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+        subjectKeys: [],
+      },
+      mode: "shadow",
+    },
+    "RC1b: handoff must expose a measurable shadow obligation",
+  );
+}
+
+async function validateParsedMultiAspectPipeline() {
+  const seedData = await loadSeedData();
+  const snapshot = await createStaticClinicFactsProvider({
+    pricingCampaigns: seedData.pricingCampaigns,
+  }).loadSnapshot({ now: new Date(NOW) });
+  const cases = [
+    {
+      expectedMustAnswer: ["price_campaign", "suitability", "comfort_recovery"],
+      expectedMissing: ["suitability", "comfort_recovery"],
+      expectedPrice: /16,888/u,
+      expectedSubject: "onda_pro",
+      id: "onda-suitability-campaign",
+      rawFrame: {
+        areas: ["jawline"],
+        confidence: 0.96,
+        concerns: [{ area: "jawline", key: "jawline_looseness" }],
+        dialogue: {
+          aspects: ["suitability", "comfort_recovery", "price_campaign"],
+          focus: "suitability",
+          move: "start",
+          reference: "explicit",
+          speechAct: "ask_price",
+        },
+        intents: ["pricing"],
+        negated: [],
+        safety: {
+          complaint: false,
+          humanRequest: false,
+          postTreatmentRisk: false,
+          pregnancyNursing: false,
+        },
+        schemaVersion: 3,
+        treatments: ["onda_pro"],
+      },
+      text: "我雙下巴肉很多，ONDA 適合嗎？恢復期呢？最近有活動嗎？",
+    },
+    {
+      expectedMustAnswer: ["price_campaign", "brands"],
+      expectedMissing: ["brands"],
+      expectedPrice: /999/u,
+      expectedSubject: "botox",
+      id: "botox-brands-campaign",
+      rawFrame: {
+        areas: [],
+        confidence: 0.95,
+        concerns: [],
+        dialogue: {
+          aspects: ["brands", "price_campaign"],
+          focus: "brands",
+          move: "continue",
+          reference: "explicit",
+          speechAct: "ask_price",
+        },
+        intents: ["pricing"],
+        negated: [],
+        safety: {
+          complaint: false,
+          humanRequest: false,
+          postTreatmentRisk: false,
+          pregnancyNursing: false,
+        },
+        schemaVersion: 3,
+        treatments: ["botox"],
+      },
+      text: "肉毒有哪些品牌？現在活動價格多少？",
+    },
+  ] as const;
+
+  for (const item of cases) {
+    const parsed = parseNluFrame(item.rawFrame);
+    assert(parsed, `RC1c ${item.id}: schema-v3 NLU frame must parse`);
+    const adapted = adaptNluFrameToConversationV2Turn({
+      frame: parsed,
+      receivedAt: NOW,
+      text: item.text,
+      turnId: `turn-contract-${item.id}`,
+    });
+    assert.deepEqual(
+      adapted.questionAspects,
+      item.rawFrame.dialogue.aspects,
+      `RC1c ${item.id}: adapter must preserve ordered current-message aspects`,
+    );
+
+    const state = createConversationV2State({
+      episodeId: `episode-contract-${item.id}`,
+      now: NOW,
+    });
+    const result = evaluateDialoguePolicy(state, adapted);
+    assert.equal(
+      result.action.type,
+      "answer_price",
+      `RC1c ${item.id}: deterministic price must remain the single winning action`,
+    );
+    assert.deepEqual(
+      result.replyPlan.responseContract,
+      {
+        contract: {
+          ctaPolicy: "allow",
+          mustAnswer: item.expectedMustAnswer,
+          mustNotRepeat: [],
+          nextStep: { kind: "none" },
+          schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+          subjectKeys: [item.expectedSubject],
+        },
+        mode: "shadow",
+      },
+      `RC1c ${item.id}: contract must order the deterministic action before secondary obligations`,
+    );
+
+    const offPlan = {
+      ...result.replyPlan,
+      responseContract: createOffResponseContract(),
+    } as typeof result.replyPlan;
+    const shadowHydrated = await hydrateConversationV2ReplyPlan({
+      nextState: state,
+      result,
+      snapshot,
+      turn: adapted,
+    });
+    const offHydrated = await hydrateConversationV2ReplyPlan({
+      nextState: state,
+      result: { ...result, replyPlan: offPlan },
+      snapshot,
+      turn: adapted,
+    });
+    assert(shadowHydrated.rendererPlan, `RC1c ${item.id}: shadow plan must hydrate`);
+    assert(offHydrated.rendererPlan, `RC1c ${item.id}: off plan must hydrate`);
+    const {
+      responseContract: shadowContract,
+      ...shadowCustomerPlan
+    } = shadowHydrated.rendererPlan;
+    const {
+      responseContract: offContract,
+      ...offCustomerPlan
+    } = offHydrated.rendererPlan;
+    assert.equal(shadowContract.mode, "shadow");
+    assert.equal(offContract.mode, "off");
+    assert.deepEqual(
+      shadowCustomerPlan,
+      offCustomerPlan,
+      `RC1c ${item.id}: shadow contract must not alter customer text or renderer input`,
+    );
+
+    const dialogueState = rendererDialogueState(item.expectedSubject);
+    const shadowRendered = await renderReplyPlan({
+      customerMessage: item.text,
+      dialogueState,
+      footer: FOOTER,
+      generator: async () => { throw new Error("deterministic price path must not call a model"); },
+      plan: shadowHydrated.rendererPlan,
+      recentTurns: [],
+    });
+    const offRendered = await renderReplyPlan({
+      customerMessage: item.text,
+      dialogueState,
+      footer: FOOTER,
+      generator: async () => { throw new Error("deterministic price path must not call a model"); },
+      plan: offHydrated.rendererPlan,
+      recentTurns: [],
+    });
+    assert.match(
+      shadowRendered.replyText,
+      item.expectedPrice,
+      `RC1c ${item.id}: the actual final renderer text must include the approved price`,
+    );
+    assert.equal(
+      shadowRendered.replyText,
+      offRendered.replyText,
+      `RC1c ${item.id}: shadow observation must not alter final customer text`,
+    );
+    assert.deepEqual(
+      shadowRendered.responseContract.completedAspects,
+      ["price_campaign"],
+      `RC1c ${item.id}: renderer may claim only the deterministic price receipt`,
+    );
+    assert.deepEqual(
+      shadowRendered.responseContract.missingAspects,
+      item.expectedMissing,
+      `RC1c ${item.id}: unanswered secondary intent must remain visible instead of becoming a false green`,
+    );
+    assert.equal(shadowRendered.responseContract.coverageStatus, "missing");
+  }
 }
 
 function validateAttachmentIsDeepClonedAndGuidanceNeutral() {
@@ -118,12 +397,17 @@ function validateContractStructureAndContradictions() {
   const created = createResponseContract(valid.contract);
   assert.deepEqual(created, valid.contract);
   assert.notEqual(created.mustAnswer, valid.contract.mustAnswer, "RC3: constructor must clone arrays");
+  assert.notEqual(created.subjectKeys, valid.contract.subjectKeys, "RC3: constructor must clone subject ownership");
 
   const overlap = {
     ...valid.contract,
     mustNotRepeat: ["overview"],
   };
   assert(!isResponseContract(overlap), "RC3: one aspect cannot be required and forbidden together");
+  assert(
+    !isResponseContract({ ...valid.contract, subjectKeys: ["onda_pro", "onda_pro"] }),
+    "RC3: treatment subject ownership cannot contain duplicates",
+  );
   const forbiddenCta = {
     ...valid.contract,
     ctaPolicy: "forbid",
@@ -320,6 +604,8 @@ async function validateHydrationPassesContractWithoutConsumingIt() {
 
 async function main() {
   validateExplicitDefaultOff();
+  validateDeterministicShadowPilot();
+  await validateParsedMultiAspectPipeline();
   validateAttachmentIsDeepClonedAndGuidanceNeutral();
   validateContractStructureAndContradictions();
   await validateHydrationPassesContractWithoutConsumingIt();

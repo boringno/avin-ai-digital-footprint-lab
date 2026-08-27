@@ -5,6 +5,7 @@ import { buildApprovedKnowledge, legacyDecisionToReplyPlan } from "../src/lib/re
 import {
   RENDERER_TERMINAL_SAFE_FALLBACK,
   buildRendererTerminalFallbackMessages,
+  observeResponseContractShadow,
   renderReplyPlan,
   toReplyRendererPayloadJson,
   toReplyRendererTelemetry,
@@ -430,6 +431,155 @@ async function validateDeterministicBypass() {
     /16,888/u,
     "RR1: a stale or mismatched price snapshot must fail closed without an amount",
   );
+}
+
+async function validateResponseContractShadowObservation() {
+  const pricePlan = legacyDecisionToReplyPlan(
+    {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "conversation_v2:price:approved_current",
+      matchedType: "pricing_campaign",
+      replyText: "this fallback must remain unused",
+    },
+    {
+      approvedPriceReply: {
+        quotes: [{
+          applicability: {},
+          branchScope: "全館適用",
+          campaignId: "approved-onda-16888",
+          customerPriceText: "體驗價 16,888 元",
+          role: "primary",
+          snapshotId: "snapshot-contract-shadow",
+          subjectLabel: "ONDA PRO",
+          treatmentKeys: ["onda_pro"],
+        }],
+        snapshotId: "snapshot-contract-shadow",
+      },
+      responseContract: {
+        contract: {
+          ctaPolicy: "allow",
+          mustAnswer: ["price_campaign", "suitability"],
+          mustNotRepeat: [],
+          nextStep: { kind: "none" },
+          schemaVersion: 1,
+          subjectKeys: ["onda_pro"],
+        },
+        mode: "shadow",
+      },
+      treatmentKeys: ["onda_pro"],
+    },
+  );
+  const price = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: pricePlan,
+    recentTurns: [],
+  });
+  assert.equal(price.replyTextSource, "approved_price_contract");
+  assert.deepEqual(
+    price.responseContract.completedAspects,
+    ["price_campaign"],
+    "RR1b: renderer may only claim the deterministic price obligation it proved",
+  );
+  assert.deepEqual(
+    price.responseContract.missingAspects,
+    ["suitability"],
+    "RR1b: the secondary suitability question must remain visible as a shadow omission",
+  );
+  assert.equal(price.responseContract.coverageStatus, "missing");
+  assert.equal(price.responseContract.coverageBasis, "approved_price_contract");
+
+  const mismatchedSubjectPlan = {
+    ...pricePlan,
+    responseContract: pricePlan.responseContract.mode === "shadow"
+      ? {
+          contract: {
+            ...pricePlan.responseContract.contract,
+            subjectKeys: ["botox"],
+          },
+          mode: "shadow" as const,
+        }
+      : pricePlan.responseContract,
+  };
+  const mismatchedSubject = await renderReplyPlan({
+    customerMessage: "肉毒最近有活動嗎？",
+    dialogueState: dialogueState({ treatmentKeys: ["botox"] }),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: mismatchedSubjectPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    mismatchedSubject.responseContract.coverageBasis,
+    "approved_price_subject_mismatch",
+    "RR1b: a price for the wrong treatment subject must never count as completed",
+  );
+  assert.deepEqual(
+    mismatchedSubject.responseContract.completedAspects,
+    [],
+    "RR1b: subject mismatch must leave every obligation incomplete",
+  );
+
+  const bookingObservation = observeResponseContractShadow({
+    attachment: {
+      contract: {
+        ctaPolicy: "allow",
+        mustAnswer: ["booking_next_field"],
+        mustNotRepeat: [],
+        nextStep: { kind: "none" },
+        schemaVersion: 1,
+        subjectKeys: ["onda_pro"],
+      },
+      mode: "shadow",
+    },
+    dialogueAct: "collect_booking",
+    replyTextSource: "approved_deterministic",
+  });
+  assert.equal(
+    bookingObservation.coverageStatus,
+    "unmeasured",
+    "RR1b: booking completion needs a structured hydration receipt before it can be verified",
+  );
+
+  const off = await renderReplyPlan({
+    customerMessage: "想了解 ONDA",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => ({ model: "fake", text: "可先依雙下巴需求評估。", tokensIn: 1, tokensOut: 1 }),
+    plan: treatmentPlan(),
+    recentTurns: [],
+  });
+  assert.equal(off.responseContract.coverageStatus, "off", "RR1b: non-pilot generation must remain explicitly off");
+
+  const generatedShadowPlan = treatmentPlan();
+  generatedShadowPlan.responseContract = {
+    contract: {
+      ctaPolicy: "allow",
+      mustAnswer: ["overview", "benefits"],
+      mustNotRepeat: [],
+      nextStep: { kind: "none" },
+      schemaVersion: 1,
+      subjectKeys: ["onda_pro"],
+    },
+    mode: "shadow",
+  };
+  const generatedShadow = await renderReplyPlan({
+    customerMessage: "想了解 ONDA 的效果",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => ({ model: "fake", text: "ONDA Pro 可依局部脂肪與緊實需求評估。", tokensIn: 1, tokensOut: 1 }),
+    plan: generatedShadowPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    generatedShadow.responseContract.coverageStatus,
+    "unmeasured",
+    "RR1b: free-text generation must not be promoted to verified coverage",
+  );
+  assert.deepEqual(generatedShadow.responseContract.completedAspects, []);
+  assert.deepEqual(generatedShadow.responseContract.missingAspects, []);
 }
 
 async function validateGeneratedReplyAndContext() {
@@ -1041,6 +1191,16 @@ async function validateRendererTelemetryContract() {
     "renderer_latency_ms",
     "renderer_mode",
     "renderer_reply_text_source",
+    "response_contract_completed_aspects",
+    "response_contract_coverage_basis",
+    "response_contract_coverage_status",
+    "response_contract_cta_policy",
+    "response_contract_missing_aspects",
+    "response_contract_mode",
+    "response_contract_must_answer",
+    "response_contract_must_not_repeat",
+    "response_contract_next_step_kind",
+    "response_contract_subject_keys",
   ], "RR8: internal persistence must use a narrow telemetry schema");
   const serialized = JSON.stringify(payload);
   assert(!serialized.includes("雙下巴呢") && !serialized.includes("本輪安全保底"), "RR8: telemetry payload must not persist message or full reply text");
@@ -1116,6 +1276,7 @@ async function validateApprovedQuickReplyUx() {
 
 async function main() {
   await validateDeterministicBypass();
+  await validateResponseContractShadowObservation();
   await validateGeneratedReplyAndContext();
   await validateBrandComparisonUsesOfficialBackgroundKnowledge();
   await validateGeneratorFailuresUsePlanFallback();

@@ -8,7 +8,7 @@ import { extractOpenAiResponseText, type OpenAiResponsesPayload } from "@/lib/op
 import { evaluateNluDecisionGate } from "@/lib/nlu-decision-adapter";
 
 const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
-export const NLU_PROMPT_VERSION = "nlu-v3-dialogue";
+export const NLU_PROMPT_VERSION = "nlu-v4-multi-aspect";
 type DecisionSnapshot = NluShadowObservation["deterministicDecision"];
 
 export type NluRecentTurn = {

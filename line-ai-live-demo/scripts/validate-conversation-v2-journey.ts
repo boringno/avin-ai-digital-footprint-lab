@@ -1140,6 +1140,61 @@ async function validateMultiFieldBookingCaptureAndResume() {
   assert.equal(bulkState.bookingTask.draft.name, "王小美");
   assert.equal(bulkState.bookingTask.draft.phone, "0912345678");
 
+  // A customer can submit a consultation request and a nearly complete
+  // booking bundle before the booking task exists. The strong deterministic
+  // bundle is consent to start intake even though the customer said
+  // "諮詢" instead of the literal word "預約". Only the truly missing branch
+  // is requested; treatments and contact fields must not be discarded.
+  const bundledConsultation = await supply({
+    context: createEmptyConversationContext("U-booking-consultation-bundle"),
+    message: "我要諮詢肉毒跟ONDA\n初診\n小帥\n0954-782-335\n平常下午都有空",
+  });
+  const bundledState = bundledConsultation.decision.nextContext.conversationV2State;
+  assert.ok(bundledState);
+  assert.equal(bundledState.bookingTask.status, "collecting");
+  assert.equal(bundledState.bookingTask.expectedField, "branch");
+  assert.deepEqual(
+    [...bundledState.bookingTask.draft.treatmentKeys].sort(),
+    ["botox", "onda_pro"],
+  );
+  assert.equal(bundledState.bookingTask.draft.firstVisit, true);
+  assert.equal(bundledState.bookingTask.draft.name, "小帥");
+  assert.equal(bundledState.bookingTask.draft.phone, "0954782335");
+  assert.deepEqual(bundledState.bookingTask.draft.timeSlots, ["平常下午都有空"]);
+  assert.match(bundledConsultation.decision.replyText, /館別/u);
+  assert.doesNotMatch(bundledConsultation.decision.replyText, /想先了解|改善方向/u);
+
+  // Contact details alone do not override an explicit statement that the
+  // customer is only learning and does not want to book yet.
+  const learningOnly = await supply({
+    context: createEmptyConversationContext("U-booking-consultation-control"),
+    message: "我想諮詢 ONDA，我叫王小明，電話 0912-345-678，但我只是先了解",
+  });
+  const learningState = learningOnly.decision.nextContext.conversationV2State;
+  assert.ok(learningState);
+  assert.equal(learningState.bookingTask.status, "inactive");
+  assert.notEqual(learningOnly.decision.matchedKey, "conversation_v2:booking:start_booking");
+
+  // The labelled natural form seen in Production must capture the name rather
+  // than ask for it again after already accepting the phone and first-visit
+  // value.
+  let labelledContext = await startBotoxBooking("U-booking-labelled-name-bundle");
+  for (const message of ["高雄館", "平日下午"] as const) {
+    const step = await supply({ context: labelledContext, message });
+    labelledContext = step.decision.nextContext;
+  }
+  const labelledBundle = await supply({
+    context: labelledContext,
+    message: "初診\n我叫做小帥\n電話 0954-684-223",
+  });
+  const labelledState = labelledBundle.decision.nextContext.conversationV2State;
+  assert.ok(labelledState);
+  assert.equal(labelledState.bookingTask.status, "completed");
+  assert.equal(labelledState.bookingTask.draft.firstVisit, true);
+  assert.equal(labelledState.bookingTask.draft.name, "小帥");
+  assert.equal(labelledState.bookingTask.draft.phone, "0954684223");
+  assert.doesNotMatch(labelledBundle.decision.replyText, /留下方便聯絡的姓名/u);
+
   // Invalid contact data never discards the valid fields that arrived beside
   // it. The next prompt asks only for a correctly formatted mobile number.
   const invalidStart = await startBotoxBooking("U-booking-invalid-phone-bundle");

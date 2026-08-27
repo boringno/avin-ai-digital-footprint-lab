@@ -203,6 +203,18 @@ function hasValidSemanticEvidence(value: JsonRecord) {
   return value.semanticEvidence === undefined && value.replyAssetId === undefined;
 }
 
+function hasValidQuestionAspects(value: JsonRecord) {
+  if (value.questionAspects === undefined) return true;
+  if (!Array.isArray(value.questionAspects) || value.questionAspects.length > 4) return false;
+  if (!value.questionAspects.every((aspect) =>
+    typeof aspect === "string" && aspect !== "none" && QUESTION_ASPECT_KEYS.has(aspect))) {
+    return false;
+  }
+  if (new Set(value.questionAspects).size !== value.questionAspects.length) return false;
+  if (value.questionAspect === "none") return value.questionAspects.length === 0;
+  return value.questionAspects.length > 0 && value.questionAspects[0] === value.questionAspect;
+}
+
 export function parseConversationV2Turn(value: unknown): TurnUnderstanding | null {
   if (!isRecord(value)
     || !isEntityMentionArray(value.areas)
@@ -216,6 +228,7 @@ export function parseConversationV2Turn(value: unknown): TurnUnderstanding | nul
     || !CONVERSATION_MOVE_KEYS.has(String(value.conversationMove))
     || !DIALOGUE_REFERENCE_KEYS.has(String(value.dialogueReference))
     || !QUESTION_ASPECT_KEYS.has(String(value.questionAspect))
+    || !hasValidQuestionAspects(value)
     || (value.booking !== undefined && !isBookingUnderstanding(value.booking))
     || (value.clarification !== undefined && !isClarification(value.clarification))
     || (value.selection !== undefined && !isSelection(value.selection))

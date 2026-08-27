@@ -68,6 +68,16 @@ const decisionTrace = getConversationDecisionTrace({
   renderer_guard_replaced_text: true,
   renderer_mode: "fallback",
   renderer_reply_text_source: "approved_fallback",
+  response_contract_completed_aspects: ["price_campaign"],
+  response_contract_coverage_basis: "approved_price_contract",
+  response_contract_coverage_status: "missing",
+  response_contract_cta_policy: "allow",
+  response_contract_missing_aspects: ["suitability"],
+  response_contract_mode: "shadow",
+  response_contract_must_answer: ["price_campaign", "suitability"],
+  response_contract_must_not_repeat: ["overview"],
+  response_contract_next_step_kind: "none",
+  response_contract_subject_keys: ["onda_pro"],
   reply_delivery_attempts: 1,
   reply_delivery_status: "sent",
   reply_delivery_suppressed_reason: null,
@@ -79,6 +89,14 @@ expect(decisionTrace?.nluStatus === "success" && decisionTrace.nluConfidence ===
 expect(decisionTrace?.fallbackReason === "generator_unavailable", "決策路徑應保留 fallback 原因");
 expect(decisionTrace?.guardReplacedText === true, "決策路徑應顯示 guard 是否替換客人文字");
 expect(decisionTrace?.replyTextSource === "approved_fallback", "決策路徑應顯示客人文字來源");
+expect(decisionTrace?.responseContractMode === "shadow", "決策路徑應顯示 Response Contract 模式");
+expect(decisionTrace?.responseContractCoverageStatus === "missing", "決策路徑應顯示 Response Contract 涵蓋狀態");
+expect(decisionTrace?.responseContractCoverageBasis === "approved_price_contract", "決策路徑應保留可稽核的涵蓋依據");
+expect(decisionTrace?.responseContractCtaPolicy === "allow", "決策路徑應顯示 CTA policy");
+expect(JSON.stringify(decisionTrace?.responseContractMustAnswer) === JSON.stringify(["price_campaign", "suitability"]), "決策路徑應保留多個必答義務");
+expect(JSON.stringify(decisionTrace?.responseContractCompletedAspects) === JSON.stringify(["price_campaign"]), "決策路徑不得把未完成義務算成已回答");
+expect(JSON.stringify(decisionTrace?.responseContractMissingAspects) === JSON.stringify(["suitability"]), "決策路徑應直接顯示疑似漏答面向");
+expect(JSON.stringify(decisionTrace?.responseContractSubjectKeys) === JSON.stringify(["onda_pro"]), "決策路徑應保留必答義務的療程主體");
 expect(decisionTrace?.replyDeliveryStatus === "sent" && decisionTrace.replyDeliveryAttempts === 1, "決策路徑應顯示 LINE 送達結果");
 expect(getConversationDecisionTrace({ official_source_url: "https://internal.example" }) === null, "後台決策路徑不得暴露內部來源網址");
 expect(getConversationDecisionTrace(null) === null, "舊訊息沒有 telemetry 時應維持相容");

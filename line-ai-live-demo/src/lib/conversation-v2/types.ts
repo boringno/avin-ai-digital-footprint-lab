@@ -281,6 +281,8 @@ export type TurnUnderstanding = {
   /** Structured price qualifiers extracted by NLU or a deterministic tool. */
   priceApplicability?: PriceApplicabilityDimensions;
   questionAspect: QuestionAspect;
+  /** Ordered current-message NLU candidate aspects; shadow-only and absent on legacy fixtures. */
+  questionAspects?: QuestionAspect[];
   receivedAt: string;
   /** Snapshot-pinned approved content selected by a trusted semantic anchor. */
   replyAssetId?: string;

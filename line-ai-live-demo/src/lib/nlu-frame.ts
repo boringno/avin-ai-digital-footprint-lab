@@ -9,7 +9,7 @@ import {
   type NluDialogueFrame,
 } from "@/lib/dialogue-semantics";
 
-export const NLU_FRAME_SCHEMA_VERSION = 2 as const;
+export const NLU_FRAME_SCHEMA_VERSION = 3 as const;
 
 export type NluSafetyFrame = {
   complaint: boolean;
@@ -26,7 +26,7 @@ export type NluFrame = {
   intents: ControlledIntent[];
   negated: Array<{ key: string; type: "area" | "concern" | "intent" | "treatment" }>;
   safety: NluSafetyFrame;
-  schemaVersion: 1 | typeof NLU_FRAME_SCHEMA_VERSION;
+  schemaVersion: 1 | 2 | typeof NLU_FRAME_SCHEMA_VERSION;
   treatments: string[];
 };
 
@@ -41,12 +41,16 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[]): T |
   return typeof value === "string" && allowed.includes(value as T) ? value as T : null;
 }
 
-function parseDialogueFrame(value: unknown): NluDialogueFrame | null {
+function parseDialogueFrame(
+  value: unknown,
+  schemaVersion: NluFrame["schemaVersion"],
+): NluDialogueFrame | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
     Object.keys(record).some(
       (key) => ![
+        "aspects",
         "focus",
         "move",
         "reference",
@@ -63,7 +67,26 @@ function parseDialogueFrame(value: unknown): NluDialogueFrame | null {
   if (!focus || !move || !reference || !speechAct) {
     return null;
   }
-  return { focus, move, reference, speechAct };
+  const aspectSet = new Set<string>(QUESTION_ASPECTS);
+  const parsedAspects = record.aspects === undefined
+    ? schemaVersion < 3
+      ? focus === "none" ? [] : [focus]
+      : null
+    : uniqueStrings(record.aspects, aspectSet);
+  if (!parsedAspects || parsedAspects.length > 4) return null;
+  if (Array.isArray(record.aspects) && parsedAspects.length !== record.aspects.length) return null;
+  if (
+    (focus === "none" && parsedAspects.length > 0) ||
+    (focus !== "none" && parsedAspects[0] !== focus) ||
+    (parsedAspects.includes("none") && parsedAspects.length > 1)
+  ) return null;
+  return {
+    aspects: parsedAspects as NluDialogueFrame["aspects"],
+    focus,
+    move,
+    reference,
+    speechAct,
+  };
 }
 
 function inferLegacyDialogueFrame(input: {
@@ -175,14 +198,25 @@ export function parseNluFrame(
   if (!safety || !["complaint", "humanRequest", "postTreatmentRisk", "pregnancyNursing"].every((key) => typeof safety[key] === "boolean")) return null;
 
   const schemaVersion = record.schemaVersion === undefined ? 1 : record.schemaVersion;
-  if (schemaVersion !== 1 && schemaVersion !== NLU_FRAME_SCHEMA_VERSION) return null;
+  if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== NLU_FRAME_SCHEMA_VERSION) return null;
   const parsedSafety = safety as NluSafetyFrame;
-  const dialogue = record.dialogue === undefined
+  const parsedDialogue = record.dialogue === undefined
     ? schemaVersion === 1
       ? inferLegacyDialogueFrame({ areas, concerns, intents, negated, safety: parsedSafety, treatments })
       : null
-    : parseDialogueFrame(record.dialogue);
-  if (!dialogue) return null;
+    : parseDialogueFrame(record.dialogue, schemaVersion);
+  if (!parsedDialogue) return null;
+  // Schema v1 inferred dialogue frames predate the aspect array. Normalize every
+  // accepted historical frame at the parser boundary so replay consumers do not
+  // need version-specific fallbacks.
+  const dialogue: NluDialogueFrame = {
+    ...parsedDialogue,
+    aspects: parsedDialogue.aspects?.length
+      ? [...parsedDialogue.aspects]
+      : parsedDialogue.focus === "none"
+        ? []
+        : [parsedDialogue.focus],
+  };
 
   return {
     areas,
@@ -208,6 +242,7 @@ export function buildNluInstructions(sourceOntology: ClinicOntology = clinicOnto
     "你只把客人訊息解析成語意框架，不回答客人、不推薦療程、不產生價格或療效內容。",
     "保留所有同時出現的意圖、療程、困擾與部位；否定項目放入 negated，不可當成肯定需求。",
     "dialogue.speechAct 只選本輪最主要的一個行動：首次了解用 learn_treatment；追問效果、原理、舒適度、恢復期、品牌或替代方案用 ask_treatment_detail；比較兩項療程用 compare_treatments。",
+    "dialogue.aspects 保留本輪最多 4 個明確提問面向：第一項固定等於 dialogue.focus，其餘依客人訊息出現順序排列；不得重複，也不要把未詢問的介紹或 CTA 填進 aspects。focus=none 時 aspects 必須是 []；focus!=none 時 aspects 必須有 1 至 4 項且不得包含 none。例如同時問適合度與活動價格時輸出 [\"suitability\",\"price_campaign\"]。",
     "『想諮詢／想了解』仍是了解療程；只有客人明確表示要預約、安排時間或留資料，才使用 book_consultation。修改或取消既有預約才使用 manage_booking。",
     "dialogue.move 表示本輪如何推進：首次主題 start、延續 continue、比較 compare、改口 replace、只想單做 prefer_single、拒絕某項 reject。",
     "dialogue.reference 表示主題來源：本輪明講 explicit、沿用上一主題 active_subject、沿用上一組比較 active_comparison、有指代但無法確認 unresolved。",
@@ -218,7 +253,7 @@ export function buildNluInstructions(sourceOntology: ClinicOntology = clinicOnto
     `intents 只能使用：${CONTROLLED_INTENTS.join(", ")}。`,
     `ontology=${JSON.stringify(promptOntology)}`,
     `只輸出 schemaVersion=${NLU_FRAME_SCHEMA_VERSION} 的 JSON；不得省略 dialogue、safety 或任何欄位。`,
-    '{"schemaVersion":2,"intents":[],"treatments":[],"areas":[],"concerns":[],"negated":[],"dialogue":{"speechAct":"unknown","focus":"none","move":"none","reference":"none"},"safety":{"pregnancyNursing":false,"postTreatmentRisk":false,"complaint":false,"humanRequest":false},"confidence":0}',
+    '{"schemaVersion":3,"intents":[],"treatments":[],"areas":[],"concerns":[],"negated":[],"dialogue":{"speechAct":"unknown","focus":"none","aspects":[],"move":"none","reference":"none"},"safety":{"pregnancyNursing":false,"postTreatmentRisk":false,"complaint":false,"humanRequest":false},"confidence":0}',
   ].join("\n");
 }
 
@@ -250,6 +285,11 @@ export function buildNluResponseFormat(sourceOntology: ClinicOntology = clinicOn
           dialogue: {
             additionalProperties: false,
             properties: {
+              aspects: {
+                items: { enum: QUESTION_ASPECTS, type: "string" },
+                maxItems: 4,
+                type: "array",
+              },
               focus: { enum: QUESTION_ASPECTS, type: "string" },
               move: { enum: CONVERSATION_MOVES, type: "string" },
               reference: { enum: DIALOGUE_REFERENCES, type: "string" },
@@ -258,6 +298,7 @@ export function buildNluResponseFormat(sourceOntology: ClinicOntology = clinicOn
             required: [
               "speechAct",
               "focus",
+              "aspects",
               "move",
               "reference",
             ],
