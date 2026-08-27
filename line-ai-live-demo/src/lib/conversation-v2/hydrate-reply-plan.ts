@@ -77,7 +77,7 @@ export const BOOKING_PROMPTS: Record<BookingField, string> = {
   change_request: "請告訴我想修改的日期、時段、館別或療程。",
   first_visit: "請問這次是初診還是複診呢？",
   name: "請留下方便聯絡的姓名。",
-  phone: "請留下聯絡電話。",
+  phone: "請留下台灣手機號碼，例如：0912-345-678。",
   time_slots: "請提供 3 個方便的日期與時段。",
   treatment: "想預約諮詢哪一項療程呢？",
 };

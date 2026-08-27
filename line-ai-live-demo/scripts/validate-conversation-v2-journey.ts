@@ -1050,6 +1050,234 @@ async function validateMondayCompleteBookingJourneys() {
   console.log("PASS: J8 ONDA/Botox complete booking journeys");
 }
 
+/**
+ * Customers do not answer booking forms one field at a time. This journey pins
+ * the production failure where a valid "name + mobile" answer was rejected and
+ * the next explicit booking phrase restarted the draft from the branch field.
+ */
+async function validateMultiFieldBookingCaptureAndResume() {
+  console.log("### Multi-field booking capture and same-booking resume");
+  let turnIndex = 1500;
+
+  async function startBotoxBooking(userId: string) {
+    let context = createEmptyConversationContext(userId);
+    const start = await routeTurn({
+      context,
+      frame: null,
+      message: "我要預約肉毒",
+      turnIndex: turnIndex++,
+    });
+    context = start.decision.nextContext;
+    assert.equal(context.conversationV2State?.bookingTask.expectedField, "branch");
+    return context;
+  }
+
+  async function supply(input: { context: ConversationContext; message: string }) {
+    return routeTurn({
+      context: input.context,
+      frame: null,
+      message: input.message,
+      turnIndex: turnIndex++,
+    });
+  }
+
+  // Exact production shape: the customer followed the prompts, then supplied
+  // the remaining name and phone in one ordinary, unlabeled message.
+  let contactContext = await startBotoxBooking("U-booking-contact-bundle");
+  for (const message of ["桃園館", "9/1 14:00", "初診"] as const) {
+    const step = await supply({ context: contactContext, message });
+    contactContext = step.decision.nextContext;
+  }
+  assert.equal(contactContext.conversationV2State?.bookingTask.expectedField, "name");
+  const contactBundle = await supply({
+    context: contactContext,
+    message: "王小美 0912-345-678",
+  });
+  const contactState = contactBundle.decision.nextContext.conversationV2State;
+  assert.ok(contactState);
+  assert.equal(contactState.bookingTask.status, "completed");
+  assert.equal(contactState.bookingTask.draft.name, "王小美");
+  assert.equal(contactState.bookingTask.draft.phone, "0912345678");
+  assert.equal(contactState.bookingTask.draft.branch, "桃園館");
+  assert.deepEqual(contactState.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+  assert.equal(contactState.bookingTask.draft.firstVisit, true);
+  assert.match(contactBundle.decision.replyText, /真人客服|接續確認/u);
+
+  // Repeating the same booking intent confirms/resumes the current draft. It
+  // must not erase fields that were already collected.
+  let resumeContext = await startBotoxBooking("U-booking-same-intent-resume");
+  for (const message of ["桃園館", "9/1 14:00", "初診"] as const) {
+    const step = await supply({ context: resumeContext, message });
+    resumeContext = step.decision.nextContext;
+  }
+  const resumed = await supply({
+    context: resumeContext,
+    message: "預約肉毒，這天可以嗎？",
+  });
+  const resumedState = resumed.decision.nextContext.conversationV2State;
+  assert.ok(resumedState);
+  assert.equal(resumedState.bookingTask.expectedField, "name");
+  assert.equal(resumedState.bookingTask.draft.branch, "桃園館");
+  assert.deepEqual(resumedState.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+  assert.equal(resumedState.bookingTask.draft.firstVisit, true);
+  assert.deepEqual(resumedState.bookingTask.draft.treatmentKeys, ["botox"]);
+  assert.doesNotMatch(resumed.decision.replyText, /哪個館別|前往哪/u);
+
+  // A customer may provide every remaining field at once and in a different
+  // order. All valid fields are merged atomically, not consumed one prompt at a
+  // time.
+  const bulkStart = await startBotoxBooking("U-booking-all-fields");
+  const bulk = await supply({
+    context: bulkStart,
+    message: "桃園館，9/1 14:00，初診，姓名：王小美，電話：0912-345-678",
+  });
+  const bulkState = bulk.decision.nextContext.conversationV2State;
+  assert.ok(bulkState);
+  assert.equal(bulkState.bookingTask.status, "completed");
+  assert.equal(bulkState.bookingTask.draft.branch, "桃園館");
+  assert.deepEqual(bulkState.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+  assert.equal(bulkState.bookingTask.draft.firstVisit, true);
+  assert.equal(bulkState.bookingTask.draft.name, "王小美");
+  assert.equal(bulkState.bookingTask.draft.phone, "0912345678");
+
+  // Invalid contact data never discards the valid fields that arrived beside
+  // it. The next prompt asks only for a correctly formatted mobile number.
+  const invalidStart = await startBotoxBooking("U-booking-invalid-phone-bundle");
+  const invalidPhone = await supply({
+    context: invalidStart,
+    message: "桃園館，9/1 14:00，初診，姓名：王小美，電話：03-12345678",
+  });
+  const invalidState = invalidPhone.decision.nextContext.conversationV2State;
+  assert.ok(invalidState);
+  assert.equal(invalidState.bookingTask.expectedField, "phone");
+  assert.equal(invalidState.bookingTask.draft.branch, "桃園館");
+  assert.deepEqual(invalidState.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+  assert.equal(invalidState.bookingTask.draft.firstVisit, true);
+  assert.equal(invalidState.bookingTask.draft.name, "王小美");
+  assert.equal(invalidState.bookingTask.draft.phone, undefined);
+  assert.match(invalidPhone.decision.replyText, /手機號碼.*0912-345-678/su);
+
+  // Even if the model calls a question a booking-field answer, deterministic
+  // values mentioned inside that question are read-only context. They must not
+  // overwrite or complete the active draft.
+  let questionContext = await startBotoxBooking("U-booking-question-guard");
+  for (const message of ["林口館", "9/1 14:00", "初診"] as const) {
+    const step = await supply({ context: questionContext, message });
+    questionContext = step.decision.nextContext;
+  }
+  const contactQuestion = await routeTurn({
+    context: questionContext,
+    frame: frame({
+      confidence: 0.99,
+      dialogue: {
+        focus: "booking_policy",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "provide_booking_field",
+      },
+      treatments: [],
+    }),
+    message: "王小美 0912-345-678 是我的資料嗎？",
+    turnIndex: turnIndex++,
+  });
+  const afterContactQuestion = contactQuestion.decision.nextContext.conversationV2State;
+  assert.ok(afterContactQuestion);
+  assert.equal(afterContactQuestion.bookingTask.expectedField, "name");
+  assert.equal(afterContactQuestion.bookingTask.draft.name, undefined);
+  assert.equal(afterContactQuestion.bookingTask.draft.phone, undefined);
+  assert.equal(afterContactQuestion.bookingTask.draft.branch, "林口館");
+  assert.deepEqual(afterContactQuestion.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+
+  const branchQuestion = await routeTurn({
+    context: questionContext,
+    frame: frame({
+      confidence: 0.99,
+      dialogue: {
+        focus: "booking_policy",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "provide_booking_field",
+      },
+      treatments: [],
+    }),
+    message: "桃園館可以嗎？",
+    turnIndex: turnIndex++,
+  });
+  const afterBranchQuestion = branchQuestion.decision.nextContext.conversationV2State;
+  assert.ok(afterBranchQuestion);
+  assert.equal(afterBranchQuestion.bookingTask.expectedField, "name");
+  assert.equal(afterBranchQuestion.bookingTask.draft.branch, "林口館");
+  assert.deepEqual(afterBranchQuestion.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+
+  // Explicitly repeating the same booking intent resumes the draft, but it
+  // must not bypass the question guard and persist values the customer is only
+  // asking us to confirm.
+  const explicitContactQuestion = await routeTurn({
+    context: questionContext,
+    frame: null,
+    message: "我要預約肉毒，王小美 0912-345-678 是我的資料嗎？",
+    turnIndex: turnIndex++,
+  });
+  const afterExplicitContactQuestion =
+    explicitContactQuestion.decision.nextContext.conversationV2State;
+  assert.ok(afterExplicitContactQuestion);
+  assert.equal(afterExplicitContactQuestion.bookingTask.expectedField, "name");
+  assert.equal(afterExplicitContactQuestion.bookingTask.draft.name, undefined);
+  assert.equal(afterExplicitContactQuestion.bookingTask.draft.phone, undefined);
+  assert.equal(afterExplicitContactQuestion.bookingTask.draft.branch, "林口館");
+  assert.deepEqual(afterExplicitContactQuestion.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+
+  const explicitBranchQuestion = await routeTurn({
+    context: questionContext,
+    frame: null,
+    message: "我要預約肉毒，桃園館可以嗎？",
+    turnIndex: turnIndex++,
+  });
+  const afterExplicitBranchQuestion =
+    explicitBranchQuestion.decision.nextContext.conversationV2State;
+  assert.ok(afterExplicitBranchQuestion);
+  assert.equal(afterExplicitBranchQuestion.bookingTask.expectedField, "name");
+  assert.equal(afterExplicitBranchQuestion.bookingTask.draft.branch, "林口館");
+  assert.deepEqual(afterExplicitBranchQuestion.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+
+  const suspendedByContentQuestion = await routeTurn({
+    context: questionContext,
+    frame: null,
+    message: "肉毒有哪些品牌",
+    turnIndex: turnIndex++,
+  });
+  const suspendedContext = suspendedByContentQuestion.decision.nextContext;
+  assert.equal(suspendedContext.conversationV2State?.bookingTask.status, "suspended");
+  assert.equal(suspendedContext.conversationV2State?.bookingTask.expectedField, "name");
+  const suspendedContactQuestion = await routeTurn({
+    context: suspendedContext,
+    frame: frame({
+      confidence: 0.99,
+      dialogue: {
+        focus: "booking_policy",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "book_consultation",
+      },
+      intents: ["booking"],
+      treatments: ["botox"],
+    }),
+    message: "我要預約肉毒，王小美 0912-345-678 是我的資料嗎？",
+    turnIndex: turnIndex++,
+  });
+  const afterSuspendedContactQuestion =
+    suspendedContactQuestion.decision.nextContext.conversationV2State;
+  assert.ok(afterSuspendedContactQuestion);
+  assert.equal(afterSuspendedContactQuestion.bookingTask.status, "suspended");
+  assert.equal(afterSuspendedContactQuestion.bookingTask.expectedField, "name");
+  assert.equal(afterSuspendedContactQuestion.bookingTask.draft.name, undefined);
+  assert.equal(afterSuspendedContactQuestion.bookingTask.draft.phone, undefined);
+  assert.equal(afterSuspendedContactQuestion.bookingTask.draft.branch, "林口館");
+  assert.deepEqual(afterSuspendedContactQuestion.bookingTask.draft.timeSlots, ["9/1 14:00"]);
+
+  console.log("PASS: J8a multi-field booking capture and same-booking resume");
+}
+
 async function validateProductionAdditiveTreatmentSwitch() {
   let turnIndex = 1600;
   const variants: Array<{ frame: NluFrame | null; message: string }> = [
@@ -3663,6 +3891,7 @@ async function main() {
   await validateMondayConsultationCtaJourneys();
   await validateMondayNaturalInputFamilies();
   await validateMondayCompleteBookingJourneys();
+  await validateMultiFieldBookingCaptureAndResume();
   await validateProductionAdditiveTreatmentSwitch();
   await validatePersistedBookingOwnsShortAnswerAfterDelay();
   console.log("Conversation V2 journey validation passed");
