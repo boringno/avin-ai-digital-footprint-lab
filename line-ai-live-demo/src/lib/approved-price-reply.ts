@@ -1,10 +1,19 @@
+import { containsPriceOrCampaignClaim } from "@/lib/ai-fallback-guard";
+import { approvedTreatmentSupplementHash } from "@/lib/clinic-facts/treatment-resolver";
 import type {
   ApprovedPriceQuoteContract,
   ApprovedPriceReplyContract,
+  ApprovedPriceSupplementContract,
 } from "@/lib/reply-plan";
+import { isResponseAspect, type ResponseAspect } from "@/lib/response-contract";
 
 const UNSAFE_PRICE_COPY_PATTERN = /(?:https?:\/\/|www\.|(?:20\d{2}[年/.\-])?\d{1,2}[月/.\-]\d{1,2}(?:日)?|保證|一定有效|永久|零風險|完全無副作用)/iu;
 const UNSAFE_SUPPORT_COPY_PATTERN = /(?:https?:\/\/|www\.|保證|一定有效|永久|零風險|完全無副作用)/iu;
+const PRICE_RESPONSE_ASPECTS = new Set<ResponseAspect>([
+  "price_campaign",
+  "price_regular",
+  "price_unspecified",
+]);
 
 function normalized(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -48,6 +57,46 @@ function quoteBelongsToPlan(
     planTreatmentKeys.every((key) => quote.treatmentKeys.includes(key));
 }
 
+function validSupplement(
+  supplement: ApprovedPriceSupplementContract,
+  contractSnapshotId: string,
+  planTreatmentKeys: readonly string[],
+) {
+  if (
+    !supplement ||
+    typeof supplement !== "object" ||
+    !Array.isArray(supplement.aspects) ||
+    !Array.isArray(supplement.treatmentKeys)
+  ) return false;
+  const customerText = normalized(supplement.customerText);
+  const sourceContentHash = normalized(supplement.sourceContentHash);
+  const sourceContentVersion = normalized(supplement.sourceContentVersion);
+  const sourceFactId = normalized(supplement.sourceFactId);
+  const aspect = supplement.aspects[0];
+  return Boolean(
+    supplement.aspects.length === 1 &&
+    supplement.aspects.every((aspect) => isResponseAspect(aspect) && !PRICE_RESPONSE_ASPECTS.has(aspect)) &&
+    supplement.treatmentKeys.length === 1 &&
+    planTreatmentKeys.length === 1 &&
+    normalized(supplement.snapshotId) === contractSnapshotId &&
+    supplement.treatmentKeys[0] === planTreatmentKeys[0] &&
+    Boolean(sourceContentVersion) &&
+    sourceFactId === `treatment:${planTreatmentKeys[0]}:${sourceContentVersion}:response:${aspect}` &&
+    validCustomerCopy(customerText, 480) &&
+    !containsPriceOrCampaignClaim(customerText) &&
+    sourceContentHash === approvedTreatmentSupplementHash({
+      customerText,
+      snapshotId: contractSnapshotId,
+      sourceFactId,
+    })
+  );
+}
+
+export type ApprovedPriceReplyRenderResult = {
+  renderedSupplementAspects: ResponseAspect[];
+  replyText: string;
+};
+
 /**
  * Canonical customer reply for a snapshot-pinned approved price contract.
  * No arbitrary fallback text or model output participates in this path.
@@ -55,11 +104,31 @@ function quoteBelongsToPlan(
 export function renderApprovedPriceReplyContract(
   contract: ApprovedPriceReplyContract,
   planTreatmentKeys: readonly string[],
-) {
+  options: {
+    includeSupplements: boolean;
+    requiredSupplementAspects?: readonly ResponseAspect[];
+  },
+): ApprovedPriceReplyRenderResult | null {
   if (!contract || typeof contract !== "object" || !Array.isArray(contract.quotes)) return null;
   const snapshotId = normalized(contract.snapshotId);
+  const supplements = options.includeSupplements ? contract.supplements ?? [] : [];
+  const requiredSupplementAspects = options.includeSupplements
+    ? Array.from(new Set(options.requiredSupplementAspects ?? []))
+    : [];
   if (!snapshotId || contract.quotes.length < 1 || contract.quotes.length > 2) return null;
   if (!contract.quotes.every((quote) => validQuote(quote, snapshotId))) return null;
+  if (
+    !Array.isArray(supplements) ||
+    supplements.length > 3 ||
+    !supplements.every((supplement) => validSupplement(supplement, snapshotId, planTreatmentKeys)) ||
+    new Set(supplements.flatMap((supplement) => supplement.aspects)).size !==
+      supplements.flatMap((supplement) => supplement.aspects).length
+  ) return null;
+  const renderedSupplementAspects = supplements.flatMap((supplement) => supplement.aspects);
+  if (
+    requiredSupplementAspects.some((aspect) => !renderedSupplementAspects.includes(aspect)) ||
+    renderedSupplementAspects.some((aspect) => !requiredSupplementAspects.includes(aspect))
+  ) return null;
   if (new Set(contract.quotes.map((quote) => quote.campaignId)).size !== contract.quotes.length) {
     return null;
   }
@@ -83,6 +152,10 @@ export function renderApprovedPriceReplyContract(
   ) return null;
 
   const lines: string[] = [];
+  for (const supplement of supplements) {
+    const customerText = normalized(supplement.customerText);
+    if (customerText && !lines.includes(customerText)) lines.push(customerText);
+  }
   if (!primary && alternative && unresolvedPrimary) {
     lines.push(`ℹ️ 您詢問的${normalized(unresolvedPrimary.requestedSubjectLabel)}價格需要由真人客服確認。`);
   }
@@ -104,5 +177,8 @@ export function renderApprovedPriceReplyContract(
   } else if (primary) {
     lines.push("😊 想比較方案差異或安排免費諮詢，我都可以接著協助。");
   }
-  return lines.join("\n");
+  return {
+    renderedSupplementAspects,
+    replyText: lines.join("\n"),
+  };
 }

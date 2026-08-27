@@ -1,6 +1,9 @@
+import crypto from "node:crypto";
+
 import type { ReplyKnowledgeQuery } from "@/lib/conversation-v2/types";
 import type { TreatmentAreaKey } from "@/lib/clinic-config";
 import type { QuestionAspect } from "@/lib/dialogue-semantics";
+import type { ResponseAspect } from "@/lib/response-contract";
 import {
   buildTreatmentApprovedFactsForMode,
   type TreatmentKnowledge,
@@ -17,6 +20,152 @@ import type {
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+const PRICE_RESPONSE_ASPECTS = new Set<ResponseAspect>([
+  "price_campaign",
+  "price_regular",
+  "price_unspecified",
+]);
+
+export type ApprovedTreatmentSupplementSection = {
+  aspect: ResponseAspect;
+  customerText: string;
+  snapshotId: string;
+  sourceContentHash: string;
+  sourceContentVersion: string;
+  sourceFactId: string;
+  subjectKey: string;
+};
+
+export type ApprovedTreatmentSupplementResolution = {
+  sections: ApprovedTreatmentSupplementSection[];
+  unresolvedAspects: ResponseAspect[];
+};
+
+export function approvedTreatmentSupplementHash(input: {
+  customerText: string;
+  snapshotId: string;
+  sourceFactId: string;
+}) {
+  return crypto
+    .createHash("sha256")
+    .update(`${input.snapshotId}\0${input.sourceFactId}\0${input.customerText.trim()}`)
+    .digest("hex");
+}
+
+function firstApprovedConcernReply(
+  treatment: TreatmentKnowledge,
+  concernKeys: readonly string[],
+) {
+  for (const concernKey of unique(concernKeys)) {
+    const reply = treatment.approvedConcernReplies[concernKey]?.find((item) => item.trim());
+    if (reply) return reply.trim();
+  }
+  return "";
+}
+
+function allApprovedConcernReplies(
+  treatment: TreatmentKnowledge,
+  concernKeys: readonly string[],
+) {
+  const keys = unique(concernKeys);
+  if (keys.length === 0) return [];
+  const replies = keys.map((key) =>
+    treatment.approvedConcernReplies[key]?.find((item) => item.trim())?.trim() ?? "");
+  return replies.every(Boolean) ? unique(replies) : [];
+}
+
+function approvedCustomerTextForAspect(
+  treatment: TreatmentKnowledge,
+  aspect: ResponseAspect,
+  concernKeys: readonly string[],
+) {
+  const concernReply = firstApprovedConcernReply(treatment, concernKeys);
+  switch (aspect) {
+    case "overview":
+      return treatment.approvedIntroReplies.find((item) => item.trim())?.trim() ?? "";
+    case "benefits":
+      return concernReply || treatment.approvedIntroReplies.find((item) => item.trim())?.trim() || "";
+    case "suitability":
+      const suitabilityReplies = allApprovedConcernReplies(treatment, concernKeys);
+      if (suitabilityReplies.length === 0) return "";
+      return unique([
+        ...suitabilityReplies,
+        treatment.evaluationNote,
+      ]).join("\n");
+    case "mechanism":
+      return treatment.mechanismInPlainLanguage.trim();
+    case "comfort_recovery":
+      return unique([treatment.comfort ?? "", treatment.downtime ?? ""]).join("\n");
+    case "brands":
+      return treatment.brandReplies.find((item) => item.trim())?.trim() ?? "";
+    case "single_vs_combination":
+    case "combination_reason":
+    case "general_difference":
+      return Object.values(treatment.combinationReasons).find((item) => item.trim())?.trim() ?? "";
+    default:
+      // Brand differences, timing, sessions, side effects and alternatives do
+      // not have dedicated approved fields today. A brand list or generic intro
+      // must never be relabelled as if it answered those questions.
+      return "";
+  }
+}
+
+/**
+ * Resolves secondary answer obligations from the same reviewed runtime
+ * snapshot as the price. This function first applies the canonical offered /
+ * stale / reviewed gates and never consults append-only conversation state.
+ */
+export function resolveApprovedTreatmentSupplements(
+  snapshot: ClinicFactsSnapshot,
+  input: {
+    concernKeys: readonly string[];
+    requestedAspects: readonly ResponseAspect[];
+    subjectKey: string;
+  },
+): ApprovedTreatmentSupplementResolution {
+  const fact = resolveTreatmentFact(snapshot, input.subjectKey, "followup");
+  const requestedAspects = Array.from(new Set(input.requestedAspects)).filter(
+    (aspect) => !PRICE_RESPONSE_ASPECTS.has(aspect),
+  );
+  if (fact.status !== "offered") {
+    return { sections: [], unresolvedAspects: requestedAspects };
+  }
+
+  const treatment = snapshot.treatments.find((item) => item.key === fact.key);
+  if (!treatment) {
+    return { sections: [], unresolvedAspects: requestedAspects };
+  }
+
+  const sections: ApprovedTreatmentSupplementSection[] = [];
+  const unresolvedAspects: ResponseAspect[] = [];
+  for (const aspect of requestedAspects) {
+    const customerText = approvedCustomerTextForAspect(
+      treatment,
+      aspect,
+      input.concernKeys,
+    ).trim();
+    if (!customerText) {
+      unresolvedAspects.push(aspect);
+      continue;
+    }
+    const sourceFactId = `treatment:${treatment.key}:${treatment.contentVersion}:response:${aspect}`;
+    sections.push({
+      aspect,
+      customerText,
+      snapshotId: snapshot.snapshotId,
+      sourceContentHash: approvedTreatmentSupplementHash({
+        customerText,
+        snapshotId: snapshot.snapshotId,
+        sourceFactId,
+      }),
+      sourceContentVersion: treatment.contentVersion,
+      sourceFactId,
+      subjectKey: treatment.key,
+    });
+  }
+  return { sections, unresolvedAspects };
 }
 
 function provenance(

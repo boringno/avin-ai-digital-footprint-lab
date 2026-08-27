@@ -1,6 +1,7 @@
 import { QUESTION_ASPECTS, type QuestionAspect } from "@/lib/dialogue-semantics";
 
 export const RESPONSE_CONTRACT_SCHEMA_VERSION = 1 as const;
+export type ResponseContractRuntimeMode = "shadow" | "enforce";
 
 /**
  * Semantic units that a reply can complete. These are deliberately not prose
@@ -74,12 +75,12 @@ export type ResponseContract = {
 
 /**
  * `off` makes rollout state explicit and prevents an optional field from being
- * forgotten. Shadow/enforce modes are intentionally not consumed by prompts or
- * render guards until their own canary is approved.
+ * forgotten. Shadow records obligations only. Enforce is selected by Policy
+ * after an explicit runtime gate and must be verified by the renderer.
  */
 export type ResponseContractAttachment =
   | { mode: "off" }
-  | { contract: ResponseContract; mode: "shadow" | "enforce" };
+  | { contract: ResponseContract; mode: ResponseContractRuntimeMode };
 
 const CTA_POLICIES = new Set<ResponseContract["ctaPolicy"]>(["forbid", "allow", "require"]);
 const EXPECTED_ANSWER_TYPES = new Set<ResponseExpectedAnswerType>([

@@ -14,16 +14,18 @@ import {
   buildTreatmentReplyAssets,
   type TreatmentReplyAsset,
 } from "@/lib/clinic-facts/treatment-reply-assets";
+import { resolveApprovedTreatmentSupplements } from "@/lib/clinic-facts/treatment-resolver";
 import type { QuestionAspect } from "@/lib/dialogue-semantics";
 import {
   DEFAULT_PROHIBITED_CLAIMS,
   legacyDecisionToReplyPlan,
   type ApprovedPriceQuoteContract,
   type ApprovedPriceReplyContract,
+  type ApprovedPriceSupplementContract,
   type DialogueAct,
   type ReplyPlan as RendererReplyPlan,
 } from "@/lib/reply-plan";
-import type { ResponseContractAttachment } from "@/lib/response-contract";
+import type { ResponseAspect, ResponseContractAttachment } from "@/lib/response-contract";
 
 import {
   priceGapReply,
@@ -86,6 +88,63 @@ function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
+const PRICE_RESPONSE_ASPECTS = new Set<ResponseAspect>([
+  "price_campaign",
+  "price_regular",
+  "price_unspecified",
+]);
+
+function hydrateApprovedPriceSupplements(
+  input: HydrateConversationV2ReplyInput,
+  treatmentKeys: readonly string[],
+): {
+  supplements: ApprovedPriceSupplementContract[];
+  unresolvedAspects: ResponseAspect[];
+} {
+  const attachment = input.result.replyPlan.responseContract;
+  if (
+    attachment.mode !== "enforce" ||
+    attachment.contract.subjectKeys.length !== 1 ||
+    treatmentKeys.length !== 1 ||
+    attachment.contract.subjectKeys[0] !== treatmentKeys[0] ||
+    !attachment.contract.mustAnswer.some((aspect) => PRICE_RESPONSE_ASPECTS.has(aspect))
+  ) {
+    return { supplements: [], unresolvedAspects: [] };
+  }
+
+  const requestedAspects = attachment.contract.mustAnswer.filter(
+    (aspect) => !PRICE_RESPONSE_ASPECTS.has(aspect),
+  );
+  if (requestedAspects.length === 0) {
+    return { supplements: [], unresolvedAspects: [] };
+  }
+
+  const explicitConcernKeys = resolvedAffirmedKeys(input.turn.concerns);
+  const resolution = resolveApprovedTreatmentSupplements(input.snapshot, {
+    concernKeys: explicitConcernKeys,
+    requestedAspects,
+    subjectKey: treatmentKeys[0],
+  });
+  if (resolution.unresolvedAspects.length > 0) {
+    return {
+      supplements: [],
+      unresolvedAspects: resolution.unresolvedAspects,
+    };
+  }
+  return {
+    supplements: resolution.sections.map((section) => ({
+      aspects: [section.aspect],
+      customerText: section.customerText,
+      snapshotId: section.snapshotId,
+      sourceContentHash: section.sourceContentHash,
+      sourceContentVersion: section.sourceContentVersion,
+      sourceFactId: section.sourceFactId,
+      treatmentKeys: [section.subjectKey],
+    })),
+    unresolvedAspects: [],
+  };
+}
+
 function customerPriceReply(
   snapshot: ClinicFactsSnapshot,
   resolution: Extract<PriceFactResolution, { status: "approved_current" }>,
@@ -125,12 +184,10 @@ function contextualPriceCampaignId(input: HydrateConversationV2ReplyInput) {
     ? input.result.replyPlan.pricingQuery
     : undefined;
   if (!query || query.treatmentKeys.length === 0) return undefined;
-  const concernKeys = unique([
-    ...input.turn.concerns
-      .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
-      .map((mention) => mention.key),
-    ...input.nextState.knowledge.concernKeys,
-  ]);
+  // A campaign shown on this turn must be owned by this turn's trusted concern.
+  // Append-only state is useful for continuity, but must not silently select a
+  // concern-specific offer after the customer has moved to a different need.
+  const concernKeys = resolvedAffirmedKeys(input.turn.concerns);
   for (const concernKey of concernKeys) {
     for (const treatmentKey of query.treatmentKeys) {
       const treatment = input.snapshot.clinic.treatmentList.find((item) => item.key === treatmentKey);
@@ -181,19 +238,15 @@ function priceConcernLabel(input: HydrateConversationV2ReplyInput) {
   const pricedTreatmentKeys = input.result.replyPlan.mode === "deterministic"
     ? input.result.replyPlan.pricingQuery?.treatmentKeys ?? []
     : [];
-  const concernKeys = unique([
-    ...input.turn.concerns
-      .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
-      .map((mention) => mention.key),
-    ...input.nextState.knowledge.concernKeys,
-  ]).filter((concernKey) => pricedTreatmentKeys.some((treatmentKey) => {
-    const treatment = input.snapshot.clinic.treatmentList.find((item) => item.key === treatmentKey);
-    const concern = input.snapshot.clinic.concernList.find((item) => item.key === concernKey);
-    return Boolean(
-      treatment?.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ||
-      concern?.recommendedTreatmentKeys.includes(treatmentKey),
-    );
-  }));
+  const concernKeys = resolvedAffirmedKeys(input.turn.concerns).filter((concernKey) =>
+    pricedTreatmentKeys.some((treatmentKey) => {
+      const treatment = input.snapshot.clinic.treatmentList.find((item) => item.key === treatmentKey);
+      const concern = input.snapshot.clinic.concernList.find((item) => item.key === concernKey);
+      return Boolean(
+        treatment?.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ||
+        concern?.recommendedTreatmentKeys.includes(treatmentKey),
+      );
+    }));
   const label = concernKeys
     .map((key) => input.snapshot.clinic.concernList.find((item) => item.key === key)?.label)
     .find(Boolean);
@@ -247,7 +300,9 @@ function resolvedAffirmedKeys(
   return unique(
     mentions
       .filter((mention) =>
-        mention.polarity === "affirmed" && mention.resolution === "resolved")
+        mention.confidence >= 0.65 &&
+        mention.polarity === "affirmed" &&
+        mention.resolution === "resolved")
       .map((mention) => mention.key),
   );
 }
@@ -711,6 +766,20 @@ export async function hydrateConversationV2ReplyPlan(
       alternativePriceResolution?.status === "approved_current" &&
       alternativePriceResolution.campaignId !== priceResolution.campaignId;
     const approvedConcernLabel = priceConcernLabel(input);
+    const hasApprovedPriceReceipt =
+      priceResolution.status === "approved_current" ||
+      alternativePriceResolution?.status === "approved_current";
+    const supplementHydration = hasApprovedPriceReceipt
+      ? hydrateApprovedPriceSupplements(input, replyPlan.pricingQuery.treatmentKeys)
+      : { supplements: [], unresolvedAspects: [] };
+    const responseContract =
+      replyPlan.responseContract.mode === "enforce" &&
+      supplementHydration.unresolvedAspects.length > 0
+        ? { ...replyPlan.responseContract, mode: "shadow" as const }
+        : replyPlan.responseContract;
+    const priceSupplements = responseContract.mode === "enforce"
+      ? supplementHydration.supplements
+      : [];
     const replyText = priceResolution.status === "approved_current"
       ? hasDistinctAlternative
         ? unique([
@@ -739,6 +808,7 @@ export async function hydrateConversationV2ReplyPlan(
                 : []),
             ],
             snapshotId: input.snapshot.snapshotId,
+            supplements: priceSupplements,
           }
         : alternativePriceResolution?.status === "approved_current"
           ? {
@@ -747,6 +817,7 @@ export async function hydrateConversationV2ReplyPlan(
                 : {}),
               quotes: [approvedPriceQuoteContract(input.snapshot, alternativePriceResolution, "alternative")],
               snapshotId: input.snapshot.snapshotId,
+              supplements: priceSupplements,
               unresolvedPrimary: {
                 humanSupportHoursSummary: input.snapshot.clinic.humanSupportHours.fallbackSummary,
                 requestedSubjectLabel: requestedPriceSubjectLabel(input),
@@ -773,7 +844,7 @@ export async function hydrateConversationV2ReplyPlan(
           ? "conversation_v2:price:approved_current"
           : `conversation_v2:price:unavailable_to_quote:${priceResolution.reason}`,
         replyText,
-        responseContract: replyPlan.responseContract,
+        responseContract,
         treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
       }),
       snapshotId: input.snapshot.snapshotId,

@@ -3,6 +3,7 @@ import type { PriceApplicabilityDimensions } from "@/lib/clinic-facts/types";
 import {
   cloneResponseContractAttachment,
   createOffResponseContract,
+  type ResponseAspect,
   type ResponseContractAttachment,
 } from "@/lib/response-contract";
 import {
@@ -57,10 +58,27 @@ export type ApprovedPriceReplyContract = {
   };
   quotes: ApprovedPriceQuoteContract[];
   snapshotId: string;
+  supplements?: ApprovedPriceSupplementContract[];
   unresolvedPrimary?: {
     humanSupportHoursSummary: string;
     requestedSubjectLabel: string;
   };
+};
+
+/**
+ * Snapshot-pinned, customer-visible treatment copy that completes a secondary
+ * answer obligation on an otherwise deterministic price turn.  The renderer
+ * trusts this typed receipt instead of scanning prose to guess what was
+ * answered.
+ */
+export type ApprovedPriceSupplementContract = {
+  aspects: ResponseAspect[];
+  customerText: string;
+  snapshotId: string;
+  sourceContentHash: string;
+  sourceContentVersion: string;
+  sourceFactId: string;
+  treatmentKeys: string[];
 };
 
 export type ReplyPlan = {
@@ -274,6 +292,11 @@ export function legacyDecisionToReplyPlan(
             treatmentKeys: [...quote.treatmentKeys],
           })),
           snapshotId: options.approvedPriceReply.snapshotId,
+          supplements: options.approvedPriceReply.supplements?.map((supplement) => ({
+            ...supplement,
+            aspects: [...supplement.aspects],
+            treatmentKeys: [...supplement.treatmentKeys],
+          })),
           unresolvedPrimary: options.approvedPriceReply.unresolvedPrimary
             ? { ...options.approvedPriceReply.unresolvedPrimary }
             : undefined,

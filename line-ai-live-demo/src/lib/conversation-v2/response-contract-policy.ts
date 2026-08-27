@@ -4,6 +4,7 @@ import {
   isResponseAspect,
   type ResponseAspect,
   type ResponseContractAttachment,
+  type ResponseContractRuntimeMode,
   type ResponseNextStep,
 } from "@/lib/response-contract";
 
@@ -13,6 +14,18 @@ const PRICE_ASPECTS = new Set<ResponseAspect>([
   "price_campaign",
   "price_regular",
   "price_unspecified",
+]);
+
+const ENFORCEABLE_PRICE_SECONDARY_ASPECTS = new Set<ResponseAspect>([
+  "overview",
+  "benefits",
+  "mechanism",
+  "suitability",
+  "comfort_recovery",
+  "brands",
+  "single_vs_combination",
+  "combination_reason",
+  "general_difference",
 ]);
 
 function priceAspect(
@@ -59,9 +72,10 @@ function requestedResponseAspects(turn: TurnUnderstanding): ResponseAspect[] {
  * Shadow mode records obligations only; it never changes policy, prompts,
  * prices, booking state, handoff state, or customer-visible text.
  */
-export function buildShadowResponseContractForAction(input: {
+export function buildResponseContractForAction(input: {
   action: DialoguePolicyAction;
   plan: ReplyPlan;
+  requestedMode?: ResponseContractRuntimeMode;
   turn: TurnUnderstanding;
 }): ResponseContractAttachment {
   if (input.action.type === "do_not_reply") return createOffResponseContract();
@@ -167,15 +181,41 @@ export function buildShadowResponseContractForAction(input: {
       ? ["overview"]
       : [];
 
-  return {
-    contract: {
+  const contract = {
       ctaPolicy,
       mustAnswer: [...new Set(mustAnswer)],
       mustNotRepeat,
       nextStep,
       schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
       subjectKeys: contractSubjectKeys(input.action),
-    },
-    mode: "shadow",
+    };
+  const secondaryAspects = contract.mustAnswer.filter((aspect) => !PRICE_ASPECTS.has(aspect));
+  const hasExplicitResolvedConcern = input.turn.concerns.some(
+    (mention) =>
+      mention.confidence >= 0.65 &&
+      mention.polarity === "affirmed" &&
+      mention.resolution === "resolved",
+  );
+  const enforcePilotEligible =
+    input.requestedMode === "enforce" &&
+    input.action.type === "answer_price" &&
+    contract.subjectKeys.length === 1 &&
+    contract.mustAnswer.filter((aspect) => PRICE_ASPECTS.has(aspect)).length === 1 &&
+    secondaryAspects.length > 0 &&
+    secondaryAspects.every((aspect) => ENFORCEABLE_PRICE_SECONDARY_ASPECTS.has(aspect)) &&
+    (!secondaryAspects.includes("suitability") || hasExplicitResolvedConcern);
+
+  return {
+    contract,
+    mode: enforcePilotEligible ? "enforce" : "shadow",
   };
+}
+
+/** Backward-compatible helper for repository replay and existing validators. */
+export function buildShadowResponseContractForAction(input: {
+  action: DialoguePolicyAction;
+  plan: ReplyPlan;
+  turn: TurnUnderstanding;
+}): ResponseContractAttachment {
+  return buildResponseContractForAction({ ...input, requestedMode: "shadow" });
 }

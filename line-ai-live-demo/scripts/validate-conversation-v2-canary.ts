@@ -12,6 +12,7 @@ import {
 import {
   buildConversationV2BookingUnderstanding,
   createConversationV2State,
+  parsePersistedConversationV2State,
   parseConversationV2CanaryUserIds,
   routeConversationV2Canary,
 } from "../src/lib/conversation-v2";
@@ -22,6 +23,7 @@ import {
 } from "../src/lib/line-webhook";
 import { getRuntimeConfig } from "../src/lib/live-demo-config";
 import { legacyDecisionToReplyPlan } from "../src/lib/reply-plan";
+import { renderReplyPlan } from "../src/lib/reply-renderer";
 
 const NOW = new Date("2026-08-17T12:00:00+08:00");
 
@@ -85,6 +87,26 @@ function campaign(
   };
 }
 
+function botoxCampaign(): PriceCatalogEntry {
+  return {
+    approval_status: "approved",
+    asset_urls: "",
+    branch_scope: "all",
+    campaign_aliases: "肉毒|奇蹟肉毒|經典肉毒|皇家肉毒",
+    campaign_name: "肉毒體驗方案",
+    customer_price_approval_status: "approved",
+    customer_price_text: "肉毒體驗價 999 元",
+    end_date: "2026-08-31",
+    fallback_message: "",
+    id: "botox-live-canary-price",
+    is_active: "true",
+    notes: "validator",
+    price_text: "internal",
+    start_date: "2026-08-01",
+    treatment_name: "肉毒",
+  };
+}
+
 function countedProvider(base: ClinicFactsProvider, counts: { provider: number }): ClinicFactsProvider {
   return {
     async loadSnapshot(input) {
@@ -124,21 +146,52 @@ async function main() {
 
   const savedV2Mode = process.env.CONVERSATION_V2_MODE;
   const savedV2Allowlist = process.env.CONVERSATION_V2_CANARY_USER_IDS;
+  const savedResponseContractMode = process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE;
   const savedNluMode = process.env.OPENAI_NLU_MODE;
   const savedNluDecisionMode = process.env.OPENAI_NLU_DECISION_MODE;
   const savedLineChannelStage = process.env.LINE_CHANNEL_STAGE;
   try {
     delete process.env.CONVERSATION_V2_MODE;
     delete process.env.CONVERSATION_V2_CANARY_USER_IDS;
+    delete process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE;
     process.env.OPENAI_NLU_MODE = "off";
     process.env.OPENAI_NLU_DECISION_MODE = "off";
     const defaultRuntime = getRuntimeConfig();
-    check(defaultRuntime.conversationV2Mode === "off" && defaultRuntime.conversationV2CanaryUserIds.length === 0, "C3: runtime canary must default to off with an empty allowlist");
+    check(
+      defaultRuntime.conversationV2Mode === "off" &&
+        defaultRuntime.conversationV2CanaryUserIds.length === 0 &&
+        defaultRuntime.conversationV2ResponseContractMode === "shadow",
+      "C3: runtime must default V2 off and Response Contract observation-only",
+    );
+
+    process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE = "invalid";
+    assert.throws(
+      () => getRuntimeConfig(),
+      /Unsupported CONVERSATION_V2_RESPONSE_CONTRACT_MODE/u,
+      "C3: unknown Response Contract modes must fail closed",
+    );
+    process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE = "enforce";
+    assert.throws(
+      () => getRuntimeConfig(),
+      /requires Conversation V2 canary or demo_all/u,
+      "C3: enforcement must not run while V2 is off",
+    );
+    process.env.CONVERSATION_V2_MODE = "shadow";
+    assert.throws(
+      () => getRuntimeConfig(),
+      /requires Conversation V2 canary or demo_all/u,
+      "C3: enforcement must not change customer replies in V2 shadow mode",
+    );
 
     process.env.CONVERSATION_V2_MODE = "canary";
     process.env.CONVERSATION_V2_CANARY_USER_IDS = "U-one,U-two";
     const canaryRuntime = getRuntimeConfig();
-    check(canaryRuntime.conversationV2Mode === "canary" && canaryRuntime.conversationV2CanaryUserIds.join(",") === "U-one,U-two", "C4: runtime config must preserve the exact account allowlist");
+    check(
+      canaryRuntime.conversationV2Mode === "canary" &&
+        canaryRuntime.conversationV2CanaryUserIds.join(",") === "U-one,U-two" &&
+        canaryRuntime.conversationV2ResponseContractMode === "enforce",
+      "C4: canary may explicitly enable Response Contract enforcement for exact accounts",
+    );
 
     process.env.CONVERSATION_V2_MODE = "demo_all";
     delete process.env.LINE_CHANNEL_STAGE;
@@ -156,7 +209,9 @@ async function main() {
     process.env.LINE_CHANNEL_STAGE = "demo";
     const demoAllRuntime = getRuntimeConfig();
     check(
-      demoAllRuntime.conversationV2Mode === "demo_all" && demoAllRuntime.lineChannelStage === "demo",
+      demoAllRuntime.conversationV2Mode === "demo_all" &&
+        demoAllRuntime.lineChannelStage === "demo" &&
+        demoAllRuntime.conversationV2ResponseContractMode === "enforce",
       "C4: demo-wide routing requires and preserves the explicit demo channel label",
     );
   } finally {
@@ -164,6 +219,8 @@ async function main() {
     else process.env.CONVERSATION_V2_MODE = savedV2Mode;
     if (savedV2Allowlist === undefined) delete process.env.CONVERSATION_V2_CANARY_USER_IDS;
     else process.env.CONVERSATION_V2_CANARY_USER_IDS = savedV2Allowlist;
+    if (savedResponseContractMode === undefined) delete process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE;
+    else process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE = savedResponseContractMode;
     if (savedNluMode === undefined) delete process.env.OPENAI_NLU_MODE;
     else process.env.OPENAI_NLU_MODE = savedNluMode;
     if (savedNluDecisionMode === undefined) delete process.env.OPENAI_NLU_DECISION_MODE;
@@ -281,6 +338,165 @@ async function main() {
   check(first.decision.replyPlan?.dialogueAct === "introduce_treatment", "C7: first treatment turn must introduce instead of fallback");
   check(Boolean(first.decision.nextContext.conversationV2State), "C8: routed turn must project canonical V2 state into context_json payload");
 
+  const liveEnforceCases = [
+    {
+      expected: ["16,888", "評估"],
+      frame: frame({
+        areas: ["jawline"],
+        concerns: [{ area: "jawline", key: "jawline_looseness" }],
+        dialogue: {
+          aspects: ["suitability", "price_campaign"],
+          focus: "suitability",
+          move: "start",
+          reference: "explicit",
+          speechAct: "ask_price",
+        },
+        intents: ["pricing"],
+        schemaVersion: 3,
+        treatments: ["onda_pro"],
+      }),
+      id: "onda",
+      message: "我雙下巴肉很多，ONDA 適合嗎？最近有活動嗎？",
+    },
+    {
+      expected: ["999", "奇蹟肉毒", "經典肉毒", "皇家肉毒", "動態紋"],
+      frame: frame({
+        dialogue: {
+          aspects: ["brands", "benefits", "price_campaign"],
+          focus: "brands",
+          move: "start",
+          reference: "explicit",
+          speechAct: "ask_price",
+        },
+        intents: ["pricing"],
+        schemaVersion: 3,
+        treatments: ["botox"],
+      }),
+      id: "botox",
+      message: "肉毒品牌、效果和活動價都想了解",
+    },
+  ] as const;
+  for (const item of liveEnforceCases) {
+    const routed = await routeConversationV2Canary({
+      context: createEmptyConversationContext(`U-enforce-${item.id}`),
+      eventIdentity: `event-enforce-${item.id}`,
+      message: item.message,
+      now: NOW,
+      sourceType: "user",
+      sourceUserId: `U-enforce-${item.id}`,
+    }, {
+      factsProvider: createStaticClinicFactsProvider({
+        pricingCampaigns: [campaign(), botoxCampaign()],
+        snapshotId: "snapshot-enforce",
+      }),
+      getCanarySettings: () => ({
+        allowlistedUserIds: [`U-enforce-${item.id}`],
+        mode: "canary",
+        responseContractMode: "enforce",
+      }),
+      requestFrame: async () => nluResult(item.frame),
+    });
+    assert.equal(routed.kind, "routed");
+    const replyPlan = routed.decision.replyPlan;
+    assert(replyPlan, `C8: ${item.id} live route must expose its hydrated ReplyPlan`);
+    const rendered = await renderReplyPlan({
+      customerMessage: item.message,
+      dialogueState: {
+        answeredTopics: [],
+        areaKeys: [],
+        bookingAction: null,
+        bookingIntent: "none",
+        concernKeys: [],
+        dialogueAct: "answer_followup",
+        episodeId: `live-enforce-${item.id}`,
+        handoffStatus: "ai_active",
+        knownNeeds: [],
+        lastTransitionAt: NOW.toISOString(),
+        schemaVersion: 1,
+        topic: "treatment",
+        treatmentKeys: item.frame.treatments,
+      },
+      footer: "以上為 AI 客服順順初步回覆。",
+      generator: async () => {
+        throw new Error(`C8: ${item.id} approved price reply must remain deterministic`);
+      },
+      plan: replyPlan,
+      recentTurns: [],
+    });
+    check(
+      replyPlan.responseContract.mode === "enforce" &&
+        rendered.responseContract.coverageStatus === "verified" &&
+        item.expected.every((term) => rendered.replyText.includes(term)),
+      `C8: live runtime must forward enforce and answer every ${item.id} obligation (${JSON.stringify({
+        contract: replyPlan.responseContract,
+        matchedKey: routed.decision.matchedKey,
+        policyAction: routed.policyAction,
+        renderedContract: rendered.responseContract,
+        replyText: rendered.replyText,
+      })})`,
+    );
+  }
+
+  for (const item of liveEnforceCases) {
+    const sourceUserId = `U-enforce-webhook-${item.id}`;
+    const webhookResult = await processWebhookRequestBody(JSON.stringify({
+      events: [{
+        message: {
+          id: `message-enforce-webhook-${item.id}`,
+          text: item.message,
+          type: "text",
+        },
+        replyToken: `reply-enforce-webhook-${item.id}`,
+        // Keep the outer webhook anonymous so this E2E never reads or writes a
+        // developer machine / Supabase conversation store. The injected route
+        // below supplies the synthetic user only to the canary gate.
+        source: { type: "user" },
+        timestamp: NOW.getTime(),
+        type: "message",
+        webhookEventId: `event-enforce-webhook-${item.id}`,
+      }],
+    }), {
+      includePending: false,
+      routeConversationV2: (input) => routeConversationV2Canary({
+        ...input,
+        sourceUserId,
+      }, {
+        factsProvider: createStaticClinicFactsProvider({
+          pricingCampaigns: [
+            { ...campaign(), end_date: "2099-12-31" },
+            { ...botoxCampaign(), end_date: "2099-12-31" },
+          ],
+          snapshotId: "snapshot-enforce-webhook",
+        }),
+        getCanarySettings: () => ({
+          allowlistedUserIds: [sourceUserId],
+          mode: "canary",
+          responseContractMode: "enforce",
+        }),
+        requestFrame: async () => nluResult(item.frame),
+      }),
+      routeLegacy: async () => {
+        throw new Error(`C8: ${item.id} full webhook must not fall back to V1`);
+      },
+    });
+    const result = webhookResult.results[0];
+    const payload = JSON.stringify(result?.replyPayload);
+    check(
+      webhookResult.results.length === 1 &&
+        result?.routeVersion === "v2" &&
+        result.conversationV2PolicyAction === "answer_price" &&
+        result.rendererTelemetry?.responseContract.coverageStatus === "verified" &&
+        item.expected.every((term) => result.decision.replyText.includes(term)) &&
+        item.expected.every((term) => payload.includes(term)),
+      `C8: final LINE payload must preserve every ${item.id} enforce obligation (${JSON.stringify({
+        payload: result?.replyPayload,
+        policyAction: result?.conversationV2PolicyAction,
+        rendererTelemetry: result?.rendererTelemetry,
+        routeVersion: result?.routeVersion,
+      })})`,
+    );
+  }
+
   const delayedReplayContext = structuredClone(first.decision.nextContext);
   delayedReplayContext.lastSeenAt = new Date(NOW.getTime() + 30_000).toISOString();
   const delayedReplayCounts = { nlu: 0, provider: 0 };
@@ -338,6 +554,230 @@ async function main() {
   assert.equal(follow.kind, "routed");
   check(followCounts.provider === 1 && followCounts.nlu === 1, "C9: contextual follow-up must stay on V2 with one call per dependency");
   check(follow.decision.decisionType === "pricing_auto_reply" && follow.decision.replyText.includes("16,888"), "C10: contextual price must resolve from the approved turn snapshot");
+
+  const priceConflictProvider = createStaticClinicFactsProvider({
+    pricingCampaigns: [campaign(), botoxCampaign()],
+    snapshotId: "snapshot-price-conflict",
+  });
+  const concernConflict = await routeConversationV2Canary({
+    context: first.decision.nextContext,
+    eventIdentity: "event-price-concern-conflict",
+    message: "皺眉紋多少錢？",
+    now: new Date(NOW.getTime() + 2_000),
+    sourceType: "user",
+    sourceUserId: "U-canary",
+  }, {
+    factsProvider: priceConflictProvider,
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-canary"],
+      mode: "canary",
+      responseContractMode: "enforce",
+    }),
+    requestFrame: async () => nluResult(frame({
+      areas: ["face"],
+      concerns: [{ area: "face", key: "dynamic_wrinkles" }],
+      dialogue: {
+        focus: "price_unspecified",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_price",
+      },
+      intents: ["pricing"],
+      treatments: [],
+    })),
+  });
+  assert.equal(concernConflict.kind, "routed");
+  check(
+    concernConflict.policyAction === "clarify" &&
+      concernConflict.decision.matchedKey === "conversation_v2:clarify_with_options" &&
+      concernConflict.decision.nextContext.conversationV2State?.awaiting?.continuation?.kind === "answer_price" &&
+      concernConflict.decision.nextContext.conversationV2State.awaiting.options.some((option) => option.value === "botox") &&
+      !/16,888|12,999|999/u.test(concernConflict.decision.replyText),
+    "C10a: a current wrinkle need must suspend inherited ONDA pricing as a typed, resumable clarification",
+  );
+  const concernConflictOption = concernConflict.decision.nextContext.conversationV2State?.awaiting?.options.find(
+    (option) => option.value === "botox",
+  );
+  const concernConflictButtonText = concernConflict.decision.replyPlan?.quickReplyItems.find(
+    (item) => item.action.label === "肉毒",
+  )?.action.text;
+  check(
+    concernConflictButtonText === concernConflictOption?.label,
+    "C10a-ui: the actual clarification button must send the exact pending treatment option",
+  );
+  const persistedConcernConflictState = parsePersistedConversationV2State(
+    JSON.parse(JSON.stringify(concernConflict.decision.nextContext.conversationV2State)),
+  );
+  assert.ok(persistedConcernConflictState, "C10a-store: typed price clarification must survive JSON persistence");
+
+  const concernConflictSelection = await routeConversationV2Canary({
+    context: {
+      ...concernConflict.decision.nextContext,
+      conversationV2State: persistedConcernConflictState,
+    },
+    eventIdentity: "event-price-concern-selection",
+    message: concernConflictButtonText!,
+    now: new Date(NOW.getTime() + 3_000),
+    sourceType: "user",
+    sourceUserId: "U-canary",
+  }, {
+    factsProvider: priceConflictProvider,
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-canary"],
+      mode: "canary",
+      responseContractMode: "enforce",
+    }),
+    requestFrame: async () => ({
+      errorCode: "nlu_unavailable",
+      frame: null,
+      latencyMs: 5,
+      model: "fixture-nlu",
+      promptVersion: "fixture-v2",
+      tokensIn: 10,
+      tokensOut: 0,
+    }),
+  });
+  assert.equal(concernConflictSelection.kind, "routed");
+  check(
+    concernConflictSelection.policyAction === "answer_price" &&
+      concernConflictSelection.decision.replyText.includes("999") &&
+      !concernConflictSelection.decision.replyText.includes("16,888") &&
+      !concernConflictSelection.decision.nextContext.conversationV2State?.awaiting &&
+      JSON.stringify(concernConflictSelection.decision.nextContext.conversationV2State?.knowledge.treatmentKeys) === JSON.stringify(["botox"]) &&
+      JSON.stringify(concernConflictSelection.decision.nextContext.conversationV2State?.knowledge.concernKeys) === JSON.stringify(["dynamic_wrinkles"]),
+    `C10b: the delivered button text must resume price and retain only the current Botox need (${JSON.stringify({
+      buttonText: concernConflictButtonText,
+      policyAction: concernConflictSelection.policyAction,
+      replyText: concernConflictSelection.decision.replyText,
+      state: concernConflictSelection.decision.nextContext.conversationV2State,
+    })})`,
+  );
+
+  const areaConflict = await routeConversationV2Canary({
+    context: concernConflictSelection.decision.nextContext,
+    eventIdentity: "event-price-area-conflict",
+    message: "腹部多少錢？",
+    now: new Date(NOW.getTime() + 4_000),
+    sourceType: "user",
+    sourceUserId: "U-canary",
+  }, {
+    factsProvider: priceConflictProvider,
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-canary"],
+      mode: "canary",
+      responseContractMode: "enforce",
+    }),
+    requestFrame: async () => nluResult(frame({
+      areas: ["abdomen"],
+      dialogue: {
+        focus: "price_unspecified",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_price",
+      },
+      intents: ["pricing"],
+      treatments: [],
+    })),
+  });
+  assert.equal(areaConflict.kind, "routed");
+  check(
+    areaConflict.policyAction === "clarify" &&
+      areaConflict.decision.nextContext.conversationV2State?.awaiting?.continuation?.kind === "answer_price" &&
+      areaConflict.decision.nextContext.conversationV2State.awaiting.options.some((option) => option.value === "onda_pro") &&
+      !areaConflict.decision.replyText.includes("999"),
+    "C10c: a current abdomen area must not inherit the prior Botox price owner",
+  );
+  const areaConflictOption = areaConflict.decision.nextContext.conversationV2State?.awaiting?.options.find(
+    (option) => option.value === "onda_pro",
+  );
+  const areaConflictButtonText = areaConflict.decision.replyPlan?.quickReplyItems.find(
+    (item) => /ONDA/iu.test(item.action.label),
+  )?.action.text;
+  check(
+    areaConflictButtonText === areaConflictOption?.label,
+    "C10c-ui: the actual clarification button must expose the compatible ONDA option",
+  );
+  const persistedAreaConflictState = parsePersistedConversationV2State(
+    JSON.parse(JSON.stringify(areaConflict.decision.nextContext.conversationV2State)),
+  );
+  assert.ok(persistedAreaConflictState, "C10c-store: the area clarification must survive JSON persistence");
+
+  const areaConflictSelection = await routeConversationV2Canary({
+    context: {
+      ...areaConflict.decision.nextContext,
+      conversationV2State: persistedAreaConflictState,
+    },
+    eventIdentity: "event-price-area-selection",
+    message: areaConflictButtonText!,
+    now: new Date(NOW.getTime() + 5_000),
+    sourceType: "user",
+    sourceUserId: "U-canary",
+  }, {
+    factsProvider: priceConflictProvider,
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-canary"],
+      mode: "canary",
+      responseContractMode: "enforce",
+    }),
+    requestFrame: async () => ({
+      errorCode: "nlu_unavailable",
+      frame: null,
+      latencyMs: 5,
+      model: "fixture-nlu",
+      promptVersion: "fixture-v2",
+      tokensIn: 10,
+      tokensOut: 0,
+    }),
+  });
+  assert.equal(areaConflictSelection.kind, "routed");
+  check(
+    areaConflictSelection.policyAction === "answer_price" &&
+      areaConflictSelection.decision.replyText.includes("16,888") &&
+      !areaConflictSelection.decision.replyText.includes("999") &&
+      JSON.stringify(areaConflictSelection.decision.nextContext.conversationV2State?.knowledge.treatmentKeys) === JSON.stringify(["onda_pro"]) &&
+      JSON.stringify(areaConflictSelection.decision.nextContext.conversationV2State?.knowledge.areaKeys) === JSON.stringify(["abdomen"]) &&
+      !areaConflictSelection.decision.nextContext.conversationV2State?.knowledge.concernKeys.includes("dynamic_wrinkles"),
+    `C10d: ONDA must resume the abdomen price clarification with the approved ONDA campaign (${JSON.stringify({
+      matchedKey: areaConflictSelection.decision.matchedKey,
+      policyAction: areaConflictSelection.policyAction,
+      replyText: areaConflictSelection.decision.replyText,
+      state: areaConflictSelection.decision.nextContext.conversationV2State,
+    })})`,
+  );
+
+  const explicitLowConfidencePrice = await routeConversationV2Canary({
+    context: concernConflictSelection.decision.nextContext,
+    eventIdentity: "event-explicit-low-confidence-price",
+    message: "ONDA 皺眉紋多少錢？",
+    now: new Date(NOW.getTime() + 6_000),
+    sourceType: "user",
+    sourceUserId: "U-canary",
+  }, {
+    factsProvider: priceConflictProvider,
+    getCanarySettings: () => ({
+      allowlistedUserIds: ["U-canary"],
+      mode: "canary",
+      responseContractMode: "enforce",
+    }),
+    requestFrame: async () => nluResult(frame({
+      confidence: 0.4,
+      dialogue: {
+        focus: "price_unspecified",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_price",
+      },
+      intents: ["pricing"],
+      treatments: ["onda_pro"],
+    })),
+  });
+  assert.equal(explicitLowConfidencePrice.kind, "routed");
+  check(
+    explicitLowConfidencePrice.policyAction === "answer_price" &&
+      explicitLowConfidencePrice.decision.replyText.includes("16,888") &&
+      !explicitLowConfidencePrice.decision.replyText.includes("999"),
+    "C10e: an explicitly named current treatment must own price even when model confidence is low",
+  );
 
   let pinnedProviderCalls = 0;
   const pinned = await routeConversationV2Canary({

@@ -102,6 +102,8 @@ export type ReplyRendererResult = {
   model?: string;
   replyText: string;
   replyTextSource: ReplyTextSource;
+  /** Typed semantic receipts emitted by the renderer, never inferred from prose. */
+  renderedResponseAspects?: ResponseAspect[];
   renderMode: ReplyRendererMode;
   responseContract: ResponseContractShadowObservation;
   sourceUrl?: string;
@@ -122,6 +124,7 @@ export function observeResponseContractShadow(input: {
   attachment: ResponseContractAttachment;
   dialogueAct: DialogueAct;
   plan?: Pick<ReplyPlan, "approvedPriceReply">;
+  renderedResponseAspects?: readonly ResponseAspect[];
   replyTextSource: ReplyTextSource;
 }): ResponseContractShadowObservation {
   if (input.attachment.mode === "off") {
@@ -155,7 +158,10 @@ export function observeResponseContractShadow(input: {
   ) {
     measurable = true;
     if (priceSubjectMatches) {
-      completedAspects = contract.mustAnswer.filter((aspect) => PRICE_RESPONSE_ASPECTS.has(aspect));
+      const supplementalAspects = new Set(input.renderedResponseAspects ?? []);
+      completedAspects = contract.mustAnswer.filter((aspect) =>
+        PRICE_RESPONSE_ASPECTS.has(aspect) || supplementalAspects.has(aspect)
+      );
       coverageBasis = "approved_price_contract";
     } else {
       coverageBasis = "approved_price_subject_mismatch";
@@ -472,11 +478,20 @@ function renderDeterministic(
   startedAt: number,
 ): UnobservedReplyRendererResult {
   if (input.plan.approvedPriceReply) {
-    const replyText = renderApprovedPriceReplyContract(
+    const enforcedSupplementAspects = input.plan.responseContract.mode === "enforce"
+      ? input.plan.responseContract.contract.mustAnswer.filter(
+          (aspect) => !PRICE_RESPONSE_ASPECTS.has(aspect),
+        )
+      : [];
+    const renderedPrice = renderApprovedPriceReplyContract(
       input.plan.approvedPriceReply,
       input.plan.treatmentKeys,
+      {
+        includeSupplements: input.plan.responseContract.mode === "enforce",
+        requiredSupplementAspects: enforcedSupplementAspects,
+      },
     );
-    if (!replyText) {
+    if (!renderedPrice) {
       return renderGuardedFallback(
         input,
         "approved_price_contract_rejected",
@@ -484,6 +499,7 @@ function renderDeterministic(
         startedAt,
       );
     }
+    const { renderedSupplementAspects, replyText } = renderedPrice;
     return {
       dialogueAct: input.plan.dialogueAct,
       generated: false,
@@ -503,6 +519,7 @@ function renderDeterministic(
       ),
       replyText,
       replyTextSource: "approved_price_contract",
+      renderedResponseAspects: renderedSupplementAspects,
       renderMode: "deterministic",
       usedGroundedKnowledge,
     };
@@ -828,6 +845,7 @@ export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyR
       attachment: input.plan.responseContract,
       dialogueAct: result.dialogueAct,
       plan: input.plan,
+      renderedResponseAspects: result.renderedResponseAspects,
       replyTextSource: result.replyTextSource,
     }),
   };

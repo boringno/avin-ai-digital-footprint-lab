@@ -139,6 +139,13 @@ function conversationV2QuickReplyActions(
   }
 
   if (plan.dialogueAct === "clarify") {
+    const awaitingActions = (state.awaiting?.options ?? [])
+      .filter((option) => option.label.trim().length > 0 && option.label.length <= 20)
+      .slice(0, 4)
+      .map((option) => ({ label: option.label, text: option.label }));
+    if (awaitingActions.length > 0) {
+      return awaitingActions satisfies ProjectedQuickReplyAction[];
+    }
     return [...FALLBACK_ACTIONS] satisfies ProjectedQuickReplyAction[];
   }
 

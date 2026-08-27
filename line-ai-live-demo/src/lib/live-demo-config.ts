@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ResponseContractRuntimeMode } from "@/lib/response-contract";
+
 export type RuntimeConfig = {
   adminNotifyTarget: string;
   aiReplyGenerationTimeoutMs: number;
@@ -15,6 +17,7 @@ export type RuntimeConfig = {
   claudeApiEnabled: boolean;
   conversationV2CanaryUserIds: string[];
   conversationV2Mode: "canary" | "demo_all" | "off" | "shadow";
+  conversationV2ResponseContractMode: ResponseContractRuntimeMode;
   cronSecret: string;
   debugToken: string;
   handoffDigestFrom: string;
@@ -84,6 +87,14 @@ function parseConversationV2Mode(value: string | undefined): "canary" | "demo_al
   throw new Error(`Unsupported CONVERSATION_V2_MODE: ${normalized}`);
 }
 
+function parseConversationV2ResponseContractMode(
+  value: string | undefined,
+): ResponseContractRuntimeMode {
+  const normalized = (value ?? "shadow").trim().toLowerCase();
+  if (normalized === "shadow" || normalized === "enforce") return normalized;
+  throw new Error(`Unsupported CONVERSATION_V2_RESPONSE_CONTRACT_MODE: ${normalized}`);
+}
+
 function parseLineChannelStage(value: string | undefined): "demo" | "production" | "unconfigured" {
   const normalized = (value ?? "unconfigured").trim().toLowerCase();
   if (normalized === "demo" || normalized === "production" || normalized === "unconfigured") return normalized;
@@ -149,6 +160,9 @@ export function getRuntimeConfig(): RuntimeConfig {
   const openAiNluMode = parseNluMode(process.env.OPENAI_NLU_MODE);
   const openAiNluDecisionMode = parseNluDecisionMode(process.env.OPENAI_NLU_DECISION_MODE);
   const conversationV2Mode = parseConversationV2Mode(process.env.CONVERSATION_V2_MODE);
+  const conversationV2ResponseContractMode = parseConversationV2ResponseContractMode(
+    process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE,
+  );
   const lineChannelStage = parseLineChannelStage(process.env.LINE_CHANNEL_STAGE);
   if (conversationV2Mode === "shadow"
     && openAiNluMode === "shadow"
@@ -163,6 +177,13 @@ export function getRuntimeConfig(): RuntimeConfig {
   }
   if (conversationV2Mode === "demo_all" && lineChannelStage !== "demo") {
     throw new Error("CONVERSATION_V2_MODE=demo_all requires LINE_CHANNEL_STAGE=demo; broad V2 routing is forbidden on an unlabelled or production LINE channel");
+  }
+  if (
+    conversationV2ResponseContractMode === "enforce" &&
+    conversationV2Mode !== "canary" &&
+    !(conversationV2Mode === "demo_all" && lineChannelStage === "demo")
+  ) {
+    throw new Error("CONVERSATION_V2_RESPONSE_CONTRACT_MODE=enforce requires Conversation V2 canary or demo_all on a demo LINE channel");
   }
 
   return {
@@ -179,6 +200,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     claudeApiEnabled: parseBoolean(process.env.CLAUDE_API_ENABLED, false),
     conversationV2CanaryUserIds: parseIdentifierList(process.env.CONVERSATION_V2_CANARY_USER_IDS),
     conversationV2Mode,
+    conversationV2ResponseContractMode,
     cronSecret: process.env.CRON_SECRET ?? "",
     debugToken: process.env.LIVE_DEMO_DEBUG_TOKEN ?? "",
     handoffDigestFrom: process.env.HANDOFF_DIGEST_FROM ?? "",

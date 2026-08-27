@@ -1,8 +1,11 @@
 import { findAllTreatmentsByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
 import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
-import { createOffResponseContract } from "@/lib/response-contract";
+import {
+  createOffResponseContract,
+  type ResponseContractRuntimeMode,
+} from "@/lib/response-contract";
 
-import { buildShadowResponseContractForAction } from "./response-contract-policy";
+import { buildResponseContractForAction } from "./response-contract-policy";
 import {
   isPureAwaitingSelectionAnswer,
   resolveAwaitingSelection,
@@ -51,6 +54,21 @@ function explicitPriceTreatmentKey(text: string) {
   // treatment the customer just declined. Defer to the model's entities instead.
   const named = findAllTreatmentsByMessage(text);
   return named.length === 1 ? named[0]?.key : undefined;
+}
+
+function isPureExplicitTreatmentContinuationAnswer(turn: TurnUnderstanding) {
+  const named = findAllTreatmentsByMessage(turn.text);
+  if (named.length !== 1) return false;
+  const normalized = turn.text
+    .normalize("NFKC")
+    .replace(/\s+/gu, "")
+    .replace(/[!！。.]$/u, "")
+    .toLowerCase();
+  const accepted = [named[0]?.name, ...(named[0]?.aliases ?? [])]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.normalize("NFKC").replace(/\s+/gu, "").toLowerCase())
+    .flatMap((value) => [value, `${value}吧`, `${value}好了`, `就${value}`]);
+  return accepted.includes(normalized);
 }
 
 function affirmedMentions<T extends { polarity: "affirmed" | "negated" }>(
@@ -407,6 +425,61 @@ function resolvableTreatmentSubject(
   return subjectTreatmentKeys(state.activeTask.subjectKey)[0];
 }
 
+export function resolvePriceSubjectForPolicy(
+  state: ConversationV2State,
+  turn: TurnUnderstanding,
+): {
+  blockedByUnconfirmedMention: boolean;
+  source?: "explicit_current" | "inherited_context";
+  treatmentKeys: string[];
+} {
+  const negatedTreatmentKeys = new Set(keys(negatedMentions(turn, turn.treatments)));
+  const namedInText = explicitPriceTreatmentKey(turn.text);
+  const deterministicExplicitTreatment =
+    namedInText && !negatedTreatmentKeys.has(namedInText) ? namedInText : undefined;
+  const confirmedTreatments = confirmedKeys(turn, turn.treatments);
+  const blockedByUnconfirmedMention =
+    !deterministicExplicitTreatment &&
+    turn.treatments.length > 0 &&
+    confirmedTreatments.length === 0;
+  if (blockedByUnconfirmedMention) {
+    return { blockedByUnconfirmedMention: true, treatmentKeys: [] };
+  }
+  if (deterministicExplicitTreatment) {
+    return {
+      blockedByUnconfirmedMention: false,
+      source: "explicit_current",
+      treatmentKeys: [deterministicExplicitTreatment],
+    };
+  }
+  if (confirmedTreatments.length > 0) {
+    return {
+      blockedByUnconfirmedMention: false,
+      source: "explicit_current",
+      treatmentKeys: confirmedTreatments,
+    };
+  }
+
+  const contextualPriceTreatmentKeys = hasHedgedTreatmentMention(turn.text)
+    ? []
+    : contextualTreatmentKeys(state, turn.dialogueReference);
+  if (contextualPriceTreatmentKeys.length > 0) {
+    return {
+      blockedByUnconfirmedMention: false,
+      source: "inherited_context",
+      treatmentKeys: contextualPriceTreatmentKeys,
+    };
+  }
+  const activePriceTreatmentKey = resolvableTreatmentSubject(turn, state);
+  return activePriceTreatmentKey
+    ? {
+        blockedByUnconfirmedMention: false,
+        source: "inherited_context",
+        treatmentKeys: [activePriceTreatmentKey],
+      }
+    : { blockedByUnconfirmedMention: false, treatmentKeys: [] };
+}
+
 function makeAwaiting(
   turn: TurnUnderstanding,
   state: ConversationV2State,
@@ -714,6 +787,7 @@ function deterministicPlan(
           kind: action.priceKind,
           treatmentKeys: [...action.treatmentKeys],
         },
+        pricingSubjectSource: action.priceSubjectSource,
         responseContract: createOffResponseContract(),
         sourceTurnId: action.turnId,
         templateKey: "approved_price_lookup",
@@ -764,6 +838,7 @@ function planForAction(
   state: ConversationV2State,
   turn: TurnUnderstanding,
   action: DialoguePolicyAction,
+  responseContractMode: ResponseContractRuntimeMode = "shadow",
 ): ReplyPlan {
   let plan: ReplyPlan;
   if (action.type === "do_not_reply") {
@@ -781,7 +856,12 @@ function planForAction(
   }
   return {
     ...plan,
-    responseContract: buildShadowResponseContractForAction({ action, plan, turn }),
+    responseContract: buildResponseContractForAction({
+      action,
+      plan,
+      requestedMode: responseContractMode,
+      turn,
+    }),
   };
 }
 
@@ -973,6 +1053,7 @@ function clinicTopicForTurn(turn: TurnUnderstanding) {
 export function evaluateDialoguePolicy(
   state: ConversationV2State,
   turn: TurnUnderstanding,
+  options: { responseContractMode?: ResponseContractRuntimeMode } = {},
 ): DialoguePolicyResult {
   const implicitPreference = resolveImplicitPreferenceReference(state, turn);
   const turnPreferenceContext = responseContextForTurn(state, turn, implicitPreference);
@@ -1055,54 +1136,57 @@ export function evaluateDialoguePolicy(
       type: "fallback_clarify",
     };
   } else if (turn.speechAct === "ask_price") {
-    const negatedTreatmentKeys = new Set(keys(negatedMentions(turn, turn.treatments)));
-    const namedInText = explicitPriceTreatmentKey(turn.text);
-    // A treatment the customer just declined must never own the price, even when it is
-    // the only one their sentence names.
-    const deterministicExplicitTreatment =
-      namedInText && !negatedTreatmentKeys.has(namedInText) ? namedInText : undefined;
-    const confirmedTreatments = confirmedKeys(turn, turn.treatments);
-    const hasUnconfirmedTreatmentMention =
-      !deterministicExplicitTreatment &&
-      turn.treatments.length > 0 && confirmedTreatments.length === 0;
-    // Suppressing `awaiting` is not enough on its own: this branch resolves the price
-    // subject independently, so a hedged mention has to be blocked from inheriting the
-    // active subject here too, otherwise the customer is quoted the wrong price.
-    const contextualPriceTreatmentKeys = hasHedgedTreatmentMention(turn.text)
-      ? []
-      : contextualTreatmentKeys(state, turn.dialogueReference);
-    const activePriceTreatmentKey = resolvableTreatmentSubject(turn, state);
-    // A single treatment explicitly named in this price question owns the turn. The
-    // NLU frame can legitimately retain companion treatments from the active
-    // consultation (for example ONDA + botox), but that older context must not turn
-    // the explicit button text "ONDA price" into a combination-price query. Multi-
-    // treatment or negated wording is deliberately excluded by
-    // `explicitPriceTreatmentKey`, so confirmed semantic entities still arbitrate
-    // those genuinely ambiguous cases.
-    const treatmentKeys = deterministicExplicitTreatment
-      ? [deterministicExplicitTreatment]
-      : confirmedTreatments.length > 0
-        ? confirmedTreatments
-        : contextualPriceTreatmentKeys.length > 0
-          ? contextualPriceTreatmentKeys
-          : activePriceTreatmentKey
-            ? [activePriceTreatmentKey]
-            : [];
-    action = hasUnconfirmedTreatmentMention || treatmentKeys.length === 0
-      ? {
-          at: turn.receivedAt,
-          prompt: "想確認一下，您要詢問哪一項療程的價格呢？",
-          turnId: turn.turnId,
-          type: "fallback_clarify",
-        }
-      : {
-          at: turn.receivedAt,
-          priceApplicability: priceApplicabilityForTurn(state, turn),
-          priceKind: priceKindForTurn(turn),
-          treatmentKeys,
-          turnId: turn.turnId,
-          type: "answer_price",
-        };
+    const priceKind = priceKindForTurn(turn);
+    const priceApplicability = priceApplicabilityForTurn(state, turn);
+    if (turn.clarification?.slot === "treatment") {
+      const awaiting = makeAwaiting(turn, state)!;
+      const areaKeys = confirmedKeys(turn, turn.areas);
+      const concernKeys = confirmedKeys(turn, turn.concerns);
+      action = {
+        areaKeys,
+        at: turn.receivedAt,
+        awaiting: {
+          ...awaiting,
+          continuation: {
+            kind: "answer_price",
+            ...(priceApplicability ? { priceApplicability } : {}),
+            priceKind,
+          },
+          knowledgeMode: "replace_active_subject",
+          pendingKnowledge: {
+            areaKeys,
+            concernKeys,
+            treatmentKeys: [],
+          },
+          responseContext: turnPreferenceContext,
+        },
+        concernKeys,
+        knowledgeMode: "merge",
+        responseContext: turnPreferenceContext,
+        taskKind: "learn_treatment",
+        treatmentKeys: [],
+        turnId: turn.turnId,
+        type: "clarify",
+      };
+    } else {
+      const priceSubject = resolvePriceSubjectForPolicy(state, turn);
+      action = priceSubject.blockedByUnconfirmedMention || priceSubject.treatmentKeys.length === 0
+        ? {
+            at: turn.receivedAt,
+            prompt: "想確認一下，您要詢問哪一項療程的價格呢？",
+            turnId: turn.turnId,
+            type: "fallback_clarify",
+          }
+        : {
+            at: turn.receivedAt,
+            priceApplicability,
+            priceKind,
+            priceSubjectSource: priceSubject.source,
+            treatmentKeys: priceSubject.treatmentKeys,
+            turnId: turn.turnId,
+            type: "answer_price",
+          };
+    }
   } else if (turn.speechAct === "ask_clinic_info") {
     action = {
       at: turn.receivedAt,
@@ -1173,8 +1257,41 @@ export function evaluateDialoguePolicy(
           text: turn.text,
         })
       : [];
+    const explicitPriceContinuationTreatmentKeys =
+      state.awaiting?.continuation?.kind === "answer_price" &&
+      isPureExplicitTreatmentContinuationAnswer(turn)
+        ? confirmedKeys(turn, turn.treatments)
+        : [];
 
-    if (selectedOptions.length > 0) {
+    if (
+      state.awaiting?.continuation?.kind === "answer_price" &&
+      (selectedOptions.length > 0 || explicitPriceContinuationTreatmentKeys.length > 0)
+    ) {
+      const selectedTreatmentKeys = selectedOptions
+        .filter((option) => option.entity === "treatment")
+        .map((option) => option.value);
+      const treatmentKeys = selectedTreatmentKeys.length > 0
+        ? selectedTreatmentKeys
+        : explicitPriceContinuationTreatmentKeys;
+      action = treatmentKeys.length === 1
+        ? {
+            at: turn.receivedAt,
+            ...(state.awaiting.continuation.priceApplicability
+              ? { priceApplicability: { ...state.awaiting.continuation.priceApplicability } }
+              : {}),
+            priceKind: state.awaiting.continuation.priceKind,
+            priceSubjectSource: "explicit_current",
+            treatmentKeys,
+            turnId: turn.turnId,
+            type: "answer_price",
+          }
+        : {
+            at: turn.receivedAt,
+            prompt: state.awaiting.prompt,
+            turnId: turn.turnId,
+            type: "fallback_clarify",
+          };
+    } else if (selectedOptions.length > 0) {
       const pendingKnowledge = state.awaiting?.pendingKnowledge ?? {
         areaKeys: [],
         concernKeys: [],
@@ -1369,5 +1486,13 @@ export function evaluateDialoguePolicy(
   if (hasTurnPreferenceSignal && action.type !== "do_not_reply") {
     action = { ...action, preferenceContext: cloneResponseContext(turnPreferenceContext) };
   }
-  return { action, replyPlan: planForAction(state, turn, action) };
+  return {
+    action,
+    replyPlan: planForAction(
+      state,
+      turn,
+      action,
+      options.responseContractMode ?? "shadow",
+    ),
+  };
 }
