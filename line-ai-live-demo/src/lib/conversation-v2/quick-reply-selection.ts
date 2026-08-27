@@ -65,7 +65,7 @@ export function buildConversationV2QuickReplySelection(input: {
         : asset.concernKey
           ? [asset.concernKey]
           : [],
-      conversationMove: "continue",
+      conversationMove: semantic.conversationMove ?? "continue",
       dialogueReference: "active_subject",
       questionAspect: semantic.questionAspect,
       replyAssetId,
@@ -116,7 +116,7 @@ function selectionFromStoredChoice(input: {
         : asset.concernKey
           ? [asset.concernKey]
           : [],
-      conversationMove: "continue",
+      conversationMove: semantic.conversationMove ?? "continue",
       dialogueReference: "active_subject",
       questionAspect: semantic.questionAspect,
       replyAssetId: semantic.replyAssetId,

@@ -12,7 +12,7 @@ import {
   type PendingQuickReplyContract,
   type TreatmentResponseContext,
 } from "./types";
-import { QUESTION_ASPECTS } from "@/lib/dialogue-semantics";
+import { CONVERSATION_MOVES, QUESTION_ASPECTS } from "@/lib/dialogue-semantics";
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -203,6 +203,8 @@ function isPendingQuickReplyContract(value: unknown): value is PendingQuickReply
       : semantic.kind === "approved_asset" &&
         typeof semantic.replyAssetId === "string" && Boolean(semantic.replyAssetId) &&
         QUESTION_ASPECTS.includes(semantic.questionAspect as never) &&
+        (semantic.conversationMove === undefined ||
+          CONVERSATION_MOVES.includes(semantic.conversationMove as never)) &&
         (semantic.areaKey === undefined || typeof semantic.areaKey === "string") &&
         (semantic.concernKey === undefined || typeof semantic.concernKey === "string");
     return (

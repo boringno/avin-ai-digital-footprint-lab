@@ -1,7 +1,7 @@
 import type { TreatmentConversationBehavior } from "@/lib/conversation-behavior";
-import type { QuestionAspect } from "@/lib/dialogue-semantics";
+import type { ConversationMove, QuestionAspect } from "@/lib/dialogue-semantics";
 
-export type CustomerQuickReplyStage = "approach" | "followup" | "initial";
+export type CustomerQuickReplyStage = "approach" | "consultation" | "followup" | "initial";
 
 export type CustomerQuickReplySemantic =
   | {
@@ -13,6 +13,7 @@ export type CustomerQuickReplySemantic =
       assetKey: string;
       assetKind: "detail" | "quick";
       concernKey?: string;
+      conversationMove?: ConversationMove;
       questionAspect: QuestionAspect;
       type: "approved_asset";
     };
@@ -582,7 +583,7 @@ export const clinicConfig: ClinicConfig = {
           { label: "大腿／臀部", nextStage: "approach", semantic: { areaKey: "thigh", assetKey: "body_area_direction", assetKind: "detail", concernKey: "local_contour", questionAspect: "benefits", type: "approved_asset" }, text: "我在意大腿／臀部脂肪", stage: "followup", concernKeys: ["local_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup", concernKeys: ["local_contour"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
-          { label: "單做 ONDA", nextStage: "consultation", semantic: { assetKey: "jawline_single_treatment", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "我想先單做 ONDA", stage: "approach", concernKeys: ["jawline_looseness"] },
+          { label: "單做 ONDA", nextStage: "consultation", semantic: { assetKey: "jawline_single_treatment", assetKind: "detail", concernKey: "jawline_looseness", conversationMove: "prefer_single", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "我想先單做 ONDA", stage: "approach", concernKeys: ["jawline_looseness"] },
           { label: "ONDA＋肉毒組合", nextStage: "consultation", semantic: { assetKey: "jawline_combination_difference", assetKind: "detail", concernKey: "jawline_looseness", questionAspect: "single_vs_combination", type: "approved_asset" }, text: "ONDA＋肉毒小臉組合", stage: "approach", concernKeys: ["jawline_looseness"] },
           { label: "價格／活動", text: "ONDA 體驗價多少", stage: "approach", concernKeys: ["jawline_looseness"] },
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "approach", concernKeys: ["jawline_looseness"] },
@@ -590,6 +591,7 @@ export const clinicConfig: ClinicConfig = {
           { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "approach", concernKeys: ["local_contour"] },
           { label: "真人客服協助", text: "我要找真人客服", stage: "approach", concernKeys: ["local_contour"] },
           { label: "繼續詢問", text: "繼續詢問", stage: "approach", concernKeys: ["local_contour"] },
+          { label: "ONDA價格", text: "ONDA 體驗價多少", stage: "consultation", concernKeys: ["jawline_looseness"] },
         ],
         relatedReplies: [
           {
