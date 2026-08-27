@@ -148,6 +148,7 @@ function activeContract(): ResponseContract {
       kind: "ask",
     },
     schemaVersion: RESPONSE_CONTRACT_SCHEMA_VERSION,
+    subjectKeys: [],
   };
 }
 

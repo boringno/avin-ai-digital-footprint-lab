@@ -48,6 +48,7 @@ globalThis.fetch = async (_input, init) => {
             confidence: 0.96,
             concerns: [{ area: "face", key: "dynamic_wrinkles" }],
             dialogue: {
+              aspects: ["overview"],
               focus: "overview",
               move: "start",
               reference: "explicit",
@@ -56,7 +57,7 @@ globalThis.fetch = async (_input, init) => {
             intents: ["treatment_consultation"],
             negated: [],
             safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: false },
-            schemaVersion: 2,
+            schemaVersion: 3,
             treatments: ["botox"],
           }),
         }],
@@ -89,20 +90,32 @@ globalThis.fetch = originalFetch;
 if (restPayloadResult?.frame?.concerns[0]?.key !== "dynamic_wrinkles") {
   throw new Error("NLU shadow must parse output[].content[] from the raw Responses REST payload");
 }
-if (restPayloadResult?.promptVersion !== "nlu-v3-dialogue" || NLU_PROMPT_VERSION !== "nlu-v3-dialogue") {
+if (restPayloadResult?.promptVersion !== "nlu-v4-multi-aspect" || NLU_PROMPT_VERSION !== "nlu-v4-multi-aspect") {
   throw new Error("NLU shadow must record the V2 dialogue prompt version");
 }
 if (restPayloadResult?.frame?.dialogue.speechAct !== "learn_treatment") {
   throw new Error("NLU shadow must retain structured dialogue semantics");
 }
+if (restPayloadResult?.frame?.dialogue.aspects?.join(",") !== "overview") {
+  throw new Error("NLU shadow mock must exercise the current schema-v3 aspect contract");
+}
 const requestBody = capturedRequestBody as unknown as {
   input?: string;
   reasoning?: { effort?: string };
-  text?: { format?: { type?: string; strict?: boolean } };
+  text?: {
+    format?: {
+      schema?: Record<string, unknown>;
+      type?: string;
+      strict?: boolean;
+    };
+  };
 } | null;
 const responseFormat = requestBody?.text?.format;
 if (responseFormat?.type !== "json_schema" || responseFormat.strict !== true) {
   throw new Error("NLU shadow must request strict structured output");
+}
+if (JSON.stringify(responseFormat.schema).includes('"uniqueItems"')) {
+  throw new Error("NLU strict schema must not send unsupported uniqueItems to OpenAI");
 }
 if (requestBody?.reasoning?.effort !== "none") throw new Error("GPT-5.6 NLU must preserve none reasoning for latency");
 const requestInput = requestBody?.input ?? "";

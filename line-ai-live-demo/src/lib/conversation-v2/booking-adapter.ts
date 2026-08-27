@@ -73,11 +73,12 @@ function extractName(
   state: ConversationV2State,
   allowBareExpectedName: boolean,
   allowDelimitedBookingName: boolean,
+  allowStrongBundleName = false,
 ) {
   const structured = structuredField(message, ["姓名", "名字", "稱呼"]);
   if (structured && isSafeBareName(structured)) return structured.slice(0, 40);
   const explicit = message.match(
-    /(?:我叫|名字是|稱呼我)\s*([A-Za-z0-9\u4e00-\u9fff_-]{1,20}?)(?=\s*(?:想|要|預約|在|去|，|,|。|；|;|$))/u,
+    /(?:我叫(?:做)?|名字是|稱呼我)\s*([A-Za-z0-9\u4e00-\u9fff_-]{1,20}?)(?=\s*(?:想|要|預約|在|去|電話|手機|號碼|初診|複診|，|,|。|；|;|$))/u,
   )?.[1];
   if (explicit && isSafeBareName(explicit)) return explicit;
   const selfIntroduction = message.match(/^\s*我是\s*([A-Za-z0-9\u4e00-\u9fff_-]{1,20})\s*$/u)?.[1];
@@ -93,7 +94,15 @@ function extractName(
           .filter(Boolean)
           .at(-1)
       : undefined;
-    if (delimitedName && isSafeDelimitedBookingName(delimitedName)) return delimitedName;
+    if (
+      delimitedName &&
+      (
+        isSafeDelimitedBookingName(delimitedName) ||
+        (allowStrongBundleName && isSafeBareName(delimitedName))
+      )
+    ) {
+      return delimitedName;
+    }
   }
 
   if (
@@ -214,6 +223,7 @@ function extractFields(
   state: ConversationV2State,
   allowBareExpectedName = false,
   allowDelimitedBookingName = false,
+  allowStrongBundleName = false,
 ): Partial<BookingDraft> {
   const branch = extractAffirmedBranch(message);
   const treatmentKeys = parseTreatmentSelection(message).selectedKeys;
@@ -223,6 +233,7 @@ function extractFields(
     state,
     allowBareExpectedName,
     allowDelimitedBookingName,
+    allowStrongBundleName,
   );
   const firstVisit = extractFirstVisit(message);
   const timeSlots = extractTimeSlots(message);
@@ -278,6 +289,40 @@ function singleActiveBookingTreatment(state: ConversationV2State) {
     : undefined;
 }
 
+function isConsultationBundleCandidate(message: string, speechAct: string) {
+  if (speechAct !== "none") return false;
+  const text = message.normalize("NFKC").replace(/\s+/gu, "");
+  if (
+    !/(?:我要|我想|我希望|想要|希望|需要|幫我|請幫我|麻煩(?:幫我)?).{0,12}(?:諮詢|咨询)/u.test(text)
+  ) {
+    return false;
+  }
+  // Asking about consultation or explicitly saying "only learning" is not
+  // consent to create a booking, even when contact details are mentioned.
+  if (
+    /[?？]/u.test(message) ||
+    /(?:只是|僅是|單純).{0,8}(?:先)?(?:了解|問問|詢問)/u.test(text) ||
+    /(?:不是|並非).{0,8}(?:要)?(?:預約|約診)/u.test(text) ||
+    /不(?:想|要|用|需要).{0,8}(?:預約|約診)/u.test(text)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isStrongConsultationBookingBundle(fields: Partial<BookingDraft>) {
+  return Boolean(
+    fields.treatmentKeys?.length &&
+      fields.name &&
+      fields.phone &&
+      (
+        fields.branch ||
+        typeof fields.firstVisit === "boolean" ||
+        fields.timeSlots?.length
+      ),
+  );
+}
+
 /**
  * Deterministic adapter for booking mutations and sensitive contact fields.
  * The LLM may understand the conversation, but it is never the source of the
@@ -295,23 +340,32 @@ export function buildConversationV2BookingUnderstanding(input: {
   const activeIntent = input.state.bookingTask.status === "collecting" || input.state.bookingTask.status === "suspended"
     ? input.state.bookingTask.intent
     : "none";
-  const intent = explicitIntent ?? activeIntent;
   const isActiveCreateCollection =
-    intent === "create" &&
+    (explicitIntent ?? activeIntent) === "create" &&
     ["collecting", "suspended"].includes(input.state.bookingTask.status);
+  const consultationBundleCandidate = isConsultationBundleCandidate(
+    input.message,
+    speechAct,
+  );
   const fields = extractFields(
     input.message,
     input.state,
     input.allowBareExpectedName,
-    // Customers commonly answer a booking prompt with several fields at once
-    // (for example "王小美 0912-345-678"). The deterministic parser may accept
-    // that delimited contact bundle while an existing create flow is active; it
-    // remains intentionally disabled for unrelated conversation and lookups.
-    Boolean(explicitIntent) || isActiveCreateCollection,
+    // Customers commonly answer a booking prompt with several fields at once.
+    // A strong consultation bundle may use the same deterministic parser before
+    // a task exists; unrelated consultation and lookup text stays read-only.
+    Boolean(explicitIntent) || isActiveCreateCollection || consultationBundleCandidate,
+    consultationBundleCandidate,
   );
+  const bundledConsultationIntent =
+    consultationBundleCandidate && isStrongConsultationBookingBundle(fields)
+      ? "create"
+      : null;
+  const effectiveExplicitIntent = explicitIntent ?? bundledConsultationIntent;
+  const intent = effectiveExplicitIntent ?? activeIntent;
 
   if (
-    explicitIntent === "create" &&
+    effectiveExplicitIntent === "create" &&
     !fields.treatmentKeys?.length
   ) {
     const activeTreatmentKey = singleActiveBookingTreatment(input.state);
@@ -339,7 +393,7 @@ export function buildConversationV2BookingUnderstanding(input: {
     fields.changeRequest = input.message.trim().slice(0, 300);
   }
   return {
-    explicit: Boolean(explicitIntent),
+    explicit: Boolean(effectiveExplicitIntent),
     ...(hasFields(fields) ? { fields } : {}),
     intent,
   };

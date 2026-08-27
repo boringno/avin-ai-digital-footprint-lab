@@ -17,6 +17,7 @@ import {
   CONVERSATION_MOVES,
   DIALOGUE_REFERENCES,
   QUESTION_ASPECTS,
+  type QuestionAspect,
 } from "@/lib/dialogue-semantics";
 
 import type {
@@ -86,6 +87,11 @@ const SEMANTIC_ANCHOR_SPEECH_ACTS = new Set<TrustedSemanticAnchor["speechAct"]>(
 const CONVERSATION_MOVE_KEYS = new Set<string>(CONVERSATION_MOVES);
 const DIALOGUE_REFERENCE_KEYS = new Set<string>(DIALOGUE_REFERENCES);
 const QUESTION_ASPECT_KEYS = new Set<string>(QUESTION_ASPECTS);
+const PRICE_QUESTION_ASPECT_KEYS = new Set<QuestionAspect>([
+  "price_campaign",
+  "price_regular",
+  "price_unspecified",
+]);
 
 function hasDeterministicPriceInquiry(
   text: string,
@@ -104,6 +110,19 @@ function hasDeterministicPriceInquiry(
     isPriceInquiryWithTypoTolerance(inquiryText, hasExplicitTreatment) &&
     !isHedgedTreatmentReference(inquiryText),
   );
+}
+
+function normalizedQuestionAspects(
+  primary: QuestionAspect,
+  candidates: readonly QuestionAspect[] = [],
+  additional: readonly QuestionAspect[] = [],
+) {
+  const ordered = [
+    ...(primary === "none" ? [] : [primary]),
+    ...candidates,
+    ...additional,
+  ].filter((aspect) => aspect !== "none");
+  return [...new Set(ordered)].slice(0, 4);
 }
 
 /** Kept aligned with the V2 policy's confirmed-entity threshold. */
@@ -1259,6 +1278,10 @@ export function adaptNluFrameToConversationV2Turn(
         selectedNegationGuard.affirmedConcernKeys.length +
         selectedNegationGuard.affirmedTreatmentKeys.length > 0,
     );
+    const questionAspect = selectedSemanticAnchor?.questionAspect ??
+      (deterministicPriceInquiry
+        ? "price_unspecified"
+        : hasResolvedAffirmation ? "overview" : "none");
     return {
       areas: deterministicEntities.areas,
       ...(supplemental.valid && supplemental.booking ? { booking: supplemental.booking } : {}),
@@ -1277,8 +1300,8 @@ export function adaptNluFrameToConversationV2Turn(
       ...(supplemental.hardDecision?.reason
         ? { handoffReason: supplemental.hardDecision.reason }
         : {}),
-      questionAspect: selectedSemanticAnchor?.questionAspect ??
-        (hasResolvedAffirmation ? "overview" : "none"),
+      questionAspect,
+      questionAspects: normalizedQuestionAspects(questionAspect),
       receivedAt: input.receivedAt,
       ...(selectedSemanticAnchor?.replyAssetId
         ? { replyAssetId: selectedSemanticAnchor.replyAssetId }
@@ -1368,6 +1391,37 @@ export function adaptNluFrameToConversationV2Turn(
       selectedNegationGuard.affirmedTreatmentKeys.length > 0,
   );
   const sourceIntents = parsedFrame.intents.filter((intent) => INTENT_KEYS.has(intent));
+  const lowConfidenceDeterministicPrice =
+    deterministicPriceOwnsTurn &&
+    parsedFrame.confidence < CONVERSATION_V2_NLU_MIN_CONFIDENCE;
+  const questionAspect = selectedSemanticAnchor?.questionAspect ??
+    (selectedNegationGuard
+      ? hasResolvedAffirmation ? "overview" : "none"
+      : lowConfidenceDeterministicPrice
+      ? "price_unspecified"
+      : parsedFrame.dialogue.focus);
+  const questionAspects = selectedNegationGuard
+    ? normalizedQuestionAspects(questionAspect)
+    : selectedSemanticAnchor
+    ? normalizedQuestionAspects(
+        questionAspect,
+        parsedFrame.confidence >= CONVERSATION_V2_NLU_MIN_CONFIDENCE
+          ? parsedFrame.dialogue.aspects
+          : [],
+      )
+    : parsedFrame.confidence >= CONVERSATION_V2_NLU_MIN_CONFIDENCE
+    ? normalizedQuestionAspects(
+        questionAspect,
+        parsedFrame.dialogue.aspects,
+        deterministicPriceOwnsTurn &&
+            !(parsedFrame.dialogue.aspects ?? []).some((aspect) =>
+              PRICE_QUESTION_ASPECT_KEYS.has(aspect))
+          ? ["price_unspecified"]
+          : [],
+      )
+    : lowConfidenceDeterministicPrice
+    ? normalizedQuestionAspects("price_unspecified")
+    : undefined;
   return {
     areas: makeMentionsConservative(effectiveEntities.areas, resolution.needsClarification),
     ...(supplemental.booking ? { booking: supplemental.booking } : {}),
@@ -1389,10 +1443,8 @@ export function adaptNluFrameToConversationV2Turn(
     ...(supplemental.hardDecision?.reason
       ? { handoffReason: supplemental.hardDecision.reason }
       : {}),
-    questionAspect: selectedSemanticAnchor?.questionAspect ??
-      (selectedNegationGuard
-        ? hasResolvedAffirmation ? "overview" : "none"
-        : parsedFrame.dialogue.focus),
+    questionAspect,
+    questionAspects,
     receivedAt: input.receivedAt,
     ...(selectedSemanticAnchor?.replyAssetId
       ? { replyAssetId: selectedSemanticAnchor.replyAssetId }

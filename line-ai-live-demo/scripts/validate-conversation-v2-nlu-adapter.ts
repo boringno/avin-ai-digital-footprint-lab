@@ -61,6 +61,17 @@ function v2Frame(
   });
 }
 
+function v3Frame(
+  dialogue: NluFrame["dialogue"],
+  overrides: Partial<NluFrame> = {},
+): NluFrame {
+  return frame({
+    ...overrides,
+    dialogue,
+    schemaVersion: 3,
+  });
+}
+
 function validateTreatmentAndEntityMapping() {
   const result = adapt(
     frame({
@@ -1867,6 +1878,144 @@ function validateDeterministicCurrentTextNegation() {
   assert.equal(selection.speechAct, "select_options", "an awaited selection must outrank negation");
 }
 
+function validateOrderedQuestionAspectPreservation() {
+  const highConfidenceMultiAspect = adapt(
+    v3Frame({
+      aspects: ["suitability", "price_campaign", "comfort_recovery"],
+      focus: "suitability",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_treatment_detail",
+    }, {
+      confidence: 0.95,
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    undefined,
+    "ONDA 適合雙下巴嗎？活動價多少？有恢復期嗎？",
+  );
+  assert.equal(highConfidenceMultiAspect.questionAspect, "suitability");
+  assert.deepEqual(
+    highConfidenceMultiAspect.questionAspects,
+    ["suitability", "price_campaign", "comfort_recovery"],
+    "one high-confidence same-subject turn must retain every ordered explicit aspect",
+  );
+
+  const anchorState = createConversationV2State({
+    episodeId: "multi-aspect-anchor",
+    now: RECEIVED_AT,
+  });
+  const benefitsAnchor = resolveTrustedSemanticAnchor({
+    candidate: { questionAspect: "benefits", speechAct: "ask_treatment_detail" },
+    clinic: clinicConfig,
+    message: "ONDA 有什麼效果",
+    ontology: clinicOntology,
+    state: anchorState,
+  });
+  assert.ok(benefitsAnchor, "the multi-aspect test requires a real deterministic content anchor");
+
+  const lowConfidenceAnchored = adapt(
+    v3Frame({
+      aspects: ["benefits", "price_campaign"],
+      focus: "benefits",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_treatment_detail",
+    }, {
+      confidence: 0.4,
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    { semanticAnchor: benefitsAnchor },
+    "ONDA 有什麼效果",
+  );
+  assert.deepEqual(
+    lowConfidenceAnchored.questionAspects,
+    ["benefits"],
+    "a low-confidence frame must not smuggle secondary aspects past a trusted semantic anchor",
+  );
+
+  const highConfidenceAnchored = adapt(
+    v3Frame({
+      aspects: ["benefits", "price_campaign"],
+      focus: "benefits",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_treatment_detail",
+    }, {
+      confidence: 0.95,
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    { semanticAnchor: benefitsAnchor },
+    "ONDA 有什麼效果",
+  );
+  assert.deepEqual(
+    highConfidenceAnchored.questionAspects,
+    ["benefits", "price_campaign"],
+    "a trusted anchor may retain secondary aspects from a high-confidence same-subject frame",
+  );
+
+  const negationMessage = "我沒有雙下巴，但想了解 ONDA";
+  const negationGuard = resolveDeterministicNegationGuard({
+    candidateSpeechAct: "learn_treatment",
+    clinic: clinicConfig,
+    message: negationMessage,
+    ontology: clinicOntology,
+    state: anchorState,
+  });
+  assert.ok(negationGuard, "the multi-aspect test requires a real deterministic negation guard");
+  const negationGuarded = adapt(
+    v3Frame({
+      aspects: ["overview", "price_campaign"],
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.95,
+      concerns: [{ area: "jawline", key: "jawline_looseness" }],
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    { negationGuard },
+    negationMessage,
+  );
+  assert.deepEqual(
+    negationGuarded.questionAspects,
+    ["overview"],
+    "current-text negation must collapse model aspects to the trusted deterministic primary",
+  );
+
+  const lowConfidenceDeterministicPrice = adapt(
+    v3Frame({
+      aspects: ["overview"],
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.4,
+      intents: ["treatment_consultation"],
+      treatments: ["onda_pro"],
+    }),
+    undefined,
+    "ONDA 有沒有活動價格",
+  );
+  assert.equal(lowConfidenceDeterministicPrice.speechAct, "ask_price");
+  assert.equal(
+    lowConfidenceDeterministicPrice.questionAspect,
+    "price_unspecified",
+    "trusted current-text price wording must replace an untrusted low-confidence model focus",
+  );
+  assert.deepEqual(
+    lowConfidenceDeterministicPrice.questionAspects,
+    ["price_unspecified"],
+    "deterministic price recovery must retain only its trusted price obligation when NLU confidence is low",
+  );
+}
+
 validateTreatmentAndEntityMapping();
 validateNegationPolarity();
 validateMultipleIntentResolution();
@@ -1880,5 +2029,6 @@ validateV2DialogueContract();
 validateTrustedSemanticAnchors();
 validateDeterministicHardDecision();
 validateDeterministicCurrentTextNegation();
+validateOrderedQuestionAspectPreservation();
 
-console.log("Conversation V2 NLU adapter validation passed (13 scenario families)");
+console.log("Conversation V2 NLU adapter validation passed (14 scenario families)");

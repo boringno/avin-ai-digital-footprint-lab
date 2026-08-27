@@ -289,6 +289,15 @@ function decisionTraceRows(trace: NonNullable<WorkbenchConversationDetail["messa
   addDecisionTraceRow(rows, "Renderer", trace.rendererMode);
   addDecisionTraceRow(rows, "文字來源", trace.replyTextSource);
   addDecisionTraceRow(rows, "Fallback", trace.fallbackReason);
+  addDecisionTraceRow(rows, "Contract", formatResponseContractStatus(trace.responseContractMode, trace.responseContractCoverageStatus));
+  addDecisionTraceRow(rows, "必答", formatTraceList(trace.responseContractMustAnswer));
+  addDecisionTraceRow(rows, "實際涵蓋", formatTraceList(trace.responseContractCompletedAspects));
+  addDecisionTraceRow(rows, "疑似缺漏", formatTraceList(trace.responseContractMissingAspects));
+  addDecisionTraceRow(rows, "禁止重複", formatTraceList(trace.responseContractMustNotRepeat));
+  addDecisionTraceRow(rows, "Contract 療程主體", formatTraceList(trace.responseContractSubjectKeys));
+  addDecisionTraceRow(rows, "Contract next step", trace.responseContractNextStepKind);
+  addDecisionTraceRow(rows, "CTA policy", trace.responseContractCtaPolicy);
+  addDecisionTraceRow(rows, "Coverage basis", trace.responseContractCoverageBasis);
   addDecisionTraceRow(rows, "LINE 回覆", formatReplyDelivery(trace.replyDeliveryStatus, trace.replyDeliveryAttempts));
   addDecisionTraceRow(rows, "未送出原因", trace.replyDeliverySuppressedReason);
   if (trace.guardReplacedText !== null) {
@@ -300,6 +309,15 @@ function decisionTraceRows(trace: NonNullable<WorkbenchConversationDetail["messa
 function formatReplyDelivery(status: string | null, attempts: number | null) {
   if (!status) return null;
   return attempts === null ? status : `${status}（${attempts} 次送出）`;
+}
+
+function formatResponseContractStatus(mode: string | null, status: string | null) {
+  if (!mode) return null;
+  return status ? `${mode} · ${status}` : mode;
+}
+
+function formatTraceList(values: string[] | null) {
+  return values?.length ? values.join("、") : null;
 }
 
 function addDecisionTraceRow(rows: Array<[string, string]>, label: string, value: string | null | undefined) {
