@@ -166,9 +166,23 @@ function conversationV2QuickReplyActions(
     ].slice(0, 4) satisfies ProjectedQuickReplyAction[];
   }
   if (options.nextStage === "consultation") {
-    return [...(isConsultationInvitationPaused(state, treatmentKeys)
+    const guide = treatmentKeys.length === 1
+      ? clinic.treatmentList.find((item) => item.key === treatmentKeys[0])?.consultationGuide
+      : undefined;
+    const currentConcernKeys = plan.concernKeys.length > 0
+      ? plan.concernKeys
+      : state.knowledge.concernKeys;
+    const configuredChoices = (guide?.customerQuickReplies ?? []).filter((choice) =>
+      choice.stage === "consultation" &&
+      (!choice.concernKeys?.length || choice.concernKeys.some((key) => currentConcernKeys.includes(key))),
+    );
+    const consultationActions = isConsultationInvitationPaused(state, treatmentKeys)
       ? PAUSED_CONSULTATION_ACTIONS
-      : CONSULTATION_ACTIONS)] satisfies ProjectedQuickReplyAction[];
+      : CONSULTATION_ACTIONS;
+    return [
+      ...configuredChoices.map((choice) => ({ choice, label: choice.label, text: choice.text })),
+      ...consultationActions,
+    ].slice(0, 4) satisfies ProjectedQuickReplyAction[];
   }
   if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [] as ProjectedQuickReplyAction[];
   if (!treatmentOwner) return [] as ProjectedQuickReplyAction[];
@@ -232,6 +246,9 @@ export function projectConversationV2QuickReplies(
       : {
           ...(configured.semantic.areaKey ? { areaKey: configured.semantic.areaKey } : {}),
           ...(configured.semantic.concernKey ? { concernKey: configured.semantic.concernKey } : {}),
+          ...(configured.semantic.conversationMove
+            ? { conversationMove: configured.semantic.conversationMove }
+            : {}),
           kind: "approved_asset" as const,
           questionAspect: configured.semantic.questionAspect,
           replyAssetId: selection.semanticAnchor.replyAssetId!,

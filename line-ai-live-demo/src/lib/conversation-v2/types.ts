@@ -131,6 +131,7 @@ export type PendingQuickReplySemantic =
   | {
       areaKey?: string;
       concernKey?: string;
+      conversationMove?: ConversationMove;
       kind: "approved_asset";
       questionAspect: QuestionAspect;
       replyAssetId: string;

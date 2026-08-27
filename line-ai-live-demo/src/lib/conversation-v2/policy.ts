@@ -1002,13 +1002,17 @@ export function evaluateDialoguePolicy(
       ? []
       : contextualTreatmentKeys(state, turn.dialogueReference);
     const activePriceTreatmentKey = resolvableTreatmentSubject(turn, state);
-    // Confirmed entities already account for negation and rewording, so they outrank
-    // the raw text scan. The deterministic key exists only to rescue the case where low
-    // model confidence left nothing confirmed at all.
-    const treatmentKeys = confirmedTreatments.length > 0
-      ? confirmedTreatments
-      : deterministicExplicitTreatment
-        ? [deterministicExplicitTreatment]
+    // A single treatment explicitly named in this price question owns the turn. The
+    // NLU frame can legitimately retain companion treatments from the active
+    // consultation (for example ONDA + botox), but that older context must not turn
+    // the explicit button text "ONDA price" into a combination-price query. Multi-
+    // treatment or negated wording is deliberately excluded by
+    // `explicitPriceTreatmentKey`, so confirmed semantic entities still arbitrate
+    // those genuinely ambiguous cases.
+    const treatmentKeys = deterministicExplicitTreatment
+      ? [deterministicExplicitTreatment]
+      : confirmedTreatments.length > 0
+        ? confirmedTreatments
         : contextualPriceTreatmentKeys.length > 0
           ? contextualPriceTreatmentKeys
           : activePriceTreatmentKey

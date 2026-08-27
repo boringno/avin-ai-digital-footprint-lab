@@ -44,7 +44,7 @@ const ONDA_PRICE: PriceCatalogEntry = {
   customer_price_text: "體驗價 16,888 元",
   end_date: "2026-08-31",
   fallback_message: "",
-  id: "quick-replies-onda-price",
+  id: "promo-2026-08-05-onda-pro",
   is_active: "true",
   notes: "validator",
   price_text: "internal",
@@ -55,6 +55,7 @@ const ONDA_PRICE: PriceCatalogEntry = {
 const ONDA_BOTOX_COMBO_PRICE: PriceCatalogEntry = {
   approval_status: "approved",
   asset_urls: "",
+  booking_treatments: "ONDA PRO|肉毒",
   branch_scope: "all",
   campaign_aliases: "ONDA＋肉毒小臉組合|臉部輪廓組合",
   campaign_name: "ONDA＋肉毒小臉組合",
@@ -67,7 +68,7 @@ const ONDA_BOTOX_COMBO_PRICE: PriceCatalogEntry = {
   notes: "validator",
   price_text: "internal",
   start_date: "2026-08-01",
-  treatment_name: "ONDA PRO",
+  treatment_name: "臉部輪廓組合",
 };
 
 const BOTOX_PRICE: PriceCatalogEntry = {
@@ -903,15 +904,20 @@ async function validateSemanticQuickReplyJourneys() {
           };
         },
       });
+  let lastRouted: Awaited<ReturnType<ReturnType<typeof routeJourney>>> | undefined;
   const send = async (input: {
     expectApprovedDeterministic?: boolean;
     id: string;
     message: string;
     userId: string;
   }) => {
+    const route = routeJourney(input.userId);
     const result = await processWebhookRequestBody(webhookEvent(input), {
       includePending: false,
-      routeConversationV2: routeJourney(input.userId),
+      routeConversationV2: async (routeInput) => {
+        lastRouted = await route(routeInput);
+        return lastRouted;
+      },
       routeLegacy: async () => {
         throw new Error("V1 must not run during a semantic V2 quick-reply journey");
       },
@@ -970,6 +976,37 @@ async function validateSemanticQuickReplyJourneys() {
     ["單做 ONDA", "ONDA＋肉毒組合", "價格／活動", "預約免費諮詢"],
   );
 
+  const single = await send({
+    id: "semantic-onda-single",
+    message: "我想先單做 ONDA",
+    userId: ondaUserId,
+  });
+  assert.match(visibleTextFromPayload(single.messages), /可以先以 ONDA Pro 作為諮詢方向/u);
+  assert.deepEqual(
+    quickReplyLabelsFromPayload(single.messages),
+    ["ONDA價格", "預約免費諮詢", "真人客服協助", "繼續詢問"],
+    "the single-ONDA answer must expose a direct approved-price action",
+  );
+  assert.equal(lastRouted?.kind, "routed");
+  assert.equal(
+    lastRouted?.kind === "routed"
+      ? lastRouted.decision.nextContext.conversationV2State?.preferences.treatmentApproach
+      : undefined,
+    "single",
+    "the displayed single-ONDA choice must persist the standalone preference before pricing",
+  );
+
+  const singlePrice = await send({
+    id: "semantic-onda-single-price",
+    message: "ONDA 體驗價多少",
+    userId: ondaUserId,
+  });
+  assert.match(
+    visibleTextFromPayload(singlePrice.messages),
+    /ONDA PRO.*16,888/us,
+    "tapping ONDA價格 must reach the current approved 16,888 price resolver",
+  );
+
   const combination = await send({
     id: "semantic-onda-combination",
     message: "ONDA＋肉毒小臉組合",
@@ -986,7 +1023,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.doesNotMatch(combinationText, /哪一項療程|剛剛沒有完整理解/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(combination.messages),
-    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["ONDA價格", "預約免費諮詢", "真人客服協助", "繼續詢問"],
   );
 
   const bodyUserId = `${ondaUserId}-body`;
