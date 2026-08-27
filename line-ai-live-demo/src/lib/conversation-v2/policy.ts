@@ -781,15 +781,16 @@ function initialDraft(
 ): Partial<BookingDraft> {
   if (turn.confidence < 0.65) return {};
   const fields = turn.booking?.fields ?? {};
+  const questionOnly = asksAboutBookingFields(turn);
   // Booking mutations must be owned by deterministic booking parsing or the
   // existing canonical task. Model entities are useful for consultation
   // understanding, but must never create or replace a booking treatment.
   const deterministicTreatmentKeys = fields.treatmentKeys ?? [];
   if (turn.booking?.intent === "cancel") {
-    return { appointmentReference: fields.appointmentReference };
+    return questionOnly ? {} : { appointmentReference: fields.appointmentReference };
   }
   if (turn.booking?.intent === "modify") {
-    return {
+    return questionOnly ? {} : {
       appointmentReference: fields.appointmentReference,
       changeRequest: fields.changeRequest,
     };
@@ -800,11 +801,13 @@ function initialDraft(
       ? contextualTreatmentKeys(state, turn.dialogueReference)
       : undefined;
   return {
-    branch: fields.branch,
-    firstVisit: fields.firstVisit,
-    name: fields.name,
-    phone: fields.phone,
-    timeSlots: fields.timeSlots,
+    branch: questionOnly ? undefined : fields.branch,
+    firstVisit: questionOnly ? undefined : fields.firstVisit,
+    name: questionOnly ? undefined : fields.name,
+    phone: questionOnly ? undefined : fields.phone,
+    timeSlots: questionOnly ? undefined : fields.timeSlots,
+    // The explicit treatment still owns a cross-treatment switch. Only the
+    // values embedded in the question are non-mutating.
     treatmentKeys: deterministicTreatmentKeys.length > 0
       ? deterministicTreatmentKeys
       : contextualBookingTreatments,
@@ -836,15 +839,45 @@ function sameTreatmentTask(state: ConversationV2State, turn: TurnUnderstanding) 
   );
 }
 
-function suppliesExpectedBookingField(state: ConversationV2State, turn: TurnUnderstanding) {
+function resumesCurrentCreateBooking(state: ConversationV2State, turn: TurnUnderstanding) {
   if (
-    turn.confidence < 0.65 ||
+    turn.booking?.explicit !== true ||
+    turn.booking.intent !== "create" ||
+    state.bookingTask.intent !== "create" ||
+    !["collecting", "suspended"].includes(state.bookingTask.status)
+  ) {
+    return false;
+  }
+
+  const current = state.bookingTask.draft.treatmentKeys;
+  const incoming = turn.booking.fields?.treatmentKeys ?? [];
+  if (incoming.length === 0) return true;
+  return (
+    current.length === incoming.length &&
+    current.every((treatmentKey) => incoming.includes(treatmentKey))
+  );
+}
+
+function asksAboutBookingFields(turn: TurnUnderstanding) {
+  const normalizedText = turn.text.replace(/\s+/gu, "");
+  return (
+    /[?？]/u.test(turn.text) ||
+    /(?:是否|是不是|對不對|可不可以|能不能|有沒有|會不會|要不要|行不行|可否)/u.test(normalizedText) ||
+    /(?:嗎|呢|吧)$/u.test(normalizedText)
+  );
+}
+
+function suppliesActiveBookingFields(state: ConversationV2State, turn: TurnUnderstanding) {
+  if (
     turn.speechAct !== "provide_booking_field" ||
     !["collecting", "suspended"].includes(state.bookingTask.status) ||
-    !state.bookingTask.expectedField ||
     !turn.booking?.fields ||
     !["none", state.bookingTask.intent].includes(turn.booking.intent) ||
-    !sameTreatmentTask(state, turn)
+    !sameTreatmentTask(state, turn) ||
+    // A customer can mention a valid branch, name or phone while asking whether
+    // it is correct. Those values are context for a question, not permission to
+    // mutate the booking draft. Explicit booking requests are handled earlier.
+    asksAboutBookingFields(turn)
   ) {
     return false;
   }
@@ -858,12 +891,29 @@ function suppliesExpectedBookingField(state: ConversationV2State, turn: TurnUnde
     name: Boolean(fields.name),
     phone: Boolean(fields.phone),
     time_slots: Boolean(fields.timeSlots?.length),
-    // `booking.fields.treatmentKeys` comes from the deterministic booking
-    // adapter and is ontology-validated before policy. A low-confidence model
-    // echo must not veto the exact short answer the booking flow requested.
     treatment: Boolean(fields.treatmentKeys?.length),
   };
-  return supplied[state.bookingTask.expectedField];
+  if (state.bookingTask.status === "suspended") {
+    // A paused booking must not silently resume from an unrelated out-of-order
+    // field. It can only accept the exact field the resume choice requested.
+    return state.bookingTask.expectedField
+      ? supplied[state.bookingTask.expectedField]
+      : false;
+  }
+  // Every persisted value above is produced by the deterministic booking
+  // adapter. Accept all valid fields in the message, even when they arrive out
+  // of the prompt order or the NLU itself is low-confidence. The reducer merges
+  // them atomically and then asks only for the next missing field.
+  return Boolean(
+    fields.appointmentReference ||
+      fields.branch ||
+      fields.changeRequest ||
+      typeof fields.firstVisit === "boolean" ||
+      fields.name ||
+      fields.phone ||
+      fields.timeSlots?.length ||
+      fields.treatmentKeys?.length
+  );
 }
 
 function priceKindForTurn(_turn: TurnUnderstanding) {
@@ -968,13 +1018,23 @@ export function evaluateDialoguePolicy(
     turn.booking.intent !== "none" &&
     ["book_consultation", "manage_booking"].includes(turn.speechAct)
   ) {
-    action = {
-      at: turn.receivedAt,
-      initialDraft: initialDraft(state, turn),
-      intent: turn.booking.intent,
-      turnId: turn.turnId,
-      type: "start_booking",
-    };
+    action = resumesCurrentCreateBooking(state, turn)
+      ? {
+          at: turn.receivedAt,
+          // A same-treatment booking question resumes the existing task but
+          // must not persist branch/contact/time values embedded in the
+          // question. The next prompt remains on the first missing field.
+          fields: asksAboutBookingFields(turn) ? {} : (turn.booking.fields ?? {}),
+          turnId: turn.turnId,
+          type: "capture_booking_fields",
+        }
+      : {
+          at: turn.receivedAt,
+          initialDraft: initialDraft(state, turn),
+          intent: turn.booking.intent,
+          turnId: turn.turnId,
+          type: "start_booking",
+        };
   } else if (implicitPreference.ambiguous) {
     action = {
       at: turn.receivedAt,
@@ -1130,7 +1190,7 @@ export function evaluateDialoguePolicy(
         type: "answer_selection",
       };
     } else if (
-      suppliesExpectedBookingField(state, turn) &&
+      suppliesActiveBookingFields(state, turn) &&
       turn.booking?.fields
     ) {
       action = {

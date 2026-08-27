@@ -12,7 +12,8 @@ import type {
   ConversationV2State,
 } from "./types";
 
-const TIME_PATTERN = /(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}|\d{1,2}:\d{2}|上午|下午|晚上|中午|今天|明天|後天|平日|假日|週末|周末|週[一二三四五六日天]|星期[一二三四五六日天])/u;
+const TIME_PATTERN = /((?<!\d)\d{4}[/-]\d{1,2}[/-]\d{1,2}(?![\d/-])|(?<!\d)\d{1,2}[/-]\d{1,2}(?![\d/-])|(?<!\d)\d{1,2}:\d{2}(?!\d)|上午|下午|晚上|中午|今天|明天|後天|平日|假日|週末|周末|週[一二三四五六日天]|星期[一二三四五六日天])/u;
+const PHONE_CANDIDATE_PATTERN = /(^|[^\d])((?:\+?886[\s()-]*9|09)(?:[\s()-]*\d){8})(?![\s()-]*\d)/gu;
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -33,8 +34,7 @@ type PhoneCandidate = {
 
 function phoneCandidates(message: string) {
   const candidates: PhoneCandidate[] = [];
-  const pattern = /(^|[^\d])((?:\+?886[\s()-]*9|09)(?:[\s()-]*\d){8})(?![\s()-]*\d)/gu;
-  for (const match of message.matchAll(pattern)) {
+  for (const match of message.matchAll(PHONE_CANDIDATE_PATTERN)) {
     const raw = match[2];
     if (!raw || match.index === undefined) continue;
     const index = match.index + (match[1]?.length ?? 0);
@@ -153,7 +153,11 @@ function extractFirstVisit(message: string) {
 }
 
 function extractTimeSlots(message: string) {
-  const chunks = message
+  // A formatted Taiwanese mobile number such as 0912-345-678 contains the same
+  // separators as a numeric date. Remove valid phone spans before extracting
+  // times so a contact bundle cannot overwrite a previously collected slot.
+  const messageWithoutPhones = message.replace(PHONE_CANDIDATE_PATTERN, "$1");
+  const chunks = messageWithoutPhones
     .split(/[，,、；;。\n]+|(?:但是|可是|不過|但)/u)
     .map((chunk) => chunk.trim())
     .filter((chunk) =>
@@ -292,11 +296,18 @@ export function buildConversationV2BookingUnderstanding(input: {
     ? input.state.bookingTask.intent
     : "none";
   const intent = explicitIntent ?? activeIntent;
+  const isActiveCreateCollection =
+    intent === "create" &&
+    ["collecting", "suspended"].includes(input.state.bookingTask.status);
   const fields = extractFields(
     input.message,
     input.state,
     input.allowBareExpectedName,
-    Boolean(explicitIntent),
+    // Customers commonly answer a booking prompt with several fields at once
+    // (for example "王小美 0912-345-678"). The deterministic parser may accept
+    // that delimited contact bundle while an existing create flow is active; it
+    // remains intentionally disabled for unrelated conversation and lookups.
+    Boolean(explicitIntent) || isActiveCreateCollection,
   );
 
   if (

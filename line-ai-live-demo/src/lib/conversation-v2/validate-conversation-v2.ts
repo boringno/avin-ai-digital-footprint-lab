@@ -281,6 +281,48 @@ function validateBookingFieldAndPricingOwnership() {
 function validateBookingIntentContracts() {
   const initial = createConversationV2State({ episodeId: "episode-contracts", now: AT });
 
+  const modifyQuestion = evaluateDialoguePolicy(
+    initial,
+    turn({
+      booking: {
+        explicit: true,
+        fields: {
+          appointmentReference: "王小美 0912345678",
+          changeRequest: "改到 8/28 晚上",
+        },
+        intent: "modify",
+      },
+      speechAct: "manage_booking",
+      text: "我要改預約，王小美 0912-345-678 是否是我的資料",
+      turnId: "modify-question",
+    }),
+  );
+  const modifyQuestionAction = expectAction(modifyQuestion, "start_booking");
+  assert.deepEqual(modifyQuestionAction.initialDraft, {});
+  const afterModifyQuestion = apply(initial, modifyQuestion);
+  assert.equal(afterModifyQuestion.bookingTask.expectedField, "appointment_reference");
+  assert.equal(afterModifyQuestion.bookingTask.draft.appointmentReference, undefined);
+  assert.equal(afterModifyQuestion.bookingTask.draft.changeRequest, undefined);
+
+  const cancelQuestion = evaluateDialoguePolicy(
+    initial,
+    turn({
+      booking: {
+        explicit: true,
+        fields: { appointmentReference: "王小美 0912345678" },
+        intent: "cancel",
+      },
+      speechAct: "manage_booking",
+      text: "我要取消預約，王小美 0912-345-678 是否是我的資料",
+      turnId: "cancel-question",
+    }),
+  );
+  const cancelQuestionAction = expectAction(cancelQuestion, "start_booking");
+  assert.deepEqual(cancelQuestionAction.initialDraft, {});
+  const afterCancelQuestion = apply(initial, cancelQuestion);
+  assert.equal(afterCancelQuestion.bookingTask.expectedField, "appointment_reference");
+  assert.equal(afterCancelQuestion.bookingTask.draft.appointmentReference, undefined);
+
   const startCreate = evaluateDialoguePolicy(
     initial,
     turn({
@@ -968,6 +1010,70 @@ function validateBookingEpisodesDoNotLeakDrafts() {
   const collecting = apply(initial, partialBooking);
   const bookingId = collecting.bookingTask.id;
 
+  const collectingQuestion = evaluateDialoguePolicy(
+    collecting,
+    turn({
+      booking: {
+        explicit: true,
+        fields: {
+          branch: "桃園館",
+          name: "王小美",
+          phone: "0912345678",
+          treatmentKeys: ["onda_pro"],
+        },
+        intent: "create",
+      },
+      speechAct: "book_consultation",
+      text: "我要預約 ONDA，王小美 0912-345-678 是否是我的資料",
+      treatments: [entity("onda_pro")],
+      turnId: "collecting-explicit-question",
+    }),
+  );
+  const collectingQuestionAction = expectAction(collectingQuestion, "capture_booking_fields");
+  assert.deepEqual(
+    collectingQuestionAction.fields,
+    {},
+    "an explicit question must resume the booking without persisting mentioned fields",
+  );
+  const afterCollectingQuestion = apply(collecting, collectingQuestion);
+  assert.equal(afterCollectingQuestion.bookingTask.draft.branch, "林口館");
+  assert.equal(afterCollectingQuestion.bookingTask.draft.name, "陳小姐");
+  assert.equal(afterCollectingQuestion.bookingTask.draft.phone, undefined);
+
+  const crossTreatmentQuestion = evaluateDialoguePolicy(
+    collecting,
+    turn({
+      booking: {
+        explicit: true,
+        fields: {
+          branch: "桃園館",
+          name: "王小美",
+          phone: "0912345678",
+          treatmentKeys: ["botox"],
+        },
+        intent: "create",
+      },
+      speechAct: "book_consultation",
+      text: "我要預約肉毒，王小美 0912-345-678 是否是我的資料",
+      treatments: [entity("botox")],
+      turnId: "collecting-cross-treatment-question",
+    }),
+  );
+  const crossTreatmentAction = expectAction(crossTreatmentQuestion, "start_booking");
+  assert.deepEqual(crossTreatmentAction.initialDraft, {
+    branch: undefined,
+    firstVisit: undefined,
+    name: undefined,
+    phone: undefined,
+    timeSlots: undefined,
+    treatmentKeys: ["botox"],
+  });
+  const afterCrossTreatmentQuestion = apply(collecting, crossTreatmentQuestion);
+  assert.deepEqual(afterCrossTreatmentQuestion.bookingTask.draft.treatmentKeys, ["botox"]);
+  assert.equal(afterCrossTreatmentQuestion.bookingTask.draft.branch, undefined);
+  assert.equal(afterCrossTreatmentQuestion.bookingTask.draft.name, undefined);
+  assert.equal(afterCrossTreatmentQuestion.bookingTask.draft.phone, undefined);
+
   const contradictoryHint = evaluateDialoguePolicy(
     collecting,
     turn({
@@ -1042,6 +1148,69 @@ function validateBookingEpisodesDoNotLeakDrafts() {
   );
   const suspended = apply(continued, detour);
   assert.equal(suspended.bookingTask.status, "suspended");
+  const suspendedQuestion = evaluateDialoguePolicy(
+    suspended,
+    turn({
+      booking: {
+        explicit: true,
+        fields: {
+          branch: "桃園館",
+          name: "王小美",
+          phone: "0912345678",
+          treatmentKeys: ["onda_pro"],
+        },
+        intent: "create",
+      },
+      speechAct: "book_consultation",
+      text: "我要預約 ONDA，王小美 0912-345-678 是否是我的資料",
+      treatments: [entity("onda_pro")],
+      turnId: "suspended-explicit-question",
+    }),
+  );
+  const suspendedQuestionAction = expectAction(suspendedQuestion, "capture_booking_fields");
+  assert.deepEqual(
+    suspendedQuestionAction.fields,
+    {},
+    "a suspended booking question must resume without persisting mentioned fields",
+  );
+  const afterSuspendedQuestion = apply(suspended, suspendedQuestion);
+  assert.equal(afterSuspendedQuestion.bookingTask.draft.branch, "林口館");
+  assert.equal(afterSuspendedQuestion.bookingTask.draft.name, "陳小姐");
+  assert.equal(afterSuspendedQuestion.bookingTask.draft.phone, undefined);
+  const suspendedCrossTreatmentQuestion = evaluateDialoguePolicy(
+    suspended,
+    turn({
+      booking: {
+        explicit: true,
+        fields: {
+          branch: "桃園館",
+          name: "王小美",
+          phone: "0912345678",
+          treatmentKeys: ["botox"],
+        },
+        intent: "create",
+      },
+      speechAct: "book_consultation",
+      text: "我要預約肉毒，王小美 0912-345-678 是否是我的資料",
+      treatments: [entity("botox")],
+      turnId: "suspended-cross-treatment-question",
+    }),
+  );
+  const suspendedCrossTreatmentAction =
+    expectAction(suspendedCrossTreatmentQuestion, "start_booking");
+  assert.deepEqual(suspendedCrossTreatmentAction.initialDraft, {
+    branch: undefined,
+    firstVisit: undefined,
+    name: undefined,
+    phone: undefined,
+    timeSlots: undefined,
+    treatmentKeys: ["botox"],
+  });
+  const afterSuspendedCrossTreatmentQuestion = apply(suspended, suspendedCrossTreatmentQuestion);
+  assert.deepEqual(afterSuspendedCrossTreatmentQuestion.bookingTask.draft.treatmentKeys, ["botox"]);
+  assert.equal(afterSuspendedCrossTreatmentQuestion.bookingTask.draft.branch, undefined);
+  assert.equal(afterSuspendedCrossTreatmentQuestion.bookingTask.draft.name, undefined);
+  assert.equal(afterSuspendedCrossTreatmentQuestion.bookingTask.draft.phone, undefined);
   const afterSuspension = evaluateDialoguePolicy(
     suspended,
     turn({
