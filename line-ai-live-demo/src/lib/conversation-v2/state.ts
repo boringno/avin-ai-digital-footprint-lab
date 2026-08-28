@@ -13,6 +13,7 @@ import {
   type TreatmentResponseContext,
 } from "./types";
 import { CONVERSATION_MOVES, QUESTION_ASPECTS } from "@/lib/dialogue-semantics";
+import type { PriceApplicabilityDimensions } from "@/lib/clinic-facts";
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -41,6 +42,16 @@ function cloneAwaiting(awaiting: AwaitingState | undefined): AwaitingState | und
   return awaiting
     ? {
         ...awaiting,
+        ...(awaiting.continuation
+          ? {
+              continuation: {
+                ...awaiting.continuation,
+                ...(awaiting.continuation.priceApplicability
+                  ? { priceApplicability: { ...awaiting.continuation.priceApplicability } }
+                  : {}),
+              },
+            }
+          : {}),
         options: awaiting.options.map((option) => ({ ...option })),
         pendingKnowledge: awaiting.pendingKnowledge
           ? {
@@ -185,6 +196,53 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+/** Persisted state is untrusted; price qualifiers must be safe for the resolver. */
+export function isPersistedPriceApplicability(
+  value: unknown,
+): value is PriceApplicabilityDimensions {
+  if (!isRecord(value)) return false;
+  const allowedKeys = new Set(["branch", "dose", "package", "sessionCount", "variant"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false;
+  for (const key of ["branch", "dose", "package", "variant"] as const) {
+    if (value[key] !== undefined && typeof value[key] !== "string") return false;
+  }
+  return value.sessionCount === undefined || (
+    Number.isSafeInteger(value.sessionCount) && Number(value.sessionCount) > 0
+  );
+}
+
+function isPersistedAwaitingState(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value) || !Array.isArray(value.options)) return false;
+  if (
+    typeof value.allowMultiple !== "boolean" ||
+    typeof value.id !== "string" || !value.id ||
+    typeof value.prompt !== "string" || !value.prompt ||
+    ![
+      "selection", "area", "concern", "treatment", "branch", "time_slots",
+      "first_visit", "name", "phone", "appointment_reference", "change_request",
+    ].includes(String(value.expectedField))
+  ) return false;
+  if (!value.options.every((option) =>
+    isRecord(option) &&
+    ["area", "concern", "treatment", "answer"].includes(String(option.entity)) &&
+    typeof option.id === "string" && Boolean(option.id) &&
+    typeof option.label === "string" && Boolean(option.label) &&
+    typeof option.value === "string" && Boolean(option.value))) {
+    return false;
+  }
+  if (value.continuation !== undefined) {
+    if (
+      !isRecord(value.continuation) ||
+      value.continuation.kind !== "answer_price" ||
+      !["campaign", "regular", "unspecified"].includes(String(value.continuation.priceKind)) ||
+      (value.continuation.priceApplicability !== undefined &&
+        !isPersistedPriceApplicability(value.continuation.priceApplicability))
+    ) return false;
+  }
+  return true;
+}
+
 function isPendingQuickReplyContract(value: unknown): value is PendingQuickReplyContract {
   if (!isRecord(value) || !isRecord(value.owner) || !Array.isArray(value.choices)) return false;
   const issuedAt = typeof value.issuedAt === "string" ? new Date(value.issuedAt).getTime() : Number.NaN;
@@ -254,6 +312,7 @@ export function parsePersistedConversationV2State(value: unknown): ConversationV
     (knowledge.consultedTreatmentKeys !== undefined && !isStringArray(knowledge.consultedTreatmentKeys)) ||
     !isStringArray(knowledge.concernKeys) ||
     !isStringArray(knowledge.treatmentKeys) ||
+    !isPersistedAwaitingState(value.awaiting) ||
     !isStringArray(value.pricingSubjectTreatmentKeys) ||
     !isStringArray(value.processedTurnIds) ||
     !isRecord(preferences) ||
@@ -684,6 +743,28 @@ export function reduceConversationV2State(
       };
     }
     case "answer_price": {
+      const continuationAwaiting = next.awaiting?.continuation?.kind === "answer_price"
+        ? next.awaiting
+        : undefined;
+      const continuationKnowledge = continuationAwaiting
+        ? mergeKnowledge(
+            next,
+            {
+              areaKeys: continuationAwaiting.pendingKnowledge?.areaKeys ?? [],
+              concernKeys: continuationAwaiting.pendingKnowledge?.concernKeys ?? [],
+              treatmentKeys: action.treatmentKeys,
+            },
+            continuationAwaiting.knowledgeMode ?? "merge",
+            continuationAwaiting.responseContext,
+          )
+        : recordConsultedTreatments(next.knowledge, action.treatmentKeys);
+      const continuationPreferences = continuationAwaiting?.responseContext
+        ? updatePreferences(next, continuationAwaiting.responseContext, {
+            areaKeys: continuationAwaiting.pendingKnowledge?.areaKeys ?? [],
+            concernKeys: continuationAwaiting.pendingKnowledge?.concernKeys ?? [],
+            treatmentKeys: action.treatmentKeys,
+          })
+        : next.preferences;
       // Price is a common side question while a customer is completing a
       // booking. Answering it must not abandon or suspend the booking owner;
       // keep the same expected field so the next short answer continues the
@@ -698,7 +779,8 @@ export function reduceConversationV2State(
             ...next.bookingTask,
             draft: cloneDraft(next.bookingTask.draft),
           },
-          knowledge: recordConsultedTreatments(next.knowledge, action.treatmentKeys),
+          knowledge: continuationKnowledge,
+          preferences: continuationPreferences,
           pricingSubjectTreatmentKeys: [...action.treatmentKeys],
         };
       }
@@ -708,7 +790,8 @@ export function reduceConversationV2State(
         activeTask: nextTask(next, "pricing", action.at, action.turnId),
         awaiting: undefined,
         bookingTask: suspendBooking(next),
-        knowledge: recordConsultedTreatments(next.knowledge, action.treatmentKeys),
+        knowledge: continuationKnowledge,
+        preferences: continuationPreferences,
         pricingSubjectTreatmentKeys: [...action.treatmentKeys],
       };
     }

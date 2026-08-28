@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { approvedTreatmentSupplementHash } from "../src/lib/clinic-facts/treatment-resolver";
 import type { DialogueState } from "../src/lib/dialogue-state";
 import { buildApprovedKnowledge, legacyDecisionToReplyPlan } from "../src/lib/reply-plan";
 import {
@@ -490,6 +491,143 @@ async function validateResponseContractShadowObservation() {
   );
   assert.equal(price.responseContract.coverageStatus, "missing");
   assert.equal(price.responseContract.coverageBasis, "approved_price_contract");
+
+  const enforcedPlan = structuredClone(pricePlan);
+  const approvedSupplementText = "🌿 ONDA Pro 可依局部脂肪與輪廓緊實需求評估，實際仍需依個人狀況確認。";
+  const approvedSupplementSource = "treatment:onda_pro:clinic-config-v1:response:suitability";
+  enforcedPlan.approvedPriceReply!.supplements = [{
+    aspects: ["suitability"],
+    customerText: approvedSupplementText,
+    snapshotId: enforcedPlan.approvedPriceReply!.snapshotId,
+    sourceContentHash: approvedTreatmentSupplementHash({
+      customerText: approvedSupplementText,
+      snapshotId: enforcedPlan.approvedPriceReply!.snapshotId,
+      sourceFactId: approvedSupplementSource,
+    }),
+    sourceContentVersion: "clinic-config-v1",
+    sourceFactId: approvedSupplementSource,
+    treatmentKeys: ["onda_pro"],
+  }];
+  const shadowWithUnexpectedSupplement = structuredClone(enforcedPlan);
+  shadowWithUnexpectedSupplement.responseContract = pricePlan.responseContract;
+  const shadowWithSupplement = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: shadowWithUnexpectedSupplement,
+    recentTurns: [],
+  });
+  assert.doesNotMatch(
+    shadowWithSupplement.replyText,
+    /局部脂肪與輪廓緊實/u,
+    "RR1b: renderer must ignore supplements even if an upstream shadow plan accidentally carries them",
+  );
+  assert.deepEqual(shadowWithSupplement.responseContract.completedAspects, ["price_campaign"]);
+  assert.deepEqual(shadowWithSupplement.responseContract.missingAspects, ["suitability"]);
+  if (enforcedPlan.responseContract.mode === "shadow") {
+    enforcedPlan.responseContract.mode = "enforce";
+  }
+  const enforced = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    generator: async () => { throw new Error("must not run"); },
+    plan: enforcedPlan,
+    recentTurns: [],
+  });
+  assert.match(enforced.replyText, /局部脂肪與輪廓緊實/u);
+  assert.match(enforced.replyText, /16,888/u);
+  assert.deepEqual(enforced.responseContract.completedAspects, ["price_campaign", "suitability"]);
+  assert.deepEqual(enforced.responseContract.missingAspects, []);
+  assert.equal(enforced.responseContract.coverageStatus, "verified");
+
+  const missingSupplementPlan = structuredClone(enforcedPlan);
+  missingSupplementPlan.approvedPriceReply!.supplements = [];
+  const missingSupplement = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: missingSupplementPlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    missingSupplement.fallbackReason,
+    "approved_price_contract_rejected",
+    "RR1b: enforce must fail closed when the renderer did not receive every required supplement",
+  );
+  assert.doesNotMatch(missingSupplement.replyText, /16,888/u);
+
+  const unsafePriceCopies = [
+    "ONDA 未核准優惠價 19999 元。",
+    "ONDA 未核准優惠價 19,999 元。",
+    "ONDA 大約需要１６８８８元。",
+    "ONDA 大約一萬多元。",
+    "ONDA 一萬九千元。",
+  ];
+  for (const unsafeText of unsafePriceCopies) {
+    const unapprovedSupplementPlan = structuredClone(enforcedPlan);
+    const supplement = unapprovedSupplementPlan.approvedPriceReply!.supplements![0]!;
+    supplement.customerText = unsafeText;
+    supplement.sourceContentHash = approvedTreatmentSupplementHash({
+      customerText: unsafeText,
+      snapshotId: supplement.snapshotId,
+      sourceFactId: supplement.sourceFactId,
+    });
+    const unapprovedSupplement = await renderReplyPlan({
+      customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+      dialogueState: dialogueState(),
+      footer: FOOTER,
+      plan: unapprovedSupplementPlan,
+      recentTurns: [],
+    });
+    assert.equal(unapprovedSupplement.fallbackReason, "approved_price_contract_rejected");
+    assert(!unapprovedSupplement.replyText.includes(unsafeText));
+    assert.doesNotMatch(unapprovedSupplement.replyText, /16,888/u);
+  }
+
+  const tamperedCopyPlan = structuredClone(enforcedPlan);
+  tamperedCopyPlan.approvedPriceReply!.supplements![0]!.customerText += "（遭修改）";
+  const tamperedCopy = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: tamperedCopyPlan,
+    recentTurns: [],
+  });
+  assert.equal(tamperedCopy.fallbackReason, "approved_price_contract_rejected");
+
+  const nonexistentSourcePlan = structuredClone(enforcedPlan);
+  const nonexistentSource = nonexistentSourcePlan.approvedPriceReply!.supplements![0]!;
+  nonexistentSource.sourceFactId = "treatment:onda_pro:missing-version:response:suitability";
+  nonexistentSource.sourceContentHash = approvedTreatmentSupplementHash({
+    customerText: nonexistentSource.customerText,
+    snapshotId: nonexistentSource.snapshotId,
+    sourceFactId: nonexistentSource.sourceFactId,
+  });
+  const nonexistentSourceReply = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: nonexistentSourcePlan,
+    recentTurns: [],
+  });
+  assert.equal(
+    nonexistentSourceReply.fallbackReason,
+    "approved_price_contract_rejected",
+    "RR1b: a source id that disagrees with the typed content version must be rejected",
+  );
+
+  const wrongAspectPlan = structuredClone(enforcedPlan);
+  wrongAspectPlan.approvedPriceReply!.supplements![0]!.aspects = ["brand_difference"];
+  const wrongAspect = await renderReplyPlan({
+    customerMessage: "ONDA 適合我嗎？最近有活動嗎？",
+    dialogueState: dialogueState(),
+    footer: FOOTER,
+    plan: wrongAspectPlan,
+    recentTurns: [],
+  });
+  assert.equal(wrongAspect.fallbackReason, "approved_price_contract_rejected");
 
   const mismatchedSubjectPlan = {
     ...pricePlan,

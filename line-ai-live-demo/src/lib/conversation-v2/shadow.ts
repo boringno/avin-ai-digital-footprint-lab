@@ -176,6 +176,7 @@ function summarizeState(state: ConversationV2State) {
     },
     awaiting: state.awaiting
       ? {
+          continuationKind: state.awaiting.continuation?.kind ?? null,
           expectedField: state.awaiting.expectedField,
           optionValues: state.awaiting.options.map((option) => option.value),
         }
@@ -241,6 +242,7 @@ function summarizeAction(action: DialoguePolicyAction) {
       return {
         ...base,
         priceKind: action.priceKind,
+        priceSubjectSource: action.priceSubjectSource ?? null,
         treatmentKeys: [...action.treatmentKeys],
       };
     case "answer_clinic_info":
@@ -281,6 +283,7 @@ function summarizeReplyPlan(plan: ReplyPlan) {
           treatmentKeys: [...plan.pricingQuery.treatmentKeys],
         }
       : undefined,
+    pricingSubjectSource: plan.pricingSubjectSource ?? null,
     templateKey: plan.templateKey,
   };
 }

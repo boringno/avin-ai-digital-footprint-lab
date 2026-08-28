@@ -2,10 +2,12 @@ import crypto from "node:crypto";
 
 import {
   loadClinicFactsSnapshot,
+  resolveTreatmentFact,
   runtimeClinicFactsProvider,
   type ClinicFactsProvider,
   type ClinicFactsSnapshot,
 } from "@/lib/clinic-facts";
+import { treatmentSupportsExplicitNeeds } from "@/lib/clinic-facts/treatment-compatibility";
 import {
   findAllTreatmentsByMessage,
   findTreatmentBrandInClinic,
@@ -35,6 +37,7 @@ import {
   isPriceInquiryWithTypoTolerance,
 } from "@/lib/pricing-subject";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
+import type { ResponseContractRuntimeMode } from "@/lib/response-contract";
 import type { RouterDecision } from "@/lib/router";
 import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
@@ -61,6 +64,7 @@ import {
 import { resolveConversationV2QuickReplySelection } from "./quick-reply-selection";
 import { hasConversationEpisodeExpired } from "./episode-policy";
 import { routeConversationTurnV2 } from "./engine";
+import { resolvePriceSubjectForPolicy } from "./policy";
 import {
   cloneConversationV2State,
   createConversationV2State,
@@ -322,6 +326,87 @@ function attachDeterministicPriceApplicability(
   return { ...turn, priceApplicability };
 }
 
+function resolvedCurrentEntityKeys(
+  mentions: TurnUnderstanding["areas"] | TurnUnderstanding["concerns"],
+) {
+  return Array.from(new Set(
+    mentions
+      .filter((mention) =>
+        mention.confidence >= 0.65 &&
+        mention.polarity === "affirmed" &&
+        mention.resolution === "resolved")
+      .map((mention) => mention.key),
+  ));
+}
+
+/**
+ * A contextual price owner is only a convenience for a truly subjectless follow-up
+ * ("那多少錢"). When the current sentence names a need the inherited treatment does
+ * not serve, the customer must choose the price subject before Policy commits state.
+ *
+ * This runs against the same pinned clinic snapshot that Hydration will quote from,
+ * so the clarification and the eventual price cannot observe different catalog
+ * versions. The typed clarification is then reduced into `state.awaiting`; a short
+ * answer such as "肉毒" can therefore resume the exact price task on the next turn.
+ */
+function withSnapshotAwarePriceSubjectClarification(
+  state: ConversationV2State,
+  turn: TurnUnderstanding,
+  snapshot: ClinicFactsSnapshot,
+): TurnUnderstanding {
+  if (turn.speechAct !== "ask_price" || turn.clarification) return turn;
+
+  const subject = resolvePriceSubjectForPolicy(state, turn);
+  if (subject.source !== "inherited_context" || subject.treatmentKeys.length !== 1) {
+    return turn;
+  }
+
+  const concernKeys = resolvedCurrentEntityKeys(turn.concerns);
+  const areaKeys = resolvedCurrentEntityKeys(turn.areas);
+  if (concernKeys.length === 0 && areaKeys.length === 0) return turn;
+
+  const inheritedTreatmentKey = subject.treatmentKeys[0];
+  if (
+    inheritedTreatmentKey &&
+    treatmentSupportsExplicitNeeds(
+      snapshot.clinic,
+      inheritedTreatmentKey,
+      concernKeys,
+      areaKeys,
+    )
+  ) {
+    return turn;
+  }
+
+  const offeredTreatments = snapshot.clinic.treatmentList.filter((treatment) =>
+    resolveTreatmentFact(snapshot, treatment.key, "followup").status === "offered");
+  const compatibleTreatments = offeredTreatments.filter((treatment) =>
+    treatmentSupportsExplicitNeeds(
+      snapshot.clinic,
+      treatment.key,
+      concernKeys,
+      areaKeys,
+    ));
+  const candidates = (compatibleTreatments.length > 0
+    ? compatibleTreatments
+    : offeredTreatments).slice(0, 12);
+
+  return {
+    ...turn,
+    clarification: {
+      allowMultiple: false,
+      options: candidates.map((treatment) => ({
+        entity: "treatment" as const,
+        id: treatment.key,
+        label: treatment.name,
+        value: treatment.key,
+      })),
+      prompt: "依您剛提到的需求，想確認要詢問哪一項療程的價格呢？",
+      slot: "treatment",
+    },
+  };
+}
+
 export type ConversationV2LiveRouteInput = {
   context: ConversationContext;
   eventIdentity: string;
@@ -366,6 +451,7 @@ export type ConversationV2LiveDependencies = {
   getCanarySettings?: () => {
     allowlistedUserIds: readonly string[];
     mode: "canary" | "demo_all" | "off" | "shadow";
+    responseContractMode?: ResponseContractRuntimeMode;
   };
   requestFrame?: typeof requestNluFrame;
 };
@@ -781,6 +867,7 @@ function preflightRoute(input: {
   existingHandoffReason?: null | string;
   message: string;
   now: Date;
+  responseContractMode: ResponseContractRuntimeMode;
   state: ConversationV2State;
   turnId: string;
 }) {
@@ -819,7 +906,9 @@ function preflightRoute(input: {
       text: input.message,
       turnId: input.turnId,
     });
-    const routed = routeConversationTurnV2(state, turn);
+    const routed = routeConversationTurnV2(state, turn, {
+      responseContractMode: input.responseContractMode,
+    });
     if (!routed.duplicate && routed.result) {
       state = routed.nextState;
       if (state.control.handoff) state.control.handoff.reason = effectiveHandoffReason;
@@ -876,8 +965,10 @@ export async function routeConversationV2Canary(
     return {
       allowlistedUserIds: runtime.conversationV2CanaryUserIds,
       mode: runtime.conversationV2Mode,
+      responseContractMode: runtime.conversationV2ResponseContractMode,
     };
   })();
+  const responseContractMode = config.responseContractMode ?? "shadow";
   const gate = evaluateConversationV2CanaryGate({
     allowlistedUserIds: new Set(config.allowlistedUserIds),
     mode: config.mode,
@@ -940,6 +1031,7 @@ export async function routeConversationV2Canary(
     existingHandoffReason: input.pendingHandoffReason,
     message: input.message,
     now: input.now,
+    responseContractMode,
     state,
     turnId,
   });
@@ -958,6 +1050,7 @@ export async function routeConversationV2Canary(
       existingHandoffReason: input.pendingHandoffReason,
       message: connectorSuffix,
       now: input.now,
+      responseContractMode,
       state,
       turnId,
     });
@@ -1187,7 +1280,7 @@ export async function routeConversationV2Canary(
           snapshotId: snapshot.snapshotId,
         };
       }
-      const deterministicTurn = attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
+      const deterministicTurn = withSnapshotAwarePriceSubjectClarification(state, attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
         frame: null,
         ontology: snapshot.ontology,
         receivedAt: input.now.toISOString(),
@@ -1199,8 +1292,10 @@ export async function routeConversationV2Canary(
         },
         text: routingMessage,
         turnId,
-      }), snapshot, routingMessage);
-      const deterministicRouted = routeConversationTurnV2(state, deterministicTurn);
+      }), snapshot, routingMessage), snapshot);
+      const deterministicRouted = routeConversationTurnV2(state, deterministicTurn, {
+        responseContractMode,
+      });
       if (deterministicRouted.result) {
         const deterministicHydrated = await hydrateConversationV2ReplyPlan({
           nextState: deterministicRouted.nextState,
@@ -1372,7 +1467,7 @@ export async function routeConversationV2Canary(
             questionKind: isPriceInquiry(routingMessage) ? "price" : "content",
           })
         : undefined;
-    const turn: TurnUnderstanding = attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
+    const turn: TurnUnderstanding = withSnapshotAwarePriceSubjectClarification(state, attachDeterministicPriceApplicability(adaptNluFrameToConversationV2Turn({
       // A model-labelled booking action cannot turn a richer treatment
       // sentence into the expected short answer. Adapting it as frame-less
       // preserves the collecting task exactly as the NLU-outage path does,
@@ -1392,8 +1487,8 @@ export async function routeConversationV2Canary(
         : {}),
       text: routingMessage,
       turnId,
-    }), snapshot, routingMessage);
-    const routed = routeConversationTurnV2(state, turn);
+    }), snapshot, routingMessage), snapshot);
+    const routed = routeConversationTurnV2(state, turn, { responseContractMode });
     if (routed.duplicate || !routed.result) {
       const replyText = "";
       return {

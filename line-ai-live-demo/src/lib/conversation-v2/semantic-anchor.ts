@@ -18,6 +18,11 @@ import {
   isPriceInquiry,
 } from "@/lib/pricing-subject";
 import { isImmediateSafetyBoundaryMessage } from "@/lib/safety-preflight";
+import {
+  treatmentSupportsArea,
+  treatmentSupportsConcern,
+  treatmentSupportsExplicitNeeds,
+} from "@/lib/clinic-facts/treatment-compatibility";
 
 import type {
   ConversationV2State,
@@ -690,40 +695,6 @@ function inferDeterministicContentQuestionAspect(
     return "benefits";
   }
   return undefined;
-}
-
-function treatmentSupportsConcern(
-  clinic: ClinicConfig,
-  treatmentKey: string,
-  concernKey: string,
-) {
-  const treatment = clinic.treatmentList.find((item) => item.key === treatmentKey);
-  const concern = clinic.concernList.find((item) => item.key === concernKey);
-  return Boolean(
-    treatment?.consultationGuide?.concernReplies?.some((item) => item.concernKey === concernKey) ||
-    concern?.recommendedTreatmentKeys.includes(treatmentKey),
-  );
-}
-
-function treatmentSupportsArea(
-  clinic: ClinicConfig,
-  treatmentKey: string,
-  areaKey: string,
-) {
-  return clinic.concernList.some((concern) =>
-    concern.areaKeys.includes(areaKey as (typeof concern.areaKeys)[number]) &&
-    treatmentSupportsConcern(clinic, treatmentKey, concern.key),
-  );
-}
-
-function treatmentSupportsExplicitNeeds(
-  clinic: ClinicConfig,
-  treatmentKey: string,
-  concernKeys: readonly string[],
-  areaKeys: readonly string[],
-) {
-  return concernKeys.every((key) => treatmentSupportsConcern(clinic, treatmentKey, key)) &&
-    areaKeys.every((key) => treatmentSupportsArea(clinic, treatmentKey, key));
 }
 
 function inferredAssetQuestionAspect(asset: TreatmentReplyAsset): QuestionAspect {

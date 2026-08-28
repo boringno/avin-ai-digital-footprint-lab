@@ -15,6 +15,36 @@ import { CONVERSATION_V2_MULTI_INTENT_ACCEPTANCE_CASES } from "./fixtures/conver
 
 const NOW = "2026-08-27T08:00:00.000Z";
 const FOOTER = "以上為 AI 客服順順初步回覆。";
+const PRICE_ASPECTS = new Set(["price_campaign", "price_regular", "price_unspecified"]);
+const SUPPORTED_SECONDARY_ASPECTS = {
+  onda_pro: new Set(["overview", "benefits", "mechanism", "suitability", "comfort_recovery", "single_vs_combination", "combination_reason", "general_difference"]),
+  botox: new Set(["overview", "benefits", "mechanism", "suitability", "comfort_recovery", "brands"]),
+} as const;
+
+function assertSupplementMeaning(
+  treatmentKey: "onda_pro" | "botox",
+  aspect: string,
+  customerText: string,
+  caseId: string,
+) {
+  if (aspect === "overview") {
+    assert.match(customerText, treatmentKey === "onda_pro" ? /ONDA Pro/iu : /肉毒/u, `${caseId}: overview copy must name the treatment`);
+  } else if (aspect === "benefits") {
+    assert.match(customerText, treatmentKey === "onda_pro" ? /(?:局部脂肪|輪廓|下顎線)/u : /(?:動態紋|咀嚼肌|肌肉)/u, `${caseId}: benefits copy must describe an approved improvement direction`);
+  } else if (aspect === "mechanism") {
+    assert.match(customerText, treatmentKey === "onda_pro" ? /(?:Coolwaves|微波|脂肪)/iu : /(?:放鬆|肌肉)/u, `${caseId}: mechanism copy must explain how the treatment acts`);
+  } else if (aspect === "suitability") {
+    assert.match(customerText, /評估/u, `${caseId}: suitability copy must preserve evaluation language`);
+  } else if (aspect === "comfort_recovery") {
+    assert.match(customerText, /(?:冷卻|感受|舒適|恢復|個人狀況)/u, `${caseId}: comfort copy must address experience or recovery`);
+  } else if (aspect === "brands") {
+    assert.match(customerText, /奇蹟肉毒/u, `${caseId}: brands copy must include 奇蹟肉毒`);
+    assert.match(customerText, /經典肉毒/u, `${caseId}: brands copy must include 經典肉毒`);
+    assert.match(customerText, /皇家肉毒/u, `${caseId}: brands copy must include 皇家肉毒`);
+  } else if (["single_vs_combination", "combination_reason", "general_difference"].includes(aspect)) {
+    assert.match(customerText, /(?:ONDA Pro.*肉毒|肉毒.*ONDA Pro)/isu, `${caseId}: combination copy must explain the approved relationship`);
+  }
+}
 
 function expectedMustAnswer(aspects: readonly string[]) {
   return [
@@ -138,12 +168,13 @@ async function main() {
   const snapshot = await createStaticClinicFactsProvider({
     pricingCampaigns: seedData.pricingCampaigns,
   }).loadSnapshot({ now: new Date(NOW) });
+  const coverageCounts = { full: 0, partial: 0, priceOnly: 0 };
 
   for (const item of CONVERSATION_V2_MULTI_INTENT_ACCEPTANCE_CASES) {
     const rawFrame = {
-      areas: [],
+      areas: [...(item.areas ?? [])],
       confidence: 0.96,
-      concerns: [],
+      concerns: [...(item.concerns ?? [])],
       dialogue: {
         aspects: [...item.aspects],
         focus: item.aspects[0],
@@ -173,17 +204,39 @@ async function main() {
     assert.deepEqual(turn.questionAspects, item.aspects, `${item.id}: adapter must preserve every ordered aspect`);
 
     const state = createConversationV2State({ episodeId: `multi-intent-${item.id}`, now: NOW });
-    const result = evaluateDialoguePolicy(state, turn);
+    const result = evaluateDialoguePolicy(state, turn, {
+      responseContractMode: "enforce",
+    });
     assert.equal(result.action.type, "answer_price", `${item.id}: price remains the one winning action`);
     const expected = expectedMustAnswer(item.aspects);
-    assert.equal(result.replyPlan.responseContract.mode, "shadow", `${item.id}: contract stays shadow-only`);
-    if (result.replyPlan.responseContract.mode === "shadow") {
-      assert.deepEqual(result.replyPlan.responseContract.contract.mustAnswer, expected, `${item.id}: contract must retain secondary duties`);
-      assert.deepEqual(result.replyPlan.responseContract.contract.subjectKeys, [item.treatmentKey], `${item.id}: contract must retain the single treatment owner`);
-    }
+    const secondary = expected.filter((aspect) => !PRICE_ASPECTS.has(aspect));
+    const pilotEligible = secondary.length > 0 &&
+      secondary.every((aspect) => SUPPORTED_SECONDARY_ASPECTS[item.treatmentKey].has(aspect)) &&
+      (!secondary.includes("suitability") || (item.concerns?.length ?? 0) > 0);
+    assert.equal(
+      result.replyPlan.responseContract.mode,
+      pilotEligible ? "enforce" : "shadow",
+      `${item.id}: Policy alone must own the approved rollout mode`,
+    );
+    assert.deepEqual(result.replyPlan.responseContract.contract.mustAnswer, expected, `${item.id}: contract must retain secondary duties`);
+    assert.deepEqual(result.replyPlan.responseContract.contract.subjectKeys, [item.treatmentKey], `${item.id}: contract must retain the single treatment owner`);
 
     const hydrated = await hydrateConversationV2ReplyPlan({ nextState: state, result, snapshot, turn });
     assert(hydrated.rendererPlan, `${item.id}: reply plan must hydrate`);
+    const completed = pilotEligible ? expected : expected.filter((aspect) => PRICE_ASPECTS.has(aspect));
+    const missing = expected.filter((aspect) => !completed.includes(aspect));
+    assert.equal(
+      hydrated.rendererPlan.responseContract.mode,
+      pilotEligible ? "enforce" : "shadow",
+      `${item.id}: hydration must preserve the Policy-owned mode`,
+    );
+    if (!pilotEligible) {
+      assert.equal(
+        hydrated.rendererPlan.approvedPriceReply?.supplements?.length ?? 0,
+        0,
+        `${item.id}: shadow mode must never change customer-visible price content`,
+      );
+    }
     const rendered = await renderReplyPlan({
       customerMessage: item.text,
       dialogueState: {
@@ -207,9 +260,36 @@ async function main() {
       recentTurns: [],
     });
     assert.match(rendered.replyText, item.treatmentKey === "onda_pro" ? /16,888/u : /999/u, `${item.id}: final customer text must contain the current approved offer`);
-    assert.deepEqual(rendered.responseContract.completedAspects, ["price_campaign"], `${item.id}: only the deterministic price receipt may be marked complete`);
-    assert.deepEqual(rendered.responseContract.missingAspects, expected.slice(1), `${item.id}: all secondary duties must remain visible as missing`);
-    assert.equal(rendered.responseContract.coverageStatus, expected.length === 1 ? "verified" : "missing", `${item.id}: coverage must be honest`);
+    for (const supplement of hydrated.rendererPlan.approvedPriceReply?.supplements ?? []) {
+      assert.match(rendered.replyText, new RegExp(supplement.customerText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"), `${item.id}: every typed supplement must be customer-visible`);
+      for (const aspect of supplement.aspects) {
+        assertSupplementMeaning(item.treatmentKey, aspect, supplement.customerText, item.id);
+      }
+    }
+    assert.deepEqual(rendered.responseContract.completedAspects, completed, `${item.id}: typed receipts must prove every completed duty`);
+    assert.deepEqual(rendered.responseContract.missingAspects, missing, `${item.id}: unresolved duties must remain visible as missing`);
+    assert.equal(rendered.responseContract.coverageStatus, missing.length === 0 ? "verified" : "missing", `${item.id}: coverage must be honest`);
+
+    if (item.id === "MI-ONDA-01") {
+      assert.match(rendered.replyText, /雙下巴/u, `${item.id}: suitability reply must acknowledge the concern`);
+      assert.match(rendered.replyText, /(?:局部脂肪|脂肪感)/u, `${item.id}: suitability reply must explain the approved direction`);
+      assert.match(rendered.replyText, /評估/u, `${item.id}: suitability reply must preserve evaluation language`);
+      assert.match(rendered.replyText, /12,999/u, `${item.id}: ONDA reply must retain the approved combination alternative`);
+    }
+    if (item.id === "MI-BOTOX-12") {
+      assert.match(rendered.replyText, /奇蹟肉毒/u, `${item.id}: brand answer must be visible`);
+      assert.match(rendered.replyText, /經典肉毒/u, `${item.id}: brand answer must be visible`);
+      assert.match(rendered.replyText, /皇家肉毒/u, `${item.id}: brand answer must be visible`);
+      assert.match(rendered.replyText, /動態紋/u, `${item.id}: benefits answer must be visible`);
+      assert.match(rendered.replyText, /肌肉線條/u, `${item.id}: benefits answer must be visible`);
+      const priceLine = rendered.replyText.split("\n").find((line) => line.includes("999")) ?? "";
+      assert.doesNotMatch(priceLine, /奇蹟|經典|皇家|12U/u, `${item.id}: 999 must not be bound to a brand or dose`);
+    }
+    assert.doesNotMatch(rendered.replyText, /https?:\/\/|www\.|療程名稱：|可評估方向：|20\d{2}[年/.-]/u, `${item.id}: customer text must not expose URLs, internal labels, or campaign dates`);
+
+    if (secondary.length === 0) coverageCounts.priceOnly += 1;
+    else if (missing.length === 0) coverageCounts.full += 1;
+    else coverageCounts.partial += 1;
 
     const trace = getConversationDecisionTrace({
       conversation_v2_nlu_confidence: parsed.confidence,
@@ -233,10 +313,12 @@ async function main() {
     assert.equal(trace.routeVersion, "v2", `${item.id}: trace must identify V2`);
     assert.equal(trace.policyAction, "answer_price", `${item.id}: trace must identify the winning action`);
     assert.deepEqual(trace.responseContractMustAnswer, expected, `${item.id}: trace must preserve every duty`);
-    assert.deepEqual(trace.responseContractMissingAspects, expected.slice(1), `${item.id}: trace must expose missing secondary duties`);
+    assert.deepEqual(trace.responseContractCompletedAspects, completed, `${item.id}: trace must preserve typed completion receipts`);
+    assert.deepEqual(trace.responseContractMissingAspects, missing, `${item.id}: trace must expose only unresolved duties`);
   }
 
-  console.log("Conversation V2 multi-intent acceptance passed (32 same-subject ONDA/Botox cases through parser, policy, renderer, and decision trace)");
+  assert.deepEqual(coverageCounts, { full: 20, partial: 10, priceOnly: 2 });
+  console.log("Conversation V2 multi-intent acceptance passed (20 fully covered / 10 partial shadow / 2 price-only; 32 total)");
 }
 
 void main().catch((error) => {

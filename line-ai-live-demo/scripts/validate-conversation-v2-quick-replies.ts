@@ -340,6 +340,75 @@ function validatePendingQuickReplyContractOwnsHistoricalState() {
   };
   const persisted = parsePersistedConversationV2State(JSON.parse(JSON.stringify(state)));
   assert.ok(persisted?.pendingQuickReply, "the approved visible choice contract must survive V2 JSON persistence");
+  const priceContinuationState = structuredClone(state);
+  priceContinuationState.awaiting = {
+    allowMultiple: false,
+    continuation: {
+      kind: "answer_price",
+      priceApplicability: {
+        branch: "高雄館",
+        dose: "12U",
+        package: "face-contour",
+        sessionCount: 1,
+        variant: "standard",
+      },
+      priceKind: "unspecified",
+    },
+    expectedField: "treatment",
+    id: "price-subject-clarification",
+    options: [
+      { entity: "treatment", id: "onda_pro", label: "ONDA Pro", value: "onda_pro" },
+      { entity: "treatment", id: "botox", label: "肉毒", value: "botox" },
+    ],
+    pendingKnowledge: {
+      areaKeys: ["face"],
+      concernKeys: ["dynamic_wrinkles"],
+      treatmentKeys: [],
+    },
+    prompt: "想確認要詢問哪一項療程的價格呢？",
+  };
+  const persistedPriceContinuation = parsePersistedConversationV2State(
+    JSON.parse(JSON.stringify(priceContinuationState)),
+  );
+  const originalPriceContinuation = priceContinuationState.awaiting?.continuation;
+  assert.ok(originalPriceContinuation, "the price continuation fixture must exist");
+  assert.equal(persistedPriceContinuation?.awaiting?.continuation?.kind, "answer_price");
+  assert.equal(persistedPriceContinuation?.awaiting?.continuation?.priceKind, "unspecified");
+  assert.deepEqual(
+    persistedPriceContinuation?.awaiting?.continuation?.priceApplicability,
+    originalPriceContinuation.priceApplicability,
+    "typed price applicability must survive JSON persistence without loss",
+  );
+  assert.deepEqual(persistedPriceContinuation?.awaiting?.options, priceContinuationState.awaiting.options);
+  assert.deepEqual(
+    persistedPriceContinuation?.awaiting?.pendingKnowledge,
+    priceContinuationState.awaiting.pendingKnowledge,
+  );
+  const malformedContinuation = JSON.parse(
+    JSON.stringify(priceContinuationState),
+  ) as { awaiting: { continuation: { priceKind: string } } };
+  malformedContinuation.awaiting.continuation.priceKind = "invented";
+  assert.equal(
+    parsePersistedConversationV2State(malformedContinuation),
+    null,
+    "a malformed price continuation must fail closed instead of resuming an invented task",
+  );
+  for (const [name, applicability] of [
+    ["numeric branch", { branch: 123 }],
+    ["non-positive sessions", { sessionCount: 0 }],
+    ["fractional sessions", { sessionCount: 1.5 }],
+    ["unknown qualifier", { invented: "value" }],
+  ] as const) {
+    const malformedApplicability = JSON.parse(
+      JSON.stringify(priceContinuationState),
+    ) as { awaiting: { continuation: { priceApplicability: unknown } } };
+    malformedApplicability.awaiting.continuation.priceApplicability = applicability;
+    assert.equal(
+      parsePersistedConversationV2State(malformedApplicability),
+      null,
+      `${name}: malformed nested price applicability must fail closed`,
+    );
+  }
   const selected = resolveConversationV2QuickReplySelection({
     clinic: clinicConfig,
     message: "脂肪堆積",

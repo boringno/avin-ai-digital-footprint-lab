@@ -100,8 +100,17 @@ export type AwaitingOption = {
   value: string;
 };
 
+export type PriceSubjectSource = "explicit_current" | "inherited_context";
+
+export type AwaitingContinuation = {
+  kind: "answer_price";
+  priceApplicability?: PriceApplicabilityDimensions;
+  priceKind: "campaign" | "regular" | "unspecified";
+};
+
 export type AwaitingState = {
   allowMultiple: boolean;
+  continuation?: AwaitingContinuation;
   expectedField: "selection" | "area" | "concern" | BookingField;
   id: string;
   knowledgeMode?: KnowledgeUpdateMode;
@@ -349,6 +358,7 @@ export type DialoguePolicyAction =
   | (PolicyActionBase & {
       priceApplicability?: PriceApplicabilityDimensions;
       priceKind: "campaign" | "regular" | "unspecified";
+      priceSubjectSource?: PriceSubjectSource;
       treatmentKeys: string[];
       type: "answer_price";
     })
@@ -412,6 +422,7 @@ export type DeterministicReplyPlan = ReplyPlanBase & {
   mode: "deterministic";
   nextQuestion?: string;
   pricingQuery?: PriceQuery;
+  pricingSubjectSource?: PriceSubjectSource;
   templateKey: string;
   templateVariables: Record<string, string | string[]>;
 };

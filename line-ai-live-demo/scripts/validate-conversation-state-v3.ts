@@ -58,6 +58,17 @@ function completeV2Fixture() {
   };
   state.awaiting = {
     allowMultiple: false,
+    continuation: {
+      kind: "answer_price",
+      priceApplicability: {
+        branch: "高雄館",
+        dose: "12U",
+        package: "face-contour",
+        sessionCount: 1,
+        variant: "standard",
+      },
+      priceKind: "campaign",
+    },
     expectedField: "selection",
     id: "awaiting-comparison",
     knowledgeMode: "merge",
@@ -345,6 +356,20 @@ function validateMalformedStateIsRejected() {
     ["timestamp", { ...structuredClone(base), updatedAt: "not-a-date" }],
     ["receipt limit", { ...structuredClone(base), processedTurnIds: Array.from({ length: 65 }, (_, index) => `x-${index}`), lastProcessedTurnId: "x-64" }],
     ["awaiting option", { ...structuredClone(base), awaiting: { ...(base.awaiting as object), options: ["bad"] } }],
+    ["awaiting applicability branch", {
+      ...structuredClone(base),
+      awaiting: {
+        ...(base.awaiting as object),
+        continuation: { kind: "answer_price", priceApplicability: { branch: 123 }, priceKind: "campaign" },
+      },
+    }],
+    ["awaiting applicability sessions", {
+      ...structuredClone(base),
+      awaiting: {
+        ...(base.awaiting as object),
+        continuation: { kind: "answer_price", priceApplicability: { sessionCount: -1 }, priceKind: "campaign" },
+      },
+    }],
   ];
   for (const [name, value] of cases) {
     assert.equal(loadPersistedConversationStateV3(value, REGISTRY).kind, "invalid", `SV3-3: malformed ${name} must be rejected`);

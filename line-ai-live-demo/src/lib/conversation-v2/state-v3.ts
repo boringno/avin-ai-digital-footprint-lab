@@ -13,6 +13,7 @@ import {
 
 import {
   cloneConversationV2State,
+  isPersistedPriceApplicability,
   parsePersistedConversationV2State,
   PROCESSED_TURN_ID_LIMIT,
 } from "./state";
@@ -261,6 +262,13 @@ function isLegacyStateSemanticallyValid(state: ConversationV2State) {
     typeof awaiting.id !== "string" || !awaiting.id.trim() ||
     typeof awaiting.prompt !== "string" || !awaiting.prompt.trim() ||
     parseAwaitingOptions(awaiting.options) === null ||
+    (awaiting.continuation !== undefined && (
+      !isRecord(awaiting.continuation) ||
+      awaiting.continuation.kind !== "answer_price" ||
+      !["campaign", "regular", "unspecified"].includes(String(awaiting.continuation.priceKind)) ||
+      (awaiting.continuation.priceApplicability !== undefined &&
+        !isPersistedPriceApplicability(awaiting.continuation.priceApplicability))
+    )) ||
     (awaiting.pendingKnowledge !== undefined && (
       !isStringArray(awaiting.pendingKnowledge.areaKeys) ||
       !isStringArray(awaiting.pendingKnowledge.concernKeys) ||
