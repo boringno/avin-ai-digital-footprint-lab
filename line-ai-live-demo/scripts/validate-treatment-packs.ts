@@ -83,8 +83,12 @@ function validatePackSchema() {
 
   for (const treatment of packs) {
     const concernReplies = treatment.consultationGuide?.concernReplies ?? [];
+    const approvedContinuations = treatment.consultationGuide?.quickReplies ?? [];
     const aspectKeys = treatment.consultationGuide?.detailReplies?.map((item) => item.aspectKey) ?? [];
-    assert(concernReplies.length > 0, `TP4: ${treatment.name} requires at least one discovery option`);
+    assert(
+      concernReplies.length > 0 || approvedContinuations.length > 0,
+      `TP4: ${treatment.name} requires a discovery option or an approved L1 continuation`,
+    );
     assert(
       concernReplies.every((item) => item.discoveryLabel.trim()),
       `TP4: ${treatment.name} discovery options require labels generated from the same concern records`,

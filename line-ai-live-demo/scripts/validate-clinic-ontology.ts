@@ -6,7 +6,7 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
-assert(clinicOntology.treatments.length === 42, "ontology must expose all 42 normalized treatment families");
+assert(clinicOntology.treatments.length === 89, "ontology must expose all 89 canonical approved treatment families");
 assert(
   clinicOntology.treatments.some((treatment) => treatment.key === "phoenix_thermage" && treatment.name === "鳳凰電波"),
   "Phoenix Thermage must be part of the canonical treatment ontology",
@@ -36,6 +36,12 @@ for (const requiredKey of [
   "pelvic_floor_chair",
   "ilib",
   "coolsculpting",
+  "hair_removal_vio",
+  "tenthermage_eye_tip",
+  "bei_en_xi_brand",
+  "powder_glow_bottle",
+  "ailewei_brand",
+  "butterfly_forma_rf",
 ]) {
   assert(
     clinicOntology.treatments.some((treatment) => treatment.key === requiredKey),

@@ -42,9 +42,9 @@ const ONDA_PRICE: PriceCatalogEntry = {
   campaign_name: "ONDA 體驗方案",
   customer_price_approval_status: "approved",
   customer_price_text: "體驗價 16,888 元",
-  end_date: "2026-08-31",
+  end_date: "2026-11-30",
   fallback_message: "",
-  id: "promo-2026-08-05-onda-pro",
+  id: "promo-2026-anniv-onda-face-online",
   is_active: "true",
   notes: "validator",
   price_text: "internal",
@@ -61,7 +61,7 @@ const ONDA_BOTOX_COMBO_PRICE: PriceCatalogEntry = {
   campaign_name: "ONDA＋肉毒小臉組合",
   customer_price_approval_status: "approved",
   customer_price_text: "組合價 12,999 元",
-  end_date: "2026-08-31",
+  end_date: "2026-11-30",
   fallback_message: "",
   id: "promo-2026-08-face-contour-combo",
   is_active: "true",
@@ -79,9 +79,9 @@ const BOTOX_PRICE: PriceCatalogEntry = {
   campaign_name: "肉毒體驗方案",
   customer_price_approval_status: "approved",
   customer_price_text: "肉毒體驗價 999 元",
-  end_date: "2026-08-31",
+  end_date: "2026-11-30",
   fallback_message: "",
-  id: "promo-2026-07-09-botox-wrinkle",
+  id: "promo-2026-anniv-botox-10u",
   is_active: "true",
   notes: "validator",
   price_text: "internal: 12U",
@@ -1412,11 +1412,11 @@ async function validateFinalWebhookPayload() {
     const payload = routed.results[0]?.replyPayload;
     assert.ok(payload, `${message}: final LINE payload must exist`);
     const visible = visibleTextFromPayload(payload.messages);
-    assert.match(visible, /16,888/u, `${message}: final LINE text must quote the approved ONDA price`);
-    assert.match(
+    assert.match(visible, /8,999/u, `${message}: final LINE text must quote the current anniversary ONDA price`);
+    assert.doesNotMatch(
       visible,
-      /ONDA PRO＋肉毒.*12,999/su,
-      `${message}: final LINE text must also identify and quote the approved combination offer`,
+      /12,999/u,
+      `${message}: final LINE text must not revive the expired ONDA + Botox offer`,
     );
     assert.doesNotMatch(
       visible,
@@ -1474,7 +1474,7 @@ async function validateFinalWebhookPayload() {
       const payload = routed.results[0]?.replyPayload;
       assert.ok(payload, `${message} ${ownerSuffix}: final LINE payload must exist`);
       const visible = visibleTextFromPayload(payload.messages);
-      assert.match(visible, /肉毒體驗價\s*999/u, `${message} ${ownerSuffix}: must quote the approved Botox offer`);
+      assert.match(visible, /肉毒.*999/u, `${message} ${ownerSuffix}: must quote the current approved Botox offer`);
       assert.doesNotMatch(
         visible,
         /需要由真人客服確認|16,888|12,999|哪一項療程/u,

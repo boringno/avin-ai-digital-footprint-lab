@@ -1,4 +1,5 @@
-import { clinicConfig, type ClinicConfig, type TreatmentConfig } from "../src/lib/clinic-config";
+import { clinicConfig, findTreatmentByMessage, type ClinicConfig, type TreatmentConfig } from "../src/lib/clinic-config";
+import { APPROVED_NOTION_TREATMENT_MERGES } from "../src/lib/approved-notion-treatments";
 import {
   CLINIC_CONFIG_CONTENT_VERSION,
   adaptTreatmentConfigToKnowledge,
@@ -21,7 +22,7 @@ function requireTreatment(key: string) {
 function validateAllExistingTreatments() {
   const resolver = createTreatmentKnowledgeResolver();
   const all = resolver.list();
-  assert(all.length === 42, `TK1: expected 42 normalized treatments, got ${all.length}`);
+  assert(all.length === 89, `TK1: expected 89 canonical approved treatments, got ${all.length}`);
   assert(new Set(all.map((item) => item.key)).size === all.length, "TK1: normalized keys must be unique");
 
   for (const item of all) {
@@ -44,19 +45,64 @@ function validatePackedTreatments() {
   assert(onda?.hasConsultationPack, "TK2: ONDA must retain its consultation pack marker");
   assert(onda.suitableConcerns.includes("jawline_looseness") && onda.suitableConcerns.includes("local_contour"), "TK2: ONDA concern mapping failed");
   assert(onda.areas.includes("jawline") && onda.areas.includes("body"), "TK2: ONDA area mapping failed");
-  assert(onda.approvedPriceIds.includes("promo-2026-08-face-contour-combo"), "TK2: ONDA approved price ids failed");
+  assert(onda.approvedPriceIds.includes("promo-2026-anniv-onda-face-online"), "TK2: ONDA current approved price id failed");
+  assert(onda.approvedPriceIds.includes("promo-2026-08-face-contour-combo"), "TK2: ONDA legacy journey price reference must remain available for isolated fixtures");
   assert(onda.combinationOptions.includes("botox_small_face") && Boolean(onda.combinationReasons.botox_small_face), "TK2: ONDA combination mapping failed");
 
   const botox = resolver.resolveByKey("botox");
   assert(botox?.hasConsultationPack, "TK3: Botox must retain its consultation pack marker");
   assert(botox.suitableConcerns.includes("dynamic_wrinkles") && botox.suitableConcerns.includes("masseter_contour"), "TK3: Botox concern mapping failed");
-  assert(botox.approvedPriceIds.includes("promo-2026-07-09-botox-wrinkle"), "TK3: Botox approved price mapping failed");
+  assert(botox.approvedPriceIds.includes("promo-2026-anniv-botox-10u"), "TK3: Botox approved price mapping failed");
   assert(botox.availableBrands.length >= 3, "TK3: Botox available brands must be retained");
 
   const pico = resolver.resolveByKey("pico");
   assert(pico?.hasConsultationPack, "TK4: Pico must retain its consultation pack marker");
   assert(["pores_texture", "acne_scar", "dullness_brightening"].every((key) => pico.suitableConcerns.includes(key)), "TK4: Pico concern mapping failed");
   assert(buildTreatmentApprovedFacts(pico).length > 0, "TK4: Pico must expose approved facts for a reply plan");
+}
+
+function validateNotionApprovedTreatments() {
+  const expectedKeys = [
+    "hair_removal_vio",
+    "tenthermage_eye_tip",
+    "bei_en_xi_brand",
+    "powder_glow_bottle",
+    "ailewei_brand",
+    "butterfly_forma_rf",
+  ];
+
+  for (const key of expectedKeys) {
+    const treatment = requireTreatment(key);
+    assert(treatment.approvedContent.introReplies[0]?.trim(), `TK8: ${key} must have approved first-level copy`);
+    assert(
+      treatment.availableBranchNames?.length === clinicConfig.branches.length,
+      `TK8: ${key} must be available at all four approved branches`,
+    );
+    assert(
+      treatment.consultationGuide?.customerQuickReplies?.some((choice) => choice.text === "我要預約免費諮詢"),
+      `TK8: ${key} must expose a booking quick reply`,
+    );
+  }
+
+  for (const key of ["double_eyelid_surgery", "eye_bag_surgery", "osmidrosis_surgery", "rhinoplasty_surgery"]) {
+    const treatment = requireTreatment(key);
+    assert(treatment.educationMode === "human_only", `TK8: ${key} must remain human-only`);
+    assert(!treatment.consultationGuide, `TK8: ${key} must not enter automated treatment consultation`);
+  }
+
+  assert(
+    findTreatmentByMessage("韓妍玻尿酸多少錢")?.key === "bei_en_xi_brand",
+    "TK8: direct approved alias must win over the generic filler family",
+  );
+  assert(
+    findTreatmentByMessage("想問奇蹟肉毒")?.key === "botox",
+    "TK8: approved Botox brand alias must resolve to the canonical Botox conversation family",
+  );
+  assert(
+    Object.values(APPROVED_NOTION_TREATMENT_MERGES).every((key) => key === "botox") &&
+      Object.keys(APPROVED_NOTION_TREATMENT_MERGES).length === 3,
+    "TK8: all three approved Botox brand rows must be explicitly merged into the canonical family",
+  );
 }
 
 function validateNoPackAndMissingValues() {
@@ -130,7 +176,8 @@ function main() {
   validateNoPackAndMissingValues();
   validateNewConfigWithoutRouterException();
   validateAdapterDirectly();
-  console.log("Treatment knowledge validation passed: 42 existing treatments, packs, no-pack defaults, sources, versions, and generic extension");
+  validateNotionApprovedTreatments();
+  console.log("Treatment knowledge validation passed: 89 canonical approved treatments, packs, Notion L1 content, quick replies, branches, sources, versions, and generic extension");
 }
 
 try {

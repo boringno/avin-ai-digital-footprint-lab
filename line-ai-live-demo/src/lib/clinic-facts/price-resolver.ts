@@ -60,7 +60,10 @@ function containsActivityTiming(text: string) {
     "u",
   );
   if (calendarDay.test(text) || promotionDeadlineWithoutSuffix.test(text)) return true;
-  return /(?:即日起|月底|年底|截止|到期|限時|倒數\s*[〇零一二三四五六七八九十\d]*\s*(?:天|日|小時)?|(?:本|這|上|下)(?:週|周|月|季|年)|(?:僅|只)?到\s*(?:週|周)[一二三四五六日天末]?|(?:週|周)末前|(?:暑|寒)假(?:限定|優惠|活動)?|(?:春季|夏季|秋季|冬季|盛夏|歲末|年中|週年慶|周年慶)(?:限定|限時|優惠|活動|方案|特惠)|活動(?:日期|期間|時間|到|至)|有效(?:日期|期間|期限)|檔期|(?:19|20)\d{2}\s*(?:年|[-/.])|[〇零一二三四五六七八九十\d]{1,4}\s*年\s*[〇零一二三四五六七八九十\d]{1,2}\s*月|\d{1,2}\s*[/.]\s*\d{1,2}(?=\s*(?:日|號|前|截止|優惠|活動|\d{2,3}(?:,?\d{3})?元?|$)))/u.test(text);
+  // Approved campaign names such as "周年慶活動價" are customer-facing
+  // labels, not schedule disclosure. Block actual dates/deadlines while
+  // allowing the clinic-approved event label to be quoted.
+  return /(?:即日起|月底|年底|截止|到期|限時|(?:暑假|寒假|春季|夏季|秋季|冬季|周年慶)?限定|倒數\s*[〇零一二三四五六七八九十\d]*\s*(?:天|日|小時)?|(?:本|這|上|下)(?:週|周|月|季|年)|(?:僅|只)?到\s*(?:週|周)[一二三四五六日天末]?|(?:週|周)末前|活動(?:日期|期間|時間|到|至)|有效(?:日期|期間|期限)|檔期|(?:19|20)\d{2}\s*(?:年|[-/.])|[〇零一二三四五六七八九十\d]{1,4}\s*年\s*[〇零一二三四五六七八九十\d]{1,2}\s*月|\d{1,2}\s*[/.]\s*\d{1,2}(?=\s*(?:日|號|前|截止|優惠|活動|\d{2,3}(?:,?\d{3})?元?|$)))/u.test(text);
 }
 
 function enabled(value: string) {
@@ -124,8 +127,12 @@ function splitTerms(value: string | undefined) {
 function treatmentKeyForTerm(snapshot: ClinicFactsSnapshot, term: string) {
   const normalized = normalizeClinicText(term);
   if (!normalized) return null;
+  const direct = snapshot.treatments.find((treatment) =>
+    [treatment.name, ...treatment.aliases]
+      .some((candidate) => normalizeClinicText(candidate) === normalized));
+  if (direct) return direct.key;
   return snapshot.treatments.find((treatment) =>
-    [treatment.name, ...treatment.aliases, ...treatment.availableBrands]
+    treatment.availableBrands
       .some((candidate) => normalizeClinicText(candidate) === normalized))?.key ?? null;
 }
 

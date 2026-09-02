@@ -59,7 +59,7 @@ const ondaCampaign = {
   customer_price_text: ONDA_APPROVED_PRICE_TEXT,
   end_date: "2026-12-31",
   fallback_message: "😊 想先了解哪個部位呢？我可以協助安排諮詢。",
-  id: "promo-2026-08-05-onda-pro",
+  id: "promo-2026-anniv-onda-face-online",
   is_active: "true",
   notes: "journey fixture mirroring the approved clinic seed row",
   price_text: ONDA_APPROVED_PRICE_TEXT,
@@ -73,7 +73,7 @@ const ondaFaceCombinationCampaign = {
   campaign_aliases: "臉部輪廓組合|ONDA雙下巴|ONDA嘴邊肉|雙下巴方案|嘴邊肉方案|12999|12,999",
   campaign_name: "2026 ONDA Pro＋肉毒小臉方案",
   customer_price_text: "ONDA＋肉毒小臉組合 12,999 元",
-  end_date: "2026-08-31",
+  end_date: "2026-11-30",
   id: "promo-2026-08-face-contour-combo",
   price_text: "ONDA＋肉毒小臉組合 12,999 元",
   treatment_name: "臉部輪廓組合",
@@ -89,8 +89,8 @@ const botoxCampaign = {
   // specification in price_text, but do not make it a customer applicability
   // prerequisite or a generic price question could never receive the offer.
   dose: "",
-  end_date: "2026-08-31",
-  id: "promo-2026-07-09-botox-wrinkle",
+  end_date: "2026-11-30",
+  id: "promo-2026-anniv-botox-10u",
   price_text: "肉毒12U 999元",
   start_date: "2026-07-09",
   treatment_name: "肉毒除皺",

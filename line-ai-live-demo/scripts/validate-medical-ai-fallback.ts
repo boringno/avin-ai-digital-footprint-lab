@@ -340,13 +340,14 @@ async function main() {
   assert(isMedicalAestheticFallbackCandidate("洢蓮絲通常適合改善什麼狀況"), "M1: medical fallback mode must be selected");
   assert(isMedicalAestheticFallbackCandidate("海芙是什麼"), "M1: unknown micro-aesthetic name must remain eligible for general education");
 
-  const unavailableMicro = await route("你們有做麗珠蘭嗎");
+  const unavailableMicro = await route("你們有做海菲秀嗎");
   assert(
-    unavailableMicro.decisionType === "fallback_reply" && unavailableMicro.matchedKey === "unsupported_treatment_discovery",
-    "M1: an unavailable non-surgical treatment must reach controlled needs discovery",
+    unavailableMicro.decisionType === "treatment_intro_reply" &&
+      unavailableMicro.matchedKey === "unavailable_treatment_alternative:hydrafacial" &&
+      unavailableMicro.replyText.includes("目前院內沒有提供海菲秀") &&
+      unavailableMicro.replyText.includes("水飛梭"),
+    "M1: an unavailable named treatment must use the approved in-clinic alternative",
   );
-  assert(shouldAllowAiFallbackReply("你們有做麗珠蘭嗎"), "M1: unavailable micro-aesthetic discovery must be eligible for guarded LLM guidance");
-  assert(isMedicalAestheticFallbackCandidate("你們有做麗珠蘭嗎"), "M1: unavailable micro-aesthetic discovery must use medical output guards");
 
   const price = await route("洢蓮絲多少錢");
   assert(price.decisionType === "pricing_auto_reply", "M2: price must stay in the deterministic pricing resolver");

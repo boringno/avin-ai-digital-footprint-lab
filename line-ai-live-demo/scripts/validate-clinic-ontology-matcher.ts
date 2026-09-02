@@ -35,4 +35,21 @@ const colloquialArm = matchClinicOntology("掰掰肉");
 assert(colloquialArm.areas[0]?.key === "arm", "colloquial arm term must use the canonical area ontology");
 assert(colloquialArm.concerns[0]?.key === "local_contour", "arm must infer local contour without duplicating keywords");
 
+for (const [message, expectedKey] of [
+  ["貝恩希多少錢", "bei_en_xi_brand"],
+  ["韓妍玻尿酸有活動嗎", "bei_en_xi_brand"],
+  ["緹奧希1號多少錢", "teosyal_1_3_brand"],
+  ["十蓓眼周多少錢", "tenthermage_eye_tip"],
+  ["十蓓電波眼周多少錢", "tenthermage_eye_tip"],
+  ["十倍電波眼周多少錢", "tenthermage_eye_tip"],
+  ["眼周300發多少錢", "tenthermage_eye_tip"],
+  ["奇蹟肉毒適合打哪裡", "botox"],
+] as const) {
+  const result = matchClinicOntology(message);
+  assert(
+    result.treatments[0]?.key === expectedKey,
+    `approved direct alias must resolve ${message} to ${expectedKey}`,
+  );
+}
+
 console.log("clinic ontology matcher validation passed");

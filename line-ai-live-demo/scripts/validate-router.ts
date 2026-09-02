@@ -309,9 +309,9 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_brand:tenthermage",
+    expectedMatchedKey: "treatment_brand_comparison:tenthermage_eye_tip:overall",
     message: "眼周電波有嗎？什麼牌子",
-    replyIncludes: ["十蓓電波", "眼周探頭"],
+    replyIncludes: ["十蓓電波眼周探頭"],
     replyExcludes: ["Thermage", "美國電波"],
   },
   {
@@ -323,7 +323,7 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_brand:tenthermage",
+    expectedMatchedKey: "treatment_brand:tenthermage_eye_tip",
     message: "十蓓電波眼周是什麼探頭？",
     replyIncludes: ["十蓓電波", "眼周探頭"],
     replyExcludes: ["Thermage"],
@@ -445,9 +445,9 @@ const TEST_CASES: TestCase[] = [
       userId: "validate-booking-detour",
     },
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_brand:tenthermage",
+    expectedMatchedKey: "treatment_brand_comparison:tenthermage_eye_tip:overall",
     message: "眼周電波有嗎？什麼牌子",
-    replyIncludes: ["十蓓電波", "眼周探頭"],
+    replyIncludes: ["十蓓電波眼周探頭"],
   },
   {
     conversationContext: {

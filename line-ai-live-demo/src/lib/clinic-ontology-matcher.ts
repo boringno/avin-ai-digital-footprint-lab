@@ -38,6 +38,61 @@ function collectMatches(message: string, entries: Array<{ key: string; terms: st
   });
 }
 
+function collectTreatmentMatches(
+  message: string,
+  entries: Array<{ key: string; terms: string[] }>,
+) {
+  const normalizedMessage = normalizeClinicText(message);
+  const candidates = entries.flatMap((entry, entryIndex) =>
+    entry.terms.flatMap((term) => {
+      const normalizedTerm = normalizeClinicText(term);
+      const start = normalizedMessage.indexOf(normalizedTerm);
+      return normalizedTerm && start >= 0
+        ? [{
+            end: start + normalizedTerm.length,
+            entryIndex,
+            key: entry.key,
+            matchedTerm: term,
+            start,
+          }]
+        : [];
+    }),
+  );
+
+  const strongestByKey = new Map<string, typeof candidates[number]>();
+  for (const candidate of candidates) {
+    const current = strongestByKey.get(candidate.key);
+    if (!current || candidate.end - candidate.start > current.end - current.start) {
+      strongestByKey.set(candidate.key, candidate);
+    }
+  }
+  const strongest = [...strongestByKey.values()];
+  const selected = strongest
+    .filter((candidate, index) => !strongest.some((other, otherIndex) => {
+      if (index === otherIndex) return false;
+      const overlaps = candidate.start < other.end && other.start < candidate.end;
+      if (!overlaps) return false;
+      const candidateLength = candidate.end - candidate.start;
+      const otherLength = other.end - other.start;
+      return otherLength > candidateLength ||
+        // When a generic family and a later, approved product entry share the
+        // same alias, prefer the more specific catalog entry.
+        (otherLength === candidateLength && other.entryIndex > candidate.entryIndex);
+    }));
+
+  return selected.map((candidate) => ({
+    key: candidate.key,
+    // Preserve every alias from the winning treatment that appears in the
+    // message.  Semantic-anchor residual checks need both "dyspot" and
+    // "肉毒" removed from "dyspot是什麼肉毒"; keeping only the longest alias
+    // made a clearly grounded question look unresolved.
+    matchedTerms: [...new Set(candidates
+      .filter((item) => item.key === candidate.key)
+      .sort((left, right) => (right.end - right.start) - (left.end - left.start))
+      .map((item) => item.matchedTerm))],
+  }));
+}
+
 export function matchClinicOntology(
   message: string,
   sourceOntology: ClinicOntology = clinicOntology,
@@ -62,9 +117,12 @@ export function matchClinicOntology(
     }
   }
   const concerns = [...concernsByKey.values()];
-  const treatments = collectMatches(
+  const treatments = collectTreatmentMatches(
     message,
-    sourceOntology.treatments.map((treatment) => ({ key: treatment.key, terms: [treatment.name, ...treatment.aliases] })),
+    sourceOntology.treatments.map((treatment) => ({
+      key: treatment.key,
+      terms: [treatment.name, ...treatment.aliases, ...(treatment.recognitionTerms ?? [])],
+    })),
   );
   const negated = NEGATION_PATTERNS.some((pattern) => pattern.test(normalizedMessage));
   const hasMultipleEntities = treatments.length > 1 || concerns.length > 1 || areas.length > 1;

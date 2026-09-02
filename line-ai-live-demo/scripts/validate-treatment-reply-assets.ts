@@ -8,7 +8,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAIL: ${message}`);
 }
 
-const EXPECTED_COUNTS = {
+const MINIMUM_COUNTS = {
   concern: 9,
   detail: 22,
   discovery: 3,
@@ -105,14 +105,14 @@ function main() {
   assert(assets.every((asset) => asset.customerCopy.trim().length > 0), "customer-visible copy must be non-empty");
 
   const sourceCounts = expectedSourceCounts();
-  for (const [kind, expected] of Object.entries(EXPECTED_COUNTS) as Array<[keyof typeof EXPECTED_COUNTS, number]>) {
+  for (const [kind, minimum] of Object.entries(MINIMUM_COUNTS) as Array<[keyof typeof MINIMUM_COUNTS, number]>) {
     const actual = countByKind(assets, kind);
-    assert(actual === expected, `${kind} expected ${expected}, got ${actual}`);
+    assert(actual >= minimum, `${kind} expected at least ${minimum}, got ${actual}`);
     assert(actual === sourceCounts[kind], `${kind} source coverage mismatch: expected ${sourceCounts[kind]}, got ${actual}`);
   }
 
   validateSourceCoverage(assets);
-  console.log(`PASS: reply assets complete (${assets.length} total; ${Object.entries(EXPECTED_COUNTS).map(([kind, count]) => `${kind}=${count}`).join(", ")})`);
+  console.log(`PASS: reply assets complete (${assets.length} total; ${Object.keys(MINIMUM_COUNTS).map((kind) => `${kind}=${countByKind(assets, kind as TreatmentReplyAsset["kind"])}`).join(", ")})`);
 }
 
 main();
