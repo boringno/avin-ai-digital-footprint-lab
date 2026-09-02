@@ -25,6 +25,7 @@ import {
   type DialogueAct,
   type ReplyPlan as RendererReplyPlan,
 } from "@/lib/reply-plan";
+import type { LineImageMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import type { ResponseAspect, ResponseContractAttachment } from "@/lib/response-contract";
 
 import {
@@ -169,6 +170,7 @@ function approvedPriceQuoteContract(
     .filter((name): name is string => Boolean(name));
   return {
     applicability: { ...resolution.applicability },
+    assetUrls: [...resolution.customerAssetUrls],
     branchScope: resolution.branchScope,
     campaignId: resolution.campaignId,
     customerPriceText: resolution.customerPriceText,
@@ -177,6 +179,21 @@ function approvedPriceQuoteContract(
     subjectLabel: treatmentNames.join("＋") || resolution.campaignLabel || "核准方案",
     treatmentKeys: [...resolution.treatmentKeys],
   };
+}
+
+function approvedPriceReplyMessages(
+  resolutions: readonly Extract<PriceFactResolution, { status: "approved_current" }>[],
+  replyText: string,
+): RendererReplyPlan["richMessages"] {
+  const assetUrls = unique(resolutions.flatMap((resolution) => resolution.customerAssetUrls)).slice(0, 4);
+  return [
+    ...assetUrls.map((url) => ({
+      originalContentUrl: url,
+      previewImageUrl: url,
+      type: "image",
+    } satisfies LineImageMessage)),
+    { text: replyText, type: "text" } satisfies LineTextMessage,
+  ];
 }
 
 function contextualPriceCampaignId(input: HydrateConversationV2ReplyInput) {
@@ -844,6 +861,13 @@ export async function hydrateConversationV2ReplyPlan(
           ? "conversation_v2:price:approved_current"
           : `conversation_v2:price:unavailable_to_quote:${priceResolution.reason}`,
         replyText,
+        richMessages: approvedPriceReplyMessages(
+          [
+            ...(priceResolution.status === "approved_current" ? [priceResolution] : []),
+            ...(alternativePriceResolution?.status === "approved_current" ? [alternativePriceResolution] : []),
+          ],
+          replyText,
+        ),
         responseContract,
         treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
       }),

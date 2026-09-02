@@ -43,6 +43,8 @@ export type ReplyPlanBookingTransition = {
 
 export type ApprovedPriceQuoteContract = {
   applicability: PriceApplicabilityDimensions;
+  /** Optional, resolver-validated HTTPS artwork for this exact campaign. */
+  assetUrls?: string[];
   branchScope: string | null;
   campaignId: string;
   customerPriceText: string;
@@ -289,6 +291,7 @@ export function legacyDecisionToReplyPlan(
           quotes: options.approvedPriceReply.quotes.map((quote) => ({
             ...quote,
             applicability: { ...quote.applicability },
+            assetUrls: quote.assetUrls ? [...quote.assetUrls] : undefined,
             treatmentKeys: [...quote.treatmentKeys],
           })),
           snapshotId: options.approvedPriceReply.snapshotId,

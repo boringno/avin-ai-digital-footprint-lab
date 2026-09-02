@@ -18,7 +18,7 @@ import {
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { addCustomerReplyTone } from "@/lib/reply-tone";
 import { attachApprovedQuickReplies } from "@/lib/line-quick-replies";
-import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
+import type { LineImageMessage, LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 
 export type ReplyGenerator = (
   customerMessage: string,
@@ -458,6 +458,40 @@ function buildMessages(
   );
 }
 
+function buildApprovedPriceMessages(
+  replyText: string,
+  plan: ReplyPlan,
+  footer: string | undefined,
+  includeFooter: boolean,
+  assetUrls: readonly string[],
+) {
+  // The price receipt, not arbitrary `richMessages`, is the authority for
+  // campaign artwork. The canonical text remains after any images so the LINE
+  // customer sees the exact disclosure in the same reply payload. Merge the AI
+  // footer into that canonical text before adding images; otherwise four
+  // approved images + price text + a standalone footer would exceed LINE's
+  // five-message reply limit.
+  const [canonicalText] = appendFooter(
+    [{ type: "text", text: replyText } satisfies LineTextMessage],
+    footer,
+    includeFooter,
+    plan.suppressAiFooter,
+  );
+  const baseMessages: LineReplyMessage[] = [
+    ...assetUrls.slice(0, 4).map((url) => ({
+      originalContentUrl: url,
+      previewImageUrl: url,
+      type: "image",
+    } satisfies LineImageMessage)),
+    canonicalText ?? ({ type: "text", text: replyText } satisfies LineTextMessage),
+  ];
+  return attachApprovedQuickReplies(
+    baseMessages,
+    replyText,
+    plan.quickReplyItems,
+  );
+}
+
 export function buildRendererTerminalFallbackMessages(
   input: Pick<ReplyRendererInput, "footer" | "includeFooter" | "plan">,
   replyText: string,
@@ -508,14 +542,14 @@ function renderDeterministic(
       handoffRequired: false,
       latencyMs: Date.now() - startedAt,
       // A validated price contract is the sole authority for customer-visible
-      // price copy. Stale rich messages must never replace its disclosure,
-      // approved amounts, support hours, or CTA.
-      messages: buildMessages(
+      // price copy and any campaign artwork. Arbitrary rich messages cannot
+      // replace its disclosure, approved amounts, support hours, or CTA.
+      messages: buildApprovedPriceMessages(
         replyText,
         input.plan,
         input.footer,
         input.includeFooter ?? true,
-        true,
+        renderedPrice.assetUrls,
       ),
       replyText,
       replyTextSource: "approved_price_contract",

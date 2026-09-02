@@ -38,6 +38,8 @@
     "validate:handoff-recipient-settings": "tsx scripts/validate-handoff-recipient-settings.ts",
     "validate:admin-notifications": "tsx scripts/validate-admin-notifications.ts",
     "validate:runtime-releases": "tsx scripts/validate-runtime-releases.ts",
+    "validate:anniversary-promotion-assets": "tsx scripts/validate-anniversary-promotion-assets.ts",
+    "validate:conversation-v2-price-assets": "tsx scripts/validate-conversation-v2-price-assets.ts",
     "validate:conversation-inbox": "tsx scripts/validate-conversation-inbox.ts",
     "validate:ai-intent-classifier": "tsx scripts/validate-ai-intent-classifier.ts",
     "validate:onda-semantic-routing": "tsx scripts/validate-onda-semantic-treatment-routing.ts",

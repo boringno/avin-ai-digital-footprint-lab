@@ -1,6 +1,11 @@
 import type { LineFlexMessage } from "@/lib/treatment-carousel";
 
 export type PromotionCarouselCard = {
+  /**
+   * Optional per-card ratio. Anniversary campaign artwork is landscape; older
+   * portrait promotion artwork intentionally continues to use the default.
+   */
+  aspectRatio?: string;
   ctaLabel: string;
   ctaText: string;
   imageUrl: string;
@@ -9,7 +14,7 @@ export type PromotionCarouselCard = {
   title: string;
 };
 
-const PROMOTION_CARD_ASPECT_RATIO = "31:50";
+export const PROMOTION_CARD_ASPECT_RATIO = "31:50";
 
 export function buildPromotionCarouselMessage(
   cards: PromotionCarouselCard[],
@@ -27,7 +32,7 @@ export function buildPromotionCarouselMessage(
           type: "image",
           url: card.imageUrl,
           size: "full",
-          aspectRatio: PROMOTION_CARD_ASPECT_RATIO,
+          aspectRatio: card.aspectRatio ?? PROMOTION_CARD_ASPECT_RATIO,
           aspectMode: "cover",
           action: {
             type: "message",

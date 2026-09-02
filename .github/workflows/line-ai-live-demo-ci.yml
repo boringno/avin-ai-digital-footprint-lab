@@ -79,6 +79,8 @@ jobs:
           npm run validate:sample
           npm run validate:content-versioning
           npm run validate:runtime-releases
+          npm run validate:anniversary-promotion-assets
+          npm run validate:conversation-v2-price-assets
           npm run validate:schedule-month
           npm run validate:retention-sweep
           npm run validate:admin-login-protection
