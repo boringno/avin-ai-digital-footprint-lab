@@ -51,6 +51,8 @@ export type PricingCampaign = {
   notes: string;
   package_key?: string;
   price_text: string;
+  /** Higher values win generic price questions among otherwise eligible offers. */
+  quote_priority?: number | string;
   session_count?: number | string;
   start_date: string;
   starts_booking_intake?: string;

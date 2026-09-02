@@ -36,11 +36,16 @@ import {
 } from "@/lib/runtime-content-release";
 import {
   isPriceInquiry,
+  isPriceInquiryWithTypoTolerance,
   isPromotionBrowseIntent,
   parsePricingQuestionKind,
   PRICE_ASK_TERMS,
   resolvePricingSubject,
 } from "@/lib/pricing-subject";
+import {
+  highestQuotePriorityCampaigns,
+  isSpecificPricingCampaign,
+} from "@/lib/pricing-campaign-priority";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -685,6 +690,75 @@ function getCampaignSearchTerms(campaign: PricingCampaign) {
   return [...terms].map((term) => normalizeText(term)).filter(Boolean);
 }
 
+function splitCampaignAliases(campaign: PricingCampaign) {
+  return campaign.campaign_aliases
+    .split(/[|,，、\n]/u)
+    .map((alias) => alias.trim())
+    .filter(Boolean);
+}
+
+function treatmentSearchTermsForCampaign(campaign: PricingCampaign) {
+  const treatment = findTreatmentConfigByName(campaign.treatment_name);
+  return new Set([
+    campaign.treatment_name,
+    ...(treatment ? [treatment.name, ...treatment.aliases] : []),
+  ].map(normalizeText).filter(Boolean));
+}
+
+function customerQuoteIdentity(campaign: PricingCampaign) {
+  return [
+    normalizeText(campaign.treatment_name),
+    (campaign.customer_price_text ?? campaign.price_text).trim(),
+    normalizeText(campaign.branch_scope),
+  ].join("|");
+}
+
+function selectUnambiguousQuotePriorityCampaign(campaigns: PricingCampaign[]) {
+  const prioritized = highestQuotePriorityCampaigns(campaigns);
+  if (prioritized.length === 0) return null;
+  const identities = new Set(prioritized.map(customerQuoteIdentity));
+  return identities.size === 1 ? prioritized[0] : null;
+}
+
+function pricingCampaignIsAllBranches(campaign: PricingCampaign) {
+  return campaign.branch_scope
+    .split(/[|,，、/\n]/u)
+    .map((term) => normalizeText(term))
+    .some((term) => term === "all" || term === "allbranches" || term === "全館");
+}
+
+function pricingCampaignAppliesToBranch(campaign: PricingCampaign, branchName?: string) {
+  if (pricingCampaignIsAllBranches(campaign)) return true;
+  if (!branchName) return false;
+  const branch = findBranchByName(branchName);
+  if (!branch) return false;
+  const branchTerms = new Set([branch.name, branch.city, ...branch.aliases].map(normalizeText));
+  return campaign.branch_scope
+    .split(/[|,，、/\n]/u)
+    .map((term) => normalizeText(term))
+    .some((term) => branchTerms.has(term));
+}
+
+function specificCampaignSearchTerms(campaign: PricingCampaign) {
+  if (!isSpecificPricingCampaign(campaign)) return [];
+  const genericTerms = treatmentSearchTermsForCampaign(campaign);
+  const variant = campaign.variant_key?.trim() ?? "";
+  const sessionCount = String(campaign.session_count ?? "").trim();
+  const terms = new Set([
+    campaign.campaign_name,
+    campaign.dose ?? "",
+    campaign.package_key ?? "",
+    variant,
+    variant.replace(/(?:方案|療程|組合)$/u, ""),
+    ...(sessionCount ? [`${sessionCount}堂`, `${sessionCount}次`] : []),
+    ...splitCampaignAliases(campaign),
+  ].map(normalizeText).filter((term) =>
+    term.length >= 2 &&
+    !genericTerms.has(term) &&
+    !/^[\d,.，]+$/u.test(term)));
+  return [...terms];
+}
+
 function getCampaignImageUrls(campaign: PricingCampaign) {
   return campaign.asset_urls
     .split(/[|,，、\n]/)
@@ -738,22 +812,46 @@ function findPricingCampaignForTreatmentKey(treatmentKey: string, activeCampaign
   }
 
   const treatmentTerms = new Set([treatment.name, ...treatment.aliases].map((term) => normalizeText(term)));
-  return activeCampaigns.find((campaign) =>
+  const genericCampaigns = activeCampaigns.filter((campaign) =>
+    !isSpecificPricingCampaign(campaign) &&
     getCampaignSearchTerms(campaign).some((term) => treatmentTerms.has(term)),
-  ) ?? null;
+  );
+  return selectUnambiguousQuotePriorityCampaign(genericCampaigns);
 }
 
-function findExplicitPricingCampaign(message: string, activeCampaigns: PricingCampaign[]) {
+function findExplicitPricingCampaign(
+  message: string,
+  activeCampaigns: PricingCampaign[],
+  treatmentKey?: string,
+) {
   const normalizedMessage = normalizeText(message);
-  return activeCampaigns
+  const ownedCampaigns = treatmentKey
+    ? activeCampaigns.filter((campaign) => campaignTreatmentKeys(campaign).includes(treatmentKey))
+    : activeCampaigns;
+  const specificMatches = ownedCampaigns
+    .filter(isSpecificPricingCampaign)
     .map((campaign) => ({
       campaign,
-      matchLength: getCampaignSearchTerms(campaign)
-        .filter((term) => term.length >= 2 && normalizedMessage.includes(term))
+      matchLength: specificCampaignSearchTerms(campaign)
+        .filter((term) => normalizedMessage.includes(term))
         .reduce((longest, term) => Math.max(longest, term.length), 0),
     }))
-    .filter((item) => item.matchLength > 0)
-    .sort((left, right) => right.matchLength - left.matchLength)[0]?.campaign ?? null;
+    .filter((item) => item.matchLength > 0);
+  if (specificMatches.length > 0) {
+    const longest = Math.max(...specificMatches.map((item) => item.matchLength));
+    return selectUnambiguousQuotePriorityCampaign(
+      specificMatches.filter((item) => item.matchLength === longest).map((item) => item.campaign),
+    );
+  }
+
+  const genericMatches = ownedCampaigns.filter((campaign) =>
+    !isSpecificPricingCampaign(campaign) &&
+    getCampaignSearchTerms(campaign).some((term) =>
+      term.length >= 2 &&
+      !/^[\d,.，]+$/u.test(term) &&
+      normalizedMessage.includes(term)),
+  );
+  return selectUnambiguousQuotePriorityCampaign(genericMatches);
 }
 
 function findBookingPricingCampaign(context: ConversationContext, activeCampaigns: PricingCampaign[]) {
@@ -1052,9 +1150,12 @@ function getActiveBookingRouteIntent(context: ConversationContext) {
 }
 
 function campaignTreatmentKeys(campaign: PricingCampaign) {
+  const treatmentLabels = [
+    campaign.treatment_name,
+    ...(campaign.booking_treatments ?? "").split(/[|,，、\n]/u),
+  ];
   return Array.from(new Set(
-    (campaign.booking_treatments ?? "")
-      .split(/[|,，、\n]/u)
+    treatmentLabels
       .map((label) => findTreatmentByMessage(label.trim())?.key)
       .filter((key): key is string => Boolean(key)),
   ));
@@ -3002,7 +3103,11 @@ function getPricingReply(
   today: Date,
   bookingIntentActive: boolean,
 ): RouterDecision | null {
-  const pricingQuestionKind = parsePricingQuestionKind(message);
+  const explicitTreatmentForPrice = findTreatmentByMessage(message);
+  const pricingQuestionKind = parsePricingQuestionKind(message) ??
+    (isPriceInquiryWithTypoTolerance(message, Boolean(explicitTreatmentForPrice))
+      ? "current_offer"
+      : null);
   if (!pricingQuestionKind) {
     return null;
   }
@@ -3024,6 +3129,13 @@ function getPricingReply(
     contextualMaxAgeMs: TREATMENT_CONSULTATION_SESSION_MS,
     now: today,
   });
+  const subjectTreatmentKey =
+    subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
+      ? subject.treatmentKey
+      : explicitTreatmentForPrice?.key;
+  const preferredPricingBranch = resolvePreferredBranchFromContext(message, context);
+  const applicableActiveCampaigns = activeCampaigns.filter((campaign) =>
+    pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name));
 
   if (subject.kind === "browse" && activeCampaigns.length > 0) {
     const replyText = buildPromotionOverviewReply(activeCampaigns);
@@ -3039,7 +3151,40 @@ function getPricingReply(
     } satisfies RouterDecision;
   }
 
-  const explicitlyMatchedCampaign = findExplicitPricingCampaign(message, activeCampaigns);
+  const normalizedPricingMessage = normalizeText(message);
+  const matchingSpecificCampaigns = activeCampaigns.filter((campaign) =>
+    isSpecificPricingCampaign(campaign) &&
+    specificCampaignSearchTerms(campaign).some((term) => normalizedPricingMessage.includes(term)));
+  if (subjectTreatmentKey && matchingSpecificCampaigns.length > 0) {
+    const matchingOwnedCampaigns = matchingSpecificCampaigns.filter((campaign) =>
+      campaignTreatmentKeys(campaign).includes(subjectTreatmentKey));
+    if (matchingOwnedCampaigns.length === 0) {
+      return {
+        decisionType: "pricing_auto_reply",
+        matchedKey: "pricing_applicability_followup",
+        matchedType: "guided_reply",
+        nextContext: context,
+        replyText: "您提到的規格目前無法和這項療程的核准價格方案直接對應，我先不混用其他療程的價格；可以再告訴我想確認的方案或規格。",
+      } satisfies RouterDecision;
+    }
+    const matchingApplicableOwnedCampaigns = matchingOwnedCampaigns.filter((campaign) =>
+      pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name));
+    if (!preferredPricingBranch && matchingApplicableOwnedCampaigns.length === 0) {
+      return {
+        decisionType: "pricing_auto_reply",
+        matchedKey: "pricing_branch_followup",
+        matchedType: "guided_reply",
+        nextContext: context,
+        replyText: "這項活動價格需先確認適用館別。請問您想前往高雄館、台中館、桃園館，還是林口館呢？",
+      } satisfies RouterDecision;
+    }
+  }
+
+  const explicitlyMatchedCampaign = findExplicitPricingCampaign(
+    message,
+    applicableActiveCampaigns,
+    subjectTreatmentKey,
+  );
   if (explicitlyMatchedCampaign) {
     const explicitTreatmentKey =
       subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
@@ -3051,7 +3196,7 @@ function getPricingReply(
       findConcernByMessage(message)?.key ??
         context.treatmentConsultation?.concernKeys.at(-1) ??
         context.activeFocus?.concernKeys.at(-1),
-      activeCampaigns,
+      applicableActiveCampaigns,
       context,
     );
     if (contextualComparison) return contextualComparison;
@@ -3070,9 +3215,9 @@ function getPricingReply(
     context.activeFocus?.goal === "manage_booking" ||
     (bookingIntentActive && context.activeFocus?.goal !== "learn_treatment");
   const consultationCampaign = bookingOwnsCurrentFocus
-    ? findBookingPricingCampaign(context, activeCampaigns) ??
-      findConsultationPricingCampaign(context, activeCampaigns)
-    : findConsultationPricingCampaign(context, activeCampaigns);
+    ? findBookingPricingCampaign(context, applicableActiveCampaigns) ??
+      findConsultationPricingCampaign(context, applicableActiveCampaigns)
+    : findConsultationPricingCampaign(context, applicableActiveCampaigns);
   if (consultationCampaign) {
     const replyText = buildPricingReply(consultationCampaign);
     return {
@@ -3086,7 +3231,7 @@ function getPricingReply(
   }
 
   if (subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual") {
-    const matchedPricing = findPricingCampaignForTreatmentKey(subject.treatmentKey, activeCampaigns);
+    const matchedPricing = findPricingCampaignForTreatmentKey(subject.treatmentKey, applicableActiveCampaigns);
     const treatment = findTreatmentByKey(subject.treatmentKey);
     if (!matchedPricing) {
       return {
@@ -3107,7 +3252,7 @@ function getPricingReply(
       matchedPricing,
       subject.treatmentKey,
       contextualConcernKey,
-      activeCampaigns,
+      applicableActiveCampaigns,
       context,
     );
     if (contextualComparison) return contextualComparison;

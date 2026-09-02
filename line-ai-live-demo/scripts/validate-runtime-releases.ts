@@ -116,6 +116,7 @@ async function main() {
       customer_price_text: "12,999",
       fallback_message: "",
       price_text: "12,999",
+      quote_priority: 100,
       starts_booking_intake: "true",
       treatment_name: "臉部輪廓組合",
     },
@@ -127,6 +128,7 @@ async function main() {
       mappedCombination.booking_treatments === "ONDA PRO|肉毒" &&
       mappedCombination.customer_price_approval_status === "approved" &&
       mappedCombination.customer_price_text === "12,999" &&
+      mappedCombination.quote_priority === 100 &&
       mappedCombination.starts_booking_intake === "true",
   });
 

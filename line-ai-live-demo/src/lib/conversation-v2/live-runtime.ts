@@ -36,6 +36,7 @@ import {
   isPriceInquiry,
   isPriceInquiryWithTypoTolerance,
 } from "@/lib/pricing-subject";
+import { isSpecificPricingCampaign } from "@/lib/pricing-campaign-priority";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import type { ResponseContractRuntimeMode } from "@/lib/response-contract";
 import type { RouterDecision } from "@/lib/router";
@@ -299,6 +300,7 @@ function resolveBookingEpisodeBoundary(input: {
 
 function attachDeterministicPriceApplicability(
   turn: TurnUnderstanding,
+  state: ConversationV2State,
   snapshot: ClinicFactsSnapshot,
   message: string,
 ): TurnUnderstanding {
@@ -306,7 +308,16 @@ function attachDeterministicPriceApplicability(
   const treatmentKeys = turn.treatments
     .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
     .map((mention) => mention.key);
-  const uniqueTreatmentKey = treatmentKeys.length === 1 ? treatmentKeys[0] : undefined;
+  const inheritedTreatmentKeys = state.pricingSubjectTreatmentKeys.length === 1
+    ? state.pricingSubjectTreatmentKeys
+    : state.knowledge.treatmentKeys.length === 1
+      ? state.knowledge.treatmentKeys
+      : [];
+  const uniqueTreatmentKey = treatmentKeys.length === 1
+    ? treatmentKeys[0]
+    : treatmentKeys.length === 0
+      ? inheritedTreatmentKeys[0]
+      : undefined;
   const brand = findTreatmentBrandInClinic(snapshot.clinic, message, uniqueTreatmentKey);
   const doseMatch = message.normalize("NFKC").match(/(\d+(?:\.\d+)?)\s*(?:u|單位)/iu);
   const requestedDose = doseMatch?.[1] ? `${doseMatch[1]}U` : undefined;
@@ -315,8 +326,81 @@ function attachDeterministicPriceApplicability(
     : undefined;
   const genericDoseEligible = Boolean(requestedDose) && (treatment?.genericPriceEligibleDoses ?? [])
     .some((dose) => dose.normalize("NFKC").toLowerCase() === requestedDose?.toLowerCase());
+  const normalizedMessage = normalizeClinicText(message);
+  const treatmentKnowledge = uniqueTreatmentKey
+    ? snapshot.treatments.find((item) => item.key === uniqueTreatmentKey)
+    : undefined;
+  const genericTreatmentTerms = new Set(
+    treatmentKnowledge
+      ? [
+          treatmentKnowledge.name,
+          ...treatmentKnowledge.aliases,
+          ...treatmentKnowledge.availableBrands,
+        ].map(normalizeClinicText).filter(Boolean)
+      : [],
+  );
+  const specificCandidates = uniqueTreatmentKey && treatmentKnowledge
+    ? snapshot.pricingCampaigns
+        .filter(isSpecificPricingCampaign)
+        .filter((campaign) => {
+          const ownerTerms = [
+            campaign.treatment_name,
+            ...(campaign.booking_treatments ?? "").split(/[|,，、\n]/u),
+          ].map(normalizeClinicText).filter(Boolean);
+          return ownerTerms.some((term) => genericTreatmentTerms.has(term));
+        })
+        .map((campaign) => {
+          const variant = campaign.variant_key?.trim() ?? "";
+          const sessionCount = String(campaign.session_count ?? "").trim();
+          const aliases = (campaign.campaign_aliases ?? "")
+            .split(/[|,，、\n]/u)
+            .map((term) => normalizeClinicText(term))
+            .filter((term) =>
+              term.length >= 2 &&
+              !genericTreatmentTerms.has(term) &&
+              !/^[\d,.，]+$/u.test(term));
+          const terms = Array.from(new Set([
+            campaign.campaign_name,
+            campaign.dose ?? "",
+            campaign.package_key ?? "",
+            variant,
+            variant.replace(/(?:方案|療程|組合)$/u, ""),
+            ...(sessionCount ? [`${sessionCount}堂`, `${sessionCount}次`] : []),
+            ...aliases,
+          ].map(normalizeClinicText).filter((term) => term.length >= 2)));
+          const matchLength = terms
+            .filter((term) => normalizedMessage.includes(term))
+            .reduce((longest, term) => Math.max(longest, term.length), 0);
+          const parsedSessionCount = Number(sessionCount);
+          return {
+            applicability: {
+              ...(campaign.dose?.trim() ? { dose: campaign.dose.trim() } : {}),
+              ...(campaign.package_key?.trim() ? { package: campaign.package_key.trim() } : {}),
+              ...(Number.isSafeInteger(parsedSessionCount) && parsedSessionCount > 0
+                ? { sessionCount: parsedSessionCount }
+                : {}),
+              ...(variant ? { variant } : {}),
+            },
+            matchLength,
+          };
+        })
+        .filter((candidate) => candidate.matchLength > 0)
+    : [];
+  const longestSpecificMatch = specificCandidates.length > 0
+    ? Math.max(...specificCandidates.map((candidate) => candidate.matchLength))
+    : 0;
+  const topSpecificMatches = specificCandidates.filter(
+    (candidate) => candidate.matchLength === longestSpecificMatch,
+  );
+  const distinctSpecificApplicability = new Set(
+    topSpecificMatches.map((candidate) => JSON.stringify(candidate.applicability)),
+  );
+  const deterministicSpecificApplicability = distinctSpecificApplicability.size === 1
+    ? topSpecificMatches[0]?.applicability
+    : undefined;
   const priceApplicability = {
     ...(turn.priceApplicability ?? {}),
+    ...(deterministicSpecificApplicability ?? {}),
     ...(brand && !brand.genericPriceEligible ? { variant: brand.key } : {}),
     ...(requestedDose && !genericDoseEligible ? { dose: requestedDose } : {}),
   };
@@ -1292,7 +1376,7 @@ export async function routeConversationV2Canary(
         },
         text: routingMessage,
         turnId,
-      }), snapshot, routingMessage), snapshot);
+      }), state, snapshot, routingMessage), snapshot);
       const deterministicRouted = routeConversationTurnV2(state, deterministicTurn, {
         responseContractMode,
       });
@@ -1487,7 +1571,7 @@ export async function routeConversationV2Canary(
         : {}),
       text: routingMessage,
       turnId,
-    }), snapshot, routingMessage), snapshot);
+    }), state, snapshot, routingMessage), snapshot);
     const routed = routeConversationTurnV2(state, turn, { responseContractMode });
     if (routed.duplicate || !routed.result) {
       const replyText = "";

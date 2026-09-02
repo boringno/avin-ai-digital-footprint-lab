@@ -392,6 +392,22 @@ async function validatePriceStateMachine() {
   assert(ambiguous.status === "unavailable_to_quote" && ambiguous.reason === "ambiguous", "CF-P4: ambiguous prices must not pick the first row");
   assert(!("customerPriceText" in ambiguous), "CF-P4: ambiguous result carried a price field");
 
+  const prioritized = resolveApprovedPrice(
+    await snapshot({
+      pricingCampaigns: [
+        campaign({ id: "price-priority-low", price_text: "體驗價 16,888", quote_priority: 10 }),
+        campaign({ id: "price-priority-high", price_text: "活動價 8,999", quote_priority: 100 }),
+      ],
+    }),
+    { kind: "campaign", treatmentKeys: ["onda_pro"] },
+  );
+  assert(
+    prioritized.status === "approved_current" &&
+      prioritized.campaignId === "price-priority-high" &&
+      prioritized.customerPriceText === "活動價 8,999",
+    "CF-P4a: the highest clinic-approved generic quote priority must own an otherwise ambiguous price question",
+  );
+
   const outage = resolveApprovedPrice(
     await snapshot({ priceSourceAvailable: false, pricingCampaigns: [campaign()] }),
     { kind: "campaign", treatmentKeys: ["onda_pro"] },
@@ -729,13 +745,71 @@ async function validateAnniversaryApprovedCatalog() {
 
   const onda = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["onda_pro"] });
   assert(
-    onda.status === "approved_current" && onda.campaignId === "promo-2026-anniv-onda-face-online",
+    onda.status === "approved_current" &&
+      onda.campaignId === "promo-2026-anniv-onda-face-online" &&
+      onda.customerPriceText === "周年慶活動價 8,999 元／堂" &&
+      !/(?:11,999|12,999|16,888)/u.test(onda.customerPriceText),
     "CF-P19: every ONDA price wording must resolve to the approved anniversary primary offer",
+  );
+  const ondaExtension = resolveApprovedPrice(current, {
+    applicability: { variant: "延伸方案" },
+    kind: "campaign",
+    treatmentKeys: ["onda_pro"],
+  });
+  assert(
+    ondaExtension.status === "approved_current" &&
+      ondaExtension.campaignId === "promo-2026-anniv-onda-face-extension" &&
+      ondaExtension.customerPriceText === "周年慶活動價 11,999 元／堂" &&
+      !/(?:8,999|12,999|16,888)/u.test(ondaExtension.customerPriceText),
+    "CF-P19: the explicit ONDA extension variant must resolve only to the approved 11,999 offer",
   );
   const botox = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["botox"] });
   assert(
-    botox.status === "approved_current" && botox.campaignId === "promo-2026-anniv-botox-10u",
+    botox.status === "approved_current" &&
+      botox.campaignId === "promo-2026-anniv-botox-10u" &&
+      botox.customerPriceText === "周年慶活動價 999 元／一區 10U" &&
+      !/9,999/u.test(botox.customerPriceText),
     "CF-P19: generic Botox price wording must resolve to the approved anniversary primary offer",
+  );
+  const botox100u = resolveApprovedPrice(current, {
+    applicability: { dose: "100U" },
+    kind: "campaign",
+    treatmentKeys: ["botox"],
+  });
+  assert(
+    botox100u.status === "approved_current" &&
+      botox100u.campaignId === "promo-2026-anniv-botox-100u" &&
+      botox100u.customerPriceText === "周年慶活動價 9,999 元／100U",
+    "CF-P19: the explicit Botox 100U dose must resolve to the approved 9,999 offer",
+  );
+
+  const afterAnniversary = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2026-12-01T10:00:00+08:00") },
+  );
+  const restoredOnda = resolveApprovedPrice(afterAnniversary, {
+    kind: "unspecified",
+    treatmentKeys: ["onda_pro"],
+  });
+  assert(
+    restoredOnda.status === "approved_current" &&
+      restoredOnda.campaignId === "promo-2026-08-05-onda-pro" &&
+      restoredOnda.customerPriceText === "體驗價 16,888" &&
+      !/(?:8,999|11,999|12,999)/u.test(restoredOnda.customerPriceText),
+    "CF-P19: after the anniversary campaign ends, generic ONDA pricing must restore the still-current 16,888 offer",
+  );
+
+  const afterEveryOndaOffer = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2027-01-01T10:00:00+08:00") },
+  );
+  const unavailableOnda = resolveApprovedPrice(afterEveryOndaOffer, {
+    kind: "unspecified",
+    treatmentKeys: ["onda_pro"],
+  });
+  assert(
+    unavailableOnda.status === "unavailable_to_quote" && unavailableOnda.reason === "expired",
+    "CF-P19: after every approved ONDA offer expires, pricing must fail closed",
   );
 }
 

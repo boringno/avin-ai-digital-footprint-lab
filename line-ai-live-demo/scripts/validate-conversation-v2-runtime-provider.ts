@@ -31,7 +31,7 @@ type RuntimeFixture =
   | RuntimeContentOverlay
   | ((input: RuntimeRequest) => Error | RuntimeContentOverlay);
 
-function campaign(priceText: string): PricingCampaign {
+function campaign(priceText: string, quotePriority?: number): PricingCampaign {
   return {
     approval_status: "approved",
     asset_urls: "",
@@ -46,6 +46,7 @@ function campaign(priceText: string): PricingCampaign {
     is_active: "true",
     notes: "validator",
     price_text: priceText,
+    ...(quotePriority !== undefined ? { quote_priority: quotePriority } : {}),
     start_date: "2026-08-01",
     treatment_name: "ONDA PRO",
   };
@@ -53,13 +54,14 @@ function campaign(priceText: string): PricingCampaign {
 
 function overlay(input: {
   price?: string;
+  quotePriority?: number;
   releaseId: string | null;
   sourceStatus?: RuntimeContentOverlay["sourceStatus"];
   suppressedPricingCampaignIds?: string[];
 }): RuntimeContentOverlay {
   return {
     faqEntries: [],
-    pricingCampaigns: input.price ? [campaign(input.price)] : [],
+    pricingCampaigns: input.price ? [campaign(input.price, input.quotePriority)] : [],
     releaseId: input.releaseId,
     sourceStatus: input.sourceStatus ?? "available",
     suppressedPricingCampaignIds: input.suppressedPricingCampaignIds
@@ -231,6 +233,17 @@ async function main() {
   assert.equal(sameReleaseDifferentAudience.snapshotId, releaseA.snapshotId);
   assert.equal(resolvedPrice(sameReleaseDifferentAudience), "release A 10,999");
   checks.push("snapshot-id-excludes-audience");
+
+  runtimeState = overlay({ price: "priority-stable 10,999", quotePriority: 10, releaseId: "priority-release" });
+  const lowerPrioritySnapshot = await load(PRIVATE_AUDIENCE_A, "tenant-a");
+  runtimeState = overlay({ price: "priority-stable 10,999", quotePriority: 100, releaseId: "priority-release" });
+  const higherPrioritySnapshot = await load(PRIVATE_AUDIENCE_A, "tenant-a");
+  assert.notEqual(
+    higherPrioritySnapshot.snapshotId,
+    lowerPrioritySnapshot.snapshotId,
+    "changing only quote priority must produce a new snapshot id",
+  );
+  checks.push("quote-priority-participates-in-snapshot-identity");
 
   runtimeState = overlay({ price: "release B 12,999", releaseId: "release-b" });
   const releaseB = await load(PRIVATE_AUDIENCE_A, "tenant-a");
