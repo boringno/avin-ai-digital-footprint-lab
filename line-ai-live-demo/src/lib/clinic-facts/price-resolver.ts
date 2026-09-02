@@ -326,6 +326,37 @@ function customerBranchScope(value: string) {
   return sanitizeCustomerPromotionText(value) || null;
 }
 
+/**
+ * Asset URLs are optional campaign metadata, never price copy. Keep only
+ * transport-safe HTTPS URLs so an approved price receipt can safely hand them
+ * to LINE without every renderer reparsing the catalog's free-form field.
+ */
+function customerAssetUrls(campaign: PriceCatalogEntry) {
+  const urls: string[] = [];
+  for (const value of (campaign.asset_urls ?? "").split(/[|,，、\n]/u)) {
+    const source = value.trim();
+    if (!source) continue;
+    try {
+      const url = new URL(source);
+      if (
+        url.protocol !== "https:" ||
+        !url.hostname ||
+        url.username ||
+        url.password ||
+        url.hash
+      ) continue;
+      const normalized = url.toString();
+      if (!urls.includes(normalized)) urls.push(normalized);
+    } catch {
+      // Campaign artwork is optional. A malformed URL must not make an
+      // otherwise approved text price unavailable.
+    }
+  }
+  // LINE reply payloads can contain at most five messages; reserve one for
+  // the canonical price text even when a future campaign has many assets.
+  return urls.slice(0, 4);
+}
+
 export function resolveApprovedPrice(
   snapshot: ClinicFactsSnapshot,
   query: PriceQuery,
@@ -445,6 +476,7 @@ export function resolveApprovedPrice(
     },
     branchScope,
     campaignId: campaign.id,
+    customerAssetUrls: customerAssetUrls(campaign),
     // Legacy campaign_name is an internal lifecycle label and may contain
     // dates. A future content model may add a separately reviewed customer
     // label; until then it is intentionally never exposed.

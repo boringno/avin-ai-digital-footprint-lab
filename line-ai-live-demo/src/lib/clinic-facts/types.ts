@@ -92,6 +92,12 @@ export type PriceCatalogEntry = PricingCampaign & {
 
 export type ApprovedCurrentPriceFact = {
   applicability: PriceApplicabilityDimensions;
+  /**
+   * Approved HTTPS campaign artwork for this exact price record. These URLs are
+   * validated while resolving the campaign, so renderers never inspect the
+   * catalog's free-form asset field directly.
+   */
+  customerAssetUrls: string[];
   branchScope: string | null;
   campaignId: string;
   campaignLabel: string | null;

@@ -29,6 +29,17 @@ function validHumanSupportCopy(value: string | null | undefined) {
   return Boolean(copy && copy.length <= 240 && !UNSAFE_SUPPORT_COPY_PATTERN.test(copy));
 }
 
+function validAssetUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim() || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && Boolean(url.hostname) &&
+      !url.username && !url.password && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
 function validQuote(
   quote: ApprovedPriceQuoteContract,
   contractSnapshotId: string,
@@ -43,6 +54,8 @@ function validQuote(
     normalized(quote.snapshotId) === contractSnapshotId &&
     validCustomerCopy(subjectLabel, 80) &&
     validCustomerCopy(customerPriceText, 120) &&
+    (quote.assetUrls === undefined ||
+      (Array.isArray(quote.assetUrls) && quote.assetUrls.length <= 4 && quote.assetUrls.every(validAssetUrl))) &&
     quote.treatmentKeys.length > 0 &&
     quote.treatmentKeys.every((key) => normalized(key)) &&
     (!branchScope || validCustomerCopy(branchScope, 120)),
@@ -93,6 +106,7 @@ function validSupplement(
 }
 
 export type ApprovedPriceReplyRenderResult = {
+  assetUrls: string[];
   renderedSupplementAspects: ResponseAspect[];
   replyText: string;
 };
@@ -178,6 +192,9 @@ export function renderApprovedPriceReplyContract(
     lines.push("😊 想比較方案差異或安排免費諮詢，我都可以接著協助。");
   }
   return {
+    assetUrls: Array.from(new Set(
+      contract.quotes.flatMap((quote) => quote.assetUrls ?? []),
+    )).slice(0, 4),
     renderedSupplementAspects,
     replyText: lines.join("\n"),
   };

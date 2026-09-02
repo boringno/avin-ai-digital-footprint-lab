@@ -766,6 +766,22 @@ function getCampaignImageUrls(campaign: PricingCampaign) {
     .filter(Boolean);
 }
 
+const ANNIVERSARY_PROMOTION_ASSET_ORIGIN = "https://line-ai-live-demo.vercel.app";
+const ANNIVERSARY_PROMOTION_ASSET_PATH = "/demo/promotions/anniversary-2026/";
+const ANNIVERSARY_PROMOTION_CARD_ASPECT_RATIO = "20:13";
+
+function promotionCardAspectRatioForImageUrl(imageUrl: string) {
+  try {
+    const url = new URL(imageUrl);
+    return url.origin === ANNIVERSARY_PROMOTION_ASSET_ORIGIN &&
+      url.pathname.startsWith(ANNIVERSARY_PROMOTION_ASSET_PATH)
+      ? ANNIVERSARY_PROMOTION_CARD_ASPECT_RATIO
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getPromotionOverviewGroups(pricingCampaigns: PricingCampaign[]) {
   const groups = new Map<
     string,
@@ -1038,6 +1054,7 @@ function buildPromotionCarouselCards(pricingCampaigns: PricingCampaign[]) {
       }
 
       cards.push({
+        aspectRatio: promotionCardAspectRatioForImageUrl(primaryImageUrl),
         ctaLabel: "我想了解",
         ctaText: `我想了解${campaign.treatment_name}活動`,
         imageUrl: primaryImageUrl,
