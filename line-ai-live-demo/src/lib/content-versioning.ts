@@ -25,6 +25,10 @@ export type CampaignApplicabilityFields = {
   variantKey: string;
 };
 
+export type CampaignQuoteSettings = {
+  quotePriority: string;
+};
+
 const contentKeyPattern = /^[a-z0-9][a-z0-9_-]{1,79}$/;
 
 export function assertContentDraftInput(input: ContentDraftInput) {
@@ -56,6 +60,7 @@ export function assertContentDraftInput(input: ContentDraftInput) {
   assertRequiredText(input.payload, "fallback_message", "請填寫無法直接套用時的保守說明。");
   assertCampaignBookingFields(input.payload);
   assertCampaignApplicabilityFields(input.payload);
+  assertCampaignQuoteSettings(input.payload);
   if (!input.startAt || !input.endAt) {
     throw new Error("活動內容必須填寫開始與結束時間。");
   }
@@ -96,6 +101,16 @@ export function writeCampaignApplicabilityFields(input: CampaignApplicabilityFie
     session_count: input.sessionCount.trim(),
     variant_key: input.variantKey.trim(),
   };
+}
+
+export function readCampaignQuoteSettings(
+  payload: Record<string, unknown>,
+): CampaignQuoteSettings {
+  return { quotePriority: optionalScalarText(payload.quote_priority) };
+}
+
+export function writeCampaignQuoteSettings(input: CampaignQuoteSettings) {
+  return { quote_priority: input.quotePriority.trim() };
 }
 
 export type ContentVersionAction = "submit" | "approve" | "request_changes" | "publish" | "disable";
@@ -148,6 +163,15 @@ function assertCampaignApplicabilityFields(payload: Record<string, unknown>) {
     !(typeof sessionCount === "number" && Number.isInteger(sessionCount) && sessionCount > 0)
   ) {
     throw new Error("session_count must be a positive integer or text when provided");
+  }
+}
+
+function assertCampaignQuoteSettings(payload: Record<string, unknown>) {
+  const raw = payload.quote_priority;
+  if (raw === undefined || raw === "") return;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value < 0 || value > 10_000) {
+    throw new Error("一般詢價主方案順位必須是 0 至 10000 的整數。");
   }
 }
 

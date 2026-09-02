@@ -1,6 +1,7 @@
 import type { ConversationContext } from "../src/lib/conversation-context";
 import { resolvePublishedScheduleForValidation } from "../src/lib/doctor-schedule";
 import { routeCustomerMessage } from "../src/lib/router";
+import type { PricingCampaign } from "../src/lib/seed-loader";
 
 type TestCase = {
   conversationContext?: ConversationContext;
@@ -14,6 +15,41 @@ type TestCase = {
 
 // Pricing campaigns are date-bound; keep router regression tests deterministic.
 const VALIDATION_NOW = new Date("2026-07-21T04:00:00.000Z");
+
+const SEED_ONLY_RUNTIME_CONTENT = {
+  faqEntries: [],
+  pricingCampaigns: [],
+  releaseId: null,
+  sourceStatus: "not_configured" as const,
+  suppressedPricingCampaignIds: [],
+};
+
+function pricingFixture(input: {
+  branchScope: string;
+  id: string;
+  priceText: string;
+  quotePriority: number;
+}): PricingCampaign {
+  return {
+    approval_status: "approved",
+    asset_urls: "",
+    booking_treatments: "ONDA PRO",
+    branch_scope: input.branchScope,
+    campaign_aliases: "ONDA|ONDA PRO",
+    campaign_name: input.id,
+    customer_price_approval_status: "approved",
+    customer_price_text: input.priceText,
+    end_date: "2026-09-30",
+    fallback_message: "可以先協助安排免費諮詢。",
+    id: input.id,
+    is_active: "true",
+    notes: "validator",
+    price_text: input.priceText,
+    quote_priority: input.quotePriority,
+    start_date: "2026-09-01",
+    treatment_name: "ONDA PRO",
+  };
+}
 
 const TEST_CASES: TestCase[] = [
   {
@@ -891,6 +927,7 @@ async function main() {
       includePending: false,
       message: testCase.message,
       now: VALIDATION_NOW,
+      runtimeContentOverlay: SEED_ONLY_RUNTIME_CONTENT,
     });
 
     results.push({
@@ -913,6 +950,7 @@ async function main() {
     includePending: false,
     message: "我是要看高雄的本月診表",
     now: VALIDATION_NOW,
+    runtimeContentOverlay: SEED_ONLY_RUNTIME_CONTENT,
   });
   results.push({
     expectedDecisionType: "doctor_schedule_auto_reply",
@@ -949,6 +987,7 @@ async function main() {
     includePending: false,
     message: "\u6211\u60f3\u4e86\u89e3\u9ad8\u96c4\u9928\u8a3a\u6b21",
     now: VALIDATION_NOW,
+    runtimeContentOverlay: SEED_ONLY_RUNTIME_CONTENT,
   });
   results.push({
     expectedDecisionType: "doctor_schedule_auto_reply",
@@ -959,6 +998,120 @@ async function main() {
       bookingScheduleQuestionResult.matchedType === "doctor_schedule",
     result: bookingScheduleQuestionResult,
   });
+
+  const currentOfferCases = [
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA原價多少", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA怎麼收費", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "8,999"], includes: ["11,999"], message: "ONDA延伸方案多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA有活動嗎", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["9,999"], includes: ["999", "一區"], message: "奇蹟肉毒少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["一區"], includes: ["9,999", "100U"], message: "肉毒100U多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["8,999", "11,999"], includes: ["16,888"], message: "ONDA多少錢", now: new Date("2026-12-01T04:00:00.000Z") },
+  ];
+  for (const testCase of currentOfferCases) {
+    const result = await routeCustomerMessage({
+      includePending: false,
+      message: testCase.message,
+      now: testCase.now,
+      runtimeContentOverlay: SEED_ONLY_RUNTIME_CONTENT,
+    });
+    results.push({
+      expectedDecisionType: "pricing_auto_reply",
+      expectedMatchedType: "pricing_campaign",
+      message: `current approved offer: ${testCase.message}`,
+      passed:
+        result.decisionType === "pricing_auto_reply" &&
+        result.matchedType === "pricing_campaign" &&
+        testCase.includes.every((fragment) => result.replyText.includes(fragment)) &&
+        testCase.excludes.every((fragment) => !result.replyText.includes(fragment)),
+      result,
+    });
+  }
+
+  for (const message of [
+    "ONDA 100U多少錢",
+    "Q+音波延伸方案多少錢",
+    "肉毒延伸方案多少錢",
+  ]) {
+    const result = await routeCustomerMessage({
+      includePending: false,
+      message,
+      now: new Date("2026-09-02T04:00:00.000Z"),
+      runtimeContentOverlay: SEED_ONLY_RUNTIME_CONTENT,
+    });
+    results.push({
+      expectedDecisionType: "pricing_auto_reply",
+      expectedMatchedKey: "pricing_applicability_followup",
+      message: `specific offer must stay with its treatment: ${message}`,
+      passed:
+        result.decisionType === "pricing_auto_reply" &&
+        result.matchedKey === "pricing_applicability_followup" &&
+        !result.replyText.includes("9,999") &&
+        !result.replyText.includes("11,999"),
+      result,
+    });
+  }
+
+  const branchPriorityCampaigns = [
+    pricingFixture({
+      branchScope: "高雄館",
+      id: "validator_branch_high",
+      priceText: "高雄限定活動價 7,777 元",
+      quotePriority: 100,
+    }),
+    pricingFixture({
+      branchScope: "all",
+      id: "validator_global_low",
+      priceText: "全館活動價 6,666 元",
+      quotePriority: 10,
+    }),
+  ];
+  const branchPriorityCases: Array<{
+    conversationContext?: ConversationContext;
+    excludes: string;
+    includes: string;
+    message: string;
+  }> = [
+    { excludes: "7,777", includes: "6,666", message: "ONDA多少錢" },
+    {
+      conversationContext: {
+        bookingDraft: { timeSlots: [] },
+        introSent: false,
+        preferredBranch: "台中館",
+        userId: "validate-branch-price-taichung",
+      },
+      excludes: "7,777",
+      includes: "6,666",
+      message: "ONDA多少錢",
+    },
+    { excludes: "6,666", includes: "7,777", message: "高雄館 ONDA多少錢" },
+  ];
+  for (const testCase of branchPriorityCases) {
+    const result = await routeCustomerMessage({
+      conversationContext: testCase.conversationContext,
+      includePending: false,
+      message: testCase.message,
+      now: new Date("2026-09-02T04:00:00.000Z"),
+      runtimeContentOverlay: {
+        faqEntries: [],
+        pricingCampaigns: branchPriorityCampaigns,
+        releaseId: "validator-branch-priority",
+        sourceStatus: "available",
+        suppressedPricingCampaignIds: [],
+      },
+    });
+    results.push({
+      expectedDecisionType: "pricing_auto_reply",
+      expectedMatchedType: "pricing_campaign",
+      message: `branch-aware quote priority: ${testCase.message}`,
+      passed:
+        result.decisionType === "pricing_auto_reply" &&
+        result.matchedType === "pricing_campaign" &&
+        result.replyText.includes(testCase.includes) &&
+        !result.replyText.includes(testCase.excludes),
+      result,
+    });
+  }
 
   const scheduleResults = validateScheduleMonthReplies();
 

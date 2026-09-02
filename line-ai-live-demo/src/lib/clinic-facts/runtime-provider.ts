@@ -67,6 +67,7 @@ function snapshotDescriptor(
             customerPriceText: campaign.customer_price_text ?? "",
             endDate: campaign.end_date,
             id: campaign.id,
+            quotePriority: campaign.quote_priority ?? "",
             startDate: campaign.start_date,
           }))
           .sort((left, right) => left.id.localeCompare(right.id)),

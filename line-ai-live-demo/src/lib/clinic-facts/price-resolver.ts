@@ -1,4 +1,5 @@
 import { normalizeClinicText } from "@/lib/clinic-config";
+import { highestQuotePriorityCampaigns } from "@/lib/pricing-campaign-priority";
 
 import type {
   ClinicFactProvenance,
@@ -404,8 +405,13 @@ export function resolveApprovedPrice(
     return unavailable(snapshot, treatmentKeys, "applicability_mismatch", first?.campaign.id);
   }
 
-  const topScore = applicable[0].score;
-  const top = applicable.filter((candidate) => candidate.score === topScore);
+  const priorityOwned = query.campaignId
+    ? applicable.map((candidate) => candidate.campaign)
+    : highestQuotePriorityCampaigns(applicable.map((candidate) => candidate.campaign));
+  const priorityIds = new Set(priorityOwned.map((campaign) => campaign.id));
+  const prioritized = applicable.filter((candidate) => priorityIds.has(candidate.campaign.id));
+  const topScore = Math.max(...prioritized.map((candidate) => candidate.score));
+  const top = prioritized.filter((candidate) => candidate.score === topScore);
   const customerTexts = top.map(({ campaign }) => customerPriceText(campaign));
   const blockedCustomerText = customerTexts.find((result) => result.status === "blocked");
   if (blockedCustomerText?.status === "blocked") {

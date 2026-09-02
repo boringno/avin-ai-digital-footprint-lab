@@ -12,8 +12,10 @@ import {
   canTransitionContentStatus,
   readCampaignApplicabilityFields,
   readCampaignBookingFields,
+  readCampaignQuoteSettings,
   writeCampaignApplicabilityFields,
   writeCampaignBookingFields,
+  writeCampaignQuoteSettings,
 } from "../src/lib/content-versioning";
 
 let passed = 0;
@@ -74,6 +76,16 @@ expect(
   }),
   "campaign editor serializes price applicability dimensions",
 );
+
+const campaignQuoteSettings = writeCampaignQuoteSettings({ quotePriority: " 100 " });
+expect(
+  JSON.stringify(campaignQuoteSettings) === JSON.stringify({ quote_priority: "100" }),
+  "campaign editor serializes generic quote priority",
+);
+expect(
+  JSON.stringify(readCampaignQuoteSettings(campaignQuoteSettings)) === JSON.stringify({ quotePriority: "100" }),
+  "campaign quote priority survives edit and save round trip",
+);
 expect(
   JSON.stringify(readCampaignApplicabilityFields(campaignApplicabilityFields)) === JSON.stringify({
     dose: "200發",
@@ -99,6 +111,7 @@ const baseCampaign = {
     treatment_name: "臉部輪廓組合",
     ...campaignApplicabilityFields,
     ...campaignBookingFields,
+    ...campaignQuoteSettings,
   },
   startAt: "2026-08-01T00:00:00.000Z",
 };
@@ -139,6 +152,15 @@ expectThrows(
   }),
   "non-positive session count is rejected",
 );
+for (const invalidQuotePriority of [-1, 10_001, 1.5, "high"] as const) {
+  expectThrows(
+    () => assertContentDraftInput({
+      ...baseCampaign,
+      payload: { ...baseCampaign.payload, quote_priority: invalidQuotePriority },
+    }),
+    `invalid quote priority ${invalidQuotePriority} is rejected`,
+  );
+}
 
 expect(canTransitionContentStatus("draft", "submit"), "draft can submit to engineering review");
 expect(canTransitionContentStatus("in_review", "approve"), "maintainer can approve engineering review");

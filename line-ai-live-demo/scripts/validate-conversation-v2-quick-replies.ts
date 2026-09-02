@@ -1698,7 +1698,160 @@ async function validateFinalWebhookPayload() {
   );
 }
 
+function realSeedPriceFrame(treatmentKey: "botox" | "onda_pro"): NluFrame {
+  return {
+    areas: [],
+    confidence: 0.99,
+    concerns: [],
+    dialogue: {
+      focus: "price_unspecified",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_price",
+    },
+    intents: ["pricing"],
+    negated: [],
+    safety: {
+      complaint: false,
+      humanRequest: false,
+      postTreatmentRisk: false,
+      pregnancyNursing: false,
+    },
+    schemaVersion: 2,
+    treatments: [treatmentKey],
+  };
+}
+
+async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
+  const seedData = await loadSeedData();
+  const factsProvider = createStaticClinicFactsProvider({
+    pricingCampaigns: seedData.pricingCampaigns,
+  });
+  let sequence = 0;
+  const routePrice = async (input: {
+    message: string;
+    now: string;
+    treatmentKey: "botox" | "onda_pro";
+  }) => {
+    sequence += 1;
+    const sourceUserId = `real-seed-price-${sequence}`;
+    const routed = await routeConversationV2Canary({
+      context: createEmptyConversationContext(sourceUserId),
+      eventIdentity: `real-seed-price-event-${sequence}`,
+      message: input.message,
+      now: new Date(input.now),
+      sourceType: "user",
+      sourceUserId,
+    }, {
+      factsProvider,
+      getCanarySettings: () => ({
+        allowlistedUserIds: [sourceUserId],
+        mode: "canary" as const,
+        responseContractMode: "shadow" as const,
+      }),
+      requestFrame: async () => ({
+        errorCode: null,
+        frame: realSeedPriceFrame(input.treatmentKey),
+        latencyMs: 1,
+        model: "fixture",
+        promptVersion: "fixture",
+        tokensIn: 1,
+        tokensOut: 1,
+      }),
+    });
+    assert.equal(routed.kind, "routed", `${input.message}: real-seed V2 price route must be eligible`);
+    return routed.decision;
+  };
+
+  for (const message of [
+    "ONDA多少錢",
+    "ONDA怎麼收費",
+    "ONDA原價多少",
+    "ONDA正常價呢",
+    "ONDA有活動嗎",
+    "onda 價格？",
+    "超微波少錢",
+  ]) {
+    const decision = await routePrice({
+      message,
+      now: "2026-09-02T10:00:00+08:00",
+      treatmentKey: "onda_pro",
+    });
+    assert.match(decision.replyText, /8,999/u, `${message}: current generic ONDA wording must quote 8,999`);
+    assert.doesNotMatch(
+      decision.replyText,
+      /11,999|12,999|16,888/u,
+      `${message}: extension, expired combination, and legacy ONDA prices must not win generic pricing`,
+    );
+  }
+
+  for (const message of [
+    "ONDA延伸方案多少錢",
+    "ONDA臉部延伸價格",
+    "ONDA延伸方案怎麼收費",
+  ]) {
+    const decision = await routePrice({
+      message,
+      now: "2026-09-02T10:00:00+08:00",
+      treatmentKey: "onda_pro",
+    });
+    assert.match(decision.replyText, /11,999/u, `${message}: explicit ONDA extension wording must quote 11,999`);
+    assert.doesNotMatch(
+      decision.replyText,
+      /8,999|12,999|16,888/u,
+      `${message}: the extension offer must not be replaced by a generic or legacy ONDA price`,
+    );
+  }
+
+  for (const message of [
+    "肉毒多少錢",
+    "肉毒怎麼收費",
+    "肉毒原價",
+    "奇蹟肉毒少錢",
+    "Neuronox價錢",
+    "優力柔多少",
+  ]) {
+    const decision = await routePrice({
+      message,
+      now: "2026-09-02T10:00:00+08:00",
+      treatmentKey: "botox",
+    });
+    assert.match(decision.replyText, /(?:^|[^\d,])999(?:[^\d]|$)/u, `${message}: generic Botox wording must quote 999`);
+    assert.doesNotMatch(decision.replyText, /9,999/u, `${message}: generic Botox wording must not quote the 100U offer`);
+  }
+
+  for (const message of [
+    "肉毒100U多少錢",
+    "韓系肉毒100u價格",
+    "肉毒100單位怎麼收費",
+  ]) {
+    const decision = await routePrice({
+      message,
+      now: "2026-09-02T10:00:00+08:00",
+      treatmentKey: "botox",
+    });
+    assert.match(decision.replyText, /9,999\s*元／100U/iu, `${message}: explicit Botox 100U wording must quote 9,999`);
+  }
+
+  const restoredOnda = await routePrice({
+    message: "ONDA怎麼收費",
+    now: "2026-12-01T10:00:00+08:00",
+    treatmentKey: "onda_pro",
+  });
+  assert.match(restoredOnda.replyText, /16,888/u, "after the anniversary ends, the still-current ONDA offer must be restored");
+  assert.doesNotMatch(restoredOnda.replyText, /8,999|11,999|12,999/u);
+
+  const expiredOnda = await routePrice({
+    message: "ONDA多少錢",
+    now: "2027-01-01T10:00:00+08:00",
+    treatmentKey: "onda_pro",
+  });
+  assert.match(expiredOnda.matchedKey, /price:unavailable_to_quote:expired/u);
+  assert.doesNotMatch(expiredOnda.replyText, /8,999|11,999|12,999|16,888/u);
+}
+
 async function main() {
+  await validateRealSeedPriceSemanticFamiliesAndTimeBoundaries();
   validateOndaChoices();
   validateBotoxChoices();
   validateUndeliveredContractCleanup();

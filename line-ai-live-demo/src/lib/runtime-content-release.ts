@@ -288,6 +288,7 @@ export function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
     notes: `runtime_release:${entry.content_key}`,
     package_key: text(entry.payload_json, "package_key"),
     price_text: text(entry.payload_json, "price_text"),
+    quote_priority: numberOrText(entry.payload_json, "quote_priority"),
     session_count: numberOrText(entry.payload_json, "session_count"),
     start_date: entry.start_at?.slice(0, 10) ?? "",
     starts_booking_intake: text(entry.payload_json, "starts_booking_intake"),
