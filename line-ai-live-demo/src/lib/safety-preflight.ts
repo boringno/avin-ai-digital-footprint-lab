@@ -72,6 +72,8 @@ const PLASTIC_SURGERY_TERMS = [
   "鼻整形",
   "雙眼皮手術",
   "眼袋手術",
+  "眼袋處理",
+  "割眼袋",
   "拉皮手術",
   "腹部拉皮",
   "割雙眼皮",
@@ -83,6 +85,9 @@ const PLASTIC_SURGERY_TERMS = [
   "植髮",
   "植髮手術",
   "狐臭手術",
+  "頂漿腺手術",
+  "腋臭手術",
+  "假體隆鼻",
 ];
 const POLICY_OVERRIDE_TERMS = [
   "忽略之前",

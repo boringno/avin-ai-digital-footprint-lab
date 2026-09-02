@@ -9,7 +9,7 @@ import {
 export type ClinicOntology = {
   areas: TreatmentAreaConfig[];
   concerns: ConcernConfig[];
-  treatments: Array<Pick<TreatmentConfig, "aliases" | "category" | "key" | "name">>;
+  treatments: Array<Pick<TreatmentConfig, "aliases" | "category" | "key" | "name" | "recognitionTerms">>;
 };
 
 function assertUniqueKeys(label: string, entries: Array<{ key: string }>) {
@@ -43,7 +43,13 @@ export function buildClinicOntology(config: ClinicConfig): ClinicOntology {
   return {
     areas: config.areaList,
     concerns: config.concernList,
-    treatments: config.treatmentList.map(({ aliases, category, key, name }) => ({ aliases, category, key, name })),
+    treatments: config.treatmentList.map(({ aliases, category, key, name, recognitionTerms }) => ({
+      aliases,
+      category,
+      key,
+      name,
+      recognitionTerms,
+    })),
   };
 }
 

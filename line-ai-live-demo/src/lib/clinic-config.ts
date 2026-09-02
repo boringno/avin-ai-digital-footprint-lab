@@ -1,5 +1,6 @@
 import type { TreatmentConversationBehavior } from "@/lib/conversation-behavior";
 import type { ConversationMove, QuestionAspect } from "@/lib/dialogue-semantics";
+import { APPROVED_NOTION_TREATMENTS } from "@/lib/approved-notion-treatments";
 
 export type CustomerQuickReplyStage = "approach" | "consultation" | "followup" | "initial";
 
@@ -91,6 +92,8 @@ export type TreatmentConversationPack = {
 
 export type TreatmentConfig = {
   aliases: string[];
+  /** Recognition-only phrases such as approved package wording; never render these as public treatment names. */
+  recognitionTerms?: string[];
   approvedContent: {
     brandReplies: string[];
     introReplies: string[];
@@ -490,7 +493,7 @@ export const clinicConfig: ClinicConfig = {
             reply: "🔥 如果主要在意身體局部脂肪或線條，ONDA Pro 可以從脂肪厚度與緊實需求方向評估。\n實際部位、療程次數與改善程度會依脂肪分布及個人狀況不同。",
             followupPrompt: "😊 您主要在意手臂、腹部、腰側、大腿，還是臀部呢？",
             selectionTerms: ["②", "選2", "第二個", "身體", "身體局部", "手臂", "蝴蝶袖", "掰掰袖", "腹部", "小腹", "肚子", "肚皮", "腰腹", "腰側", "側腰", "大腿", "臀部", "屁股", "臀腿", "橘皮"],
-            pricingCampaignId: "promo-2026-08-05-onda-pro",
+            pricingCampaignId: "promo-2026-08-face-contour-combo",
           },
         ],
         detailReplies: [
@@ -611,7 +614,7 @@ export const clinicConfig: ClinicConfig = {
           {
             followupPrompt: "您比較在意咀嚼肌造成的臉寬，還是雙下巴與下顎線呢？😊",
             key: "botox_small_face",
-            pricingCampaignId: "promo-2026-08-face-contour-combo",
+            pricingCampaignId: "promo-2026-anniv-onda-face-online",
             reply: "✨ ONDA Pro 主要從局部脂肪與輪廓緊實方向評估；肉毒小臉則著重咀嚼肌與臉型線條。\n只有同時在意脂肪肉感與咀嚼肌型臉寬時，才會一起比較搭配方向。",
             terms: ["肉毒功效", "肉毒效果", "肉毒小臉", "咀嚼肌", "國字臉"],
             treatmentKey: "botox",
@@ -786,7 +789,7 @@ export const clinicConfig: ClinicConfig = {
             reply: "✨ 如果主要困擾是抬頭紋、皺眉紋或魚尾紋，肉毒通常會從表情肌活動與動態紋路方向評估。\n實際施打位置與劑量仍會由醫師依表情活動判斷。",
             followupPrompt: "😊 您是做表情時比較明顯，還是平時也看得到呢？",
             selectionTerms: ["魚尾紋", "抬頭紋", "額頭紋", "皺眉紋", "眉間紋", "眉間那條", "眉心紋", "川字紋", "動態紋", "表情紋"],
-            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
+            pricingCampaignId: "promo-2026-anniv-botox-10u",
           },
           {
             concernKey: "masseter_contour",
@@ -814,7 +817,7 @@ export const clinicConfig: ClinicConfig = {
           {
             aspectKey: "dynamic_wrinkles_crows_feet",
             concernKey: "dynamic_wrinkles",
-            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
+            pricingCampaignId: "promo-2026-anniv-botox-10u",
             terms: ["魚尾紋"],
             reply: "🌿 已記下您主要在意魚尾紋這類動態紋路。肉毒通常會依眼周表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
             followupPrompt: "😊 魚尾紋是做表情時較明顯，還是平時也看得到呢？",
@@ -822,7 +825,7 @@ export const clinicConfig: ClinicConfig = {
           {
             aspectKey: "dynamic_wrinkles_forehead",
             concernKey: "dynamic_wrinkles",
-            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
+            pricingCampaignId: "promo-2026-anniv-botox-10u",
             terms: ["抬頭紋", "額頭紋"],
             reply: "🌿 已記下您主要在意抬頭紋（額頭動態紋）這類動態紋路。肉毒通常會依額頭表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
             followupPrompt: "😊 抬頭紋是做表情時較明顯，還是平時也看得到呢？",
@@ -830,7 +833,7 @@ export const clinicConfig: ClinicConfig = {
           {
             aspectKey: "dynamic_wrinkles_frown_lines",
             concernKey: "dynamic_wrinkles",
-            pricingCampaignId: "promo-2026-07-09-botox-wrinkle",
+            pricingCampaignId: "promo-2026-anniv-botox-10u",
             terms: ["皺眉紋", "皺眉", "眉間紋", "眉間那條", "眉心紋", "川字紋"],
             reply: "🌿 已記下您主要在意皺眉紋（眉間動態紋）這類動態紋路。肉毒通常會依眉間表情肌活動與紋路狀況評估，實際施作部位與劑量仍由醫師現場評估。",
             followupPrompt: "😊 皺眉紋是做表情時較明顯，還是平時也看得到呢？",
@@ -1317,6 +1320,7 @@ export const clinicConfig: ClinicConfig = {
       key: "fisbo",
       name: "菲斯波",
     },
+    ...APPROVED_NOTION_TREATMENTS,
   ]),
 };
 
@@ -1345,10 +1349,16 @@ export function findAnyBranchByMessage(message: string) {
 export function findAllTreatmentsByMessage(message: string) {
   const normalizedMessage = normalizeClinicText(message);
   const candidates = clinicConfig.treatmentList.flatMap((treatment) =>
-    [treatment.name, ...treatment.aliases, ...(treatment.availableBrands ?? [])].map((alias) => ({
+    [
+      { alias: treatment.name, sourcePriority: 2 },
+      ...treatment.aliases.map((alias) => ({ alias, sourcePriority: 2 })),
+      ...(treatment.recognitionTerms ?? []).map((alias) => ({ alias, sourcePriority: 2 })),
+      ...(treatment.availableBrands ?? []).map((alias) => ({ alias, sourcePriority: 1 })),
+    ].map(({ alias, sourcePriority }) => ({
       alias,
       aliasLength: normalizeClinicText(alias).length,
       messageIndex: normalizedMessage.indexOf(normalizeClinicText(alias)),
+      sourcePriority,
       treatment,
     })),
   );
@@ -1361,6 +1371,9 @@ export function findAllTreatmentsByMessage(message: string) {
       }
       if (right.aliasLength !== left.aliasLength) {
         return right.aliasLength - left.aliasLength;
+      }
+      if (right.sourcePriority !== left.sourcePriority) {
+        return right.sourcePriority - left.sourcePriority;
       }
       return right.treatment.name.length - left.treatment.name.length;
     });
@@ -1382,7 +1395,10 @@ export function findAllTreatmentsByMessage(message: string) {
       otherIndex !== index &&
       other.messageIndex === match.messageIndex &&
       (other.aliasLength > match.aliasLength ||
-        (other.aliasLength === match.aliasLength && otherIndex < index)),
+        (other.aliasLength === match.aliasLength && other.sourcePriority > match.sourcePriority) ||
+        (other.aliasLength === match.aliasLength &&
+          other.sourcePriority === match.sourcePriority &&
+          otherIndex < index)),
     ))
     .map(({ treatment }) => treatment);
 }

@@ -681,6 +681,64 @@ async function validateRealSeedPriceOwnership() {
   );
 }
 
+async function validateAnniversaryApprovedCatalog() {
+  const seed = await loadSeedData();
+  const anniversaryRows = seed.pricingCampaigns.filter((item) => item.id.startsWith("promo-2026-anniv-"));
+  assert(anniversaryRows.length === 19, `CF-P19: expected 19 anniversary campaigns, got ${anniversaryRows.length}`);
+  assert(
+    anniversaryRows.every((item) =>
+      item.approval_status === "approved" &&
+      item.customer_price_approval_status === "approved" &&
+      item.branch_scope === "all" &&
+      item.start_date === "2026-09-01" &&
+      item.end_date === "2026-11-30"),
+    "CF-P19: anniversary campaign approval, branch, or internal validity metadata is incomplete",
+  );
+
+  const current = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2026-09-02T10:00:00+08:00") },
+  );
+  const expectedPrices: Array<[string, string]> = [
+    ["onda_pro", "8,999"],
+    ["botox", "999"],
+    ["hair_removal_vio", "1,099"],
+    ["qplus", "7,999"],
+    ["pico", "3,999"],
+    ["tenthermage", "8,999"],
+    ["tenthermage_eye_tip", "18,888"],
+    ["bei_en_xi_brand", "5,999"],
+    ["teosyal_1_3_brand", "9,999"],
+    ["powder_glow_bottle", "11,999"],
+    ["ailewei_brand", "25,999"],
+  ];
+
+  for (const [treatmentKey, amount] of expectedPrices) {
+    const resolved = resolveApprovedPrice(current, { kind: "unspecified", treatmentKeys: [treatmentKey] });
+    assert(
+      resolved.status === "approved_current" && resolved.customerPriceText.includes(amount),
+      `CF-P19: ${treatmentKey} must quote its approved anniversary price ${amount}`,
+    );
+    if (resolved.status === "approved_current") {
+      assert(
+        !/(?:2026|9\s*月|11\s*月|截止|到期|有效期間)/u.test(resolved.customerPriceText),
+        `CF-P19: ${treatmentKey} leaked internal campaign timing`,
+      );
+    }
+  }
+
+  const onda = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["onda_pro"] });
+  assert(
+    onda.status === "approved_current" && onda.campaignId === "promo-2026-anniv-onda-face-online",
+    "CF-P19: every ONDA price wording must resolve to the approved anniversary primary offer",
+  );
+  const botox = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["botox"] });
+  assert(
+    botox.status === "approved_current" && botox.campaignId === "promo-2026-anniv-botox-10u",
+    "CF-P19: generic Botox price wording must resolve to the approved anniversary primary offer",
+  );
+}
+
 async function validateVersionedUpdatesWithoutPolicyChanges() {
   const v1 = await snapshot({
     pricingCampaigns: [campaign({ price_text: "體驗價 16,888" })],
@@ -1279,6 +1337,7 @@ async function main() {
   await validateUnmodeledTreatmentAspectsFailClosed();
   await validatePriceStateMachine();
   await validateRealSeedPriceOwnership();
+  await validateAnniversaryApprovedCatalog();
   await validateVersionedUpdatesWithoutPolicyChanges();
   await validatePriceApplicabilityFlowsThroughV2();
   await validateSnapshotIntegrityAndRecognitionBoundary();
