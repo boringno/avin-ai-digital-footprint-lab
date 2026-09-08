@@ -9,8 +9,9 @@ reuses captured NLU frames and records a PII-free V1/V2 comparison. Canary is
 wired to the existing LINE pipeline, stores versioned V2 state inside the
 existing context JSON, projects booking/handoff results back into the proven
 admin integrations, and still uses the single existing renderer and LINE
-sender. No customer uses this path unless both canary mode and an exact LINE
-user allowlist are configured.
+sender. Customer-visible audiences require an explicit mode: exact-account
+canary, demo_all on a demo channel, or production_all on a production channel.
+The default remains off; code support is not authorization to activate it.
 
 The runtime gates remain:
 
@@ -41,11 +42,34 @@ closed if this mode is used on an unlabelled or `production` channel. The
 official clinic LINE must use a separate deployment with separate LINE
 credentials; it must not inherit the DEMO V2 switch.
 
-All three default to disabled or zero. Enabling them is a separately approved
+Enabling a customer-visible mode is a separately approved
 Production operation; merging the code alone does not route customers through
 V2. Runtime price merging is an independent legacy hardening: a known content
 source error or an explicit runtime replacement now fails price output closed
 instead of reviving an older seed price.
+
+### Launch P0-1: production audience capability (not activated)
+
+- `CONVERSATION_V2_MODE=production_all` requires `LINE_CHANNEL_STAGE=production`.
+- Both legacy NLU modes must remain off. Signature verification may not be skipped.
+- Direct text users need no allowlist. Existing group/room, non-text, human-control
+  and V2 internal safe-fallback behavior is unchanged. A V2 failure never reroutes
+  the same turn through V1. Invalid configuration throws before event processing,
+  rather than masquerading as a normal non-eligible V1 audience.
+- Response Contract defaults to shadow; production_all does not enable enforce.
+- Runtime Content audience/release/snapshot settings remain independent and untouched.
+- In production_all mode, users never qualify for the test-customer reset, even if allowlisted.
+- Do not change actual Production settings until the remaining Launch P0 items and
+  official LINE E2E are approved. This change adds no schema, content or new env name.
+
+Rollback is a separately authorized operation. Narrow to canary with its existing
+allowlist, or use the paired settings `CONVERSATION_V2_MODE=off` and
+`CONVERSATION_V2_RESPONSE_CONTRACT_MODE=shadow`. Keep the production stage. These
+switches restore V1 for excluded users, not a global AI stop. Verify V1 content and
+in-progress dialogue compatibility first; use human takeover if it is unsuitable.
+Keep context/booking/handoff data; never reset a customer to make rollback work.
+Before deploying older code, use a mode that older code understands, not
+production_all. Verify the settings and deployment actually taking effect.
 
 ### Semantic-contract milestone (2026-08-14)
 

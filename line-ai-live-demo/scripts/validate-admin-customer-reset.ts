@@ -62,6 +62,15 @@ assert.equal(isResettableConversationV2Customer({
   userId: "",
 }), false);
 
+// Production authorization never grants the destructive test-customer reset.
+for (const mode of ["production_all", "off", "shadow"] as const) {
+  for (const userId of ["test-user", "stranger", ""]) {
+    assert.equal(isResettableConversationV2Customer({
+      allowlistedUserIds: ["test-user"], mode, userId,
+    }), false, `${mode}: no allowlist or fallback may grant test reset`);
+  }
+}
+
 const migration = fs.readFileSync(
   path.join(process.cwd(), "..", "supabase", "migrations", "20260824_admin_reset_canary_customer_state.sql"),
   "utf8",

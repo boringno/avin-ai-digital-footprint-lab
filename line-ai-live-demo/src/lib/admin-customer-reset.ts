@@ -1,4 +1,5 @@
 import type { AdminStaffUser } from "@/lib/admin-auth";
+import type { ConversationV2RuntimeMode } from "@/lib/conversation-v2/canary-gate";
 import { createEmptyConversationContext } from "@/lib/conversation-context";
 import { createEmptyConversationState } from "@/lib/conversation-state";
 import {
@@ -56,7 +57,7 @@ export function buildFreshCustomerRuntimePatch(input: {
 
 export function isResettableConversationV2Customer(input: {
   allowlistedUserIds: readonly string[];
-  mode: "canary" | "demo_all" | "off" | "shadow";
+  mode: ConversationV2RuntimeMode;
   userId: string;
 }) {
   if (!input.userId) return false;

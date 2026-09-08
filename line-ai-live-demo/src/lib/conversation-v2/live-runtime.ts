@@ -47,6 +47,8 @@ import { buildConversationV2BookingUnderstanding } from "./booking-adapter";
 import {
   evaluateConversationV2CanaryGate,
   type ConversationV2CanaryGate,
+  type ConversationV2RuntimeMode,
+  type LineChannelStage,
 } from "./canary-gate";
 import { ensureCustomerSafeText } from "./customer-text-guard";
 import {
@@ -534,7 +536,8 @@ export type ConversationV2LiveDependencies = {
   factsProvider?: ClinicFactsProvider;
   getCanarySettings?: () => {
     allowlistedUserIds: readonly string[];
-    mode: "canary" | "demo_all" | "off" | "shadow";
+    mode: ConversationV2RuntimeMode;
+    lineChannelStage?: LineChannelStage;
     responseContractMode?: ResponseContractRuntimeMode;
   };
   requestFrame?: typeof requestNluFrame;
@@ -1049,6 +1052,7 @@ export async function routeConversationV2Canary(
     return {
       allowlistedUserIds: runtime.conversationV2CanaryUserIds,
       mode: runtime.conversationV2Mode,
+      lineChannelStage: runtime.lineChannelStage,
       responseContractMode: runtime.conversationV2ResponseContractMode,
     };
   })();
@@ -1056,6 +1060,7 @@ export async function routeConversationV2Canary(
   const gate = evaluateConversationV2CanaryGate({
     allowlistedUserIds: new Set(config.allowlistedUserIds),
     mode: config.mode,
+    lineChannelStage: config.lineChannelStage,
     sourceType: input.sourceType,
     userId: input.sourceUserId,
   });

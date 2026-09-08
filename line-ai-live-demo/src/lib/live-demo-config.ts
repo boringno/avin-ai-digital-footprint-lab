@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { ResponseContractRuntimeMode } from "@/lib/response-contract";
+import { assertConversationV2AudienceStage, type ConversationV2RuntimeMode, type LineChannelStage } from "@/lib/conversation-v2/canary-gate";
 
 export type RuntimeConfig = {
   adminNotifyTarget: string;
@@ -16,7 +17,7 @@ export type RuntimeConfig = {
   anthropicModel: string;
   claudeApiEnabled: boolean;
   conversationV2CanaryUserIds: string[];
-  conversationV2Mode: "canary" | "demo_all" | "off" | "shadow";
+  conversationV2Mode: ConversationV2RuntimeMode;
   conversationV2ResponseContractMode: ResponseContractRuntimeMode;
   cronSecret: string;
   debugToken: string;
@@ -33,7 +34,7 @@ export type RuntimeConfig = {
   lineAccessToken: string;
   lineAlertUserId: string;
   lineChannelSecret: string;
-  lineChannelStage: "demo" | "production" | "unconfigured";
+  lineChannelStage: LineChannelStage;
   lineReplyRetryCount: number;
   lineReplyTimeoutMs: number;
   logDir: string;
@@ -81,9 +82,9 @@ function parseNluDecisionMode(value: string | undefined): "canary" | "off" {
   throw new Error(`Unsupported OPENAI_NLU_DECISION_MODE: ${normalized}`);
 }
 
-function parseConversationV2Mode(value: string | undefined): "canary" | "demo_all" | "off" | "shadow" {
+function parseConversationV2Mode(value: string | undefined): ConversationV2RuntimeMode {
   const normalized = (value ?? "off").trim().toLowerCase();
-  if (normalized === "off" || normalized === "shadow" || normalized === "canary" || normalized === "demo_all") return normalized;
+  if (normalized === "off" || normalized === "shadow" || normalized === "canary" || normalized === "demo_all" || normalized === "production_all") return normalized;
   throw new Error(`Unsupported CONVERSATION_V2_MODE: ${normalized}`);
 }
 
@@ -95,7 +96,7 @@ function parseConversationV2ResponseContractMode(
   throw new Error(`Unsupported CONVERSATION_V2_RESPONSE_CONTRACT_MODE: ${normalized}`);
 }
 
-function parseLineChannelStage(value: string | undefined): "demo" | "production" | "unconfigured" {
+function parseLineChannelStage(value: string | undefined): LineChannelStage {
   const normalized = (value ?? "unconfigured").trim().toLowerCase();
   if (normalized === "demo" || normalized === "production" || normalized === "unconfigured") return normalized;
   throw new Error(`Unsupported LINE_CHANNEL_STAGE: ${normalized}`);
@@ -164,26 +165,29 @@ export function getRuntimeConfig(): RuntimeConfig {
     process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE,
   );
   const lineChannelStage = parseLineChannelStage(process.env.LINE_CHANNEL_STAGE);
+  assertConversationV2AudienceStage(conversationV2Mode, lineChannelStage);
+  const skipSignatureVerify = parseBoolean(process.env.LIVE_DEMO_SKIP_SIGNATURE_VERIFY, false);
+  if (conversationV2Mode === "production_all" && skipSignatureVerify) {
+    throw new Error("CONVERSATION_V2_MODE=production_all forbids LIVE_DEMO_SKIP_SIGNATURE_VERIFY=true");
+  }
   if (conversationV2Mode === "shadow"
     && openAiNluMode === "shadow"
     && openAiNluDecisionMode === "canary") {
     throw new Error("OPENAI_NLU_MODE=shadow cannot run with OPENAI_NLU_DECISION_MODE=canary; one message must make at most one NLU request");
   }
   if (
-    (conversationV2Mode === "canary" || conversationV2Mode === "demo_all") &&
+    (conversationV2Mode === "canary" || conversationV2Mode === "demo_all" || conversationV2Mode === "production_all") &&
     (openAiNluMode !== "off" || openAiNluDecisionMode !== "off")
   ) {
     throw new Error("Customer-visible Conversation V2 modes require the legacy NLU shadow and decision modes to remain off; one message must make at most one NLU request");
   }
-  if (conversationV2Mode === "demo_all" && lineChannelStage !== "demo") {
-    throw new Error("CONVERSATION_V2_MODE=demo_all requires LINE_CHANNEL_STAGE=demo; broad V2 routing is forbidden on an unlabelled or production LINE channel");
-  }
   if (
     conversationV2ResponseContractMode === "enforce" &&
     conversationV2Mode !== "canary" &&
-    !(conversationV2Mode === "demo_all" && lineChannelStage === "demo")
+    conversationV2Mode !== "demo_all" &&
+    conversationV2Mode !== "production_all"
   ) {
-    throw new Error("CONVERSATION_V2_RESPONSE_CONTRACT_MODE=enforce requires Conversation V2 canary or demo_all on a demo LINE channel");
+    throw new Error("CONVERSATION_V2_RESPONSE_CONTRACT_MODE=enforce requires Conversation V2 canary or demo_all or production_all with a valid channel stage");
   }
 
   return {
@@ -242,7 +246,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     sentryProject: process.env.SENTRY_PROJECT ?? "",
     seedDir: configuredSeedDir,
     sendReply: parseBoolean(process.env.LIVE_DEMO_SEND_REPLY, false),
-    skipSignatureVerify: parseBoolean(process.env.LIVE_DEMO_SKIP_SIGNATURE_VERIFY, false),
+    skipSignatureVerify,
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
     supabaseUrl: process.env.SUPABASE_URL ?? "",
   };
