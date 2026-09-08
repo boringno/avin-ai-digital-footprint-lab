@@ -1,4 +1,6 @@
 import {
+  approvedPromotionCatalogSelectionText,
+  resolveApprovedPromotionCatalog,
   resolveApprovedPrice,
   resolveClinicInfo,
   resolveTreatmentFact,
@@ -7,6 +9,7 @@ import {
   type ClinicInfoFactResolution,
   type PriceApplicabilityDimensions,
   type PriceFactResolution,
+  type PromotionCatalogResolution,
   type TreatmentKnowledgeResolution,
 } from "@/lib/clinic-facts";
 import { findTreatmentBrandInClinic } from "@/lib/clinic-config";
@@ -26,6 +29,10 @@ import {
   type ReplyPlan as RendererReplyPlan,
 } from "@/lib/reply-plan";
 import type { LineImageMessage, LineTextMessage } from "@/lib/treatment-carousel";
+import {
+  buildPromotionCarouselMessages,
+  type PromotionCarouselCard,
+} from "@/lib/promotion-carousel";
 import type { ResponseAspect, ResponseContractAttachment } from "@/lib/response-contract";
 
 import {
@@ -49,10 +56,12 @@ type DoctorScheduleDecision = {
 };
 
 export type HydratedConversationV2Reply = {
+  approvedReplyAssetId?: string;
   alternativePriceResolution?: PriceFactResolution;
   clinicInfoResolution?: ClinicInfoFactResolution;
   dataStatus: "partial" | "ready" | "unresolved";
   priceResolution?: PriceFactResolution;
+  promotionCatalogResolution?: PromotionCatalogResolution;
   rendererPlan: RendererReplyPlan | null;
   snapshotId: string;
   stateCommit: "commit" | "hold";
@@ -146,6 +155,23 @@ function hydrateApprovedPriceSupplements(
   };
 }
 
+function approvedTreatmentAvailability(
+  snapshot: ClinicFactsSnapshot,
+  treatmentKeys: readonly string[],
+): ApprovedPriceQuoteContract["treatmentAvailability"] {
+  if (treatmentKeys.length !== 1) return undefined;
+  const treatment = resolveTreatmentFact(snapshot, treatmentKeys[0]!, "followup");
+  if (
+    treatment.status !== "offered" ||
+    treatment.branchAvailability.scope !== "selected" ||
+    treatment.branchAvailability.branchNames.length === 0
+  ) return undefined;
+  return {
+    branchNames: [...treatment.branchAvailability.branchNames],
+    scope: "selected",
+  };
+}
+
 function customerPriceReply(
   snapshot: ClinicFactsSnapshot,
   resolution: Extract<PriceFactResolution, { status: "approved_current" }>,
@@ -154,10 +180,36 @@ function customerPriceReply(
     .map((key) => snapshot.clinic.treatmentList.find((item) => item.key === key)?.name)
     .filter((name): name is string => Boolean(name));
   const subject = treatmentNames.length === 1 ? `${treatmentNames[0]}目前可參考` : "目前可參考";
+  const treatmentAvailability = approvedTreatmentAvailability(snapshot, resolution.treatmentKeys);
   return unique([
     `${subject}：${resolution.customerPriceText}。`,
-    resolution.branchScope ? `${resolution.branchScope}。` : "",
+    treatmentAvailability
+      ? `${treatmentNames[0]}目前僅${treatmentAvailability.branchNames.join("、")}提供。`
+      : resolution.branchScope
+        ? `${resolution.branchScope}。`
+        : "",
   ]).join("\n");
+}
+
+/** A campaign-card tap asks for the offer's meaning as well as its price. */
+function selectedCatalogOfferIntroduction(
+  snapshot: ClinicFactsSnapshot,
+  treatmentKeys: readonly string[],
+) {
+  const uniqueKeys = unique(treatmentKeys);
+  if (uniqueKeys.length === 1) {
+    const treatment = resolveTreatmentFact(snapshot, uniqueKeys[0]!, "introduction");
+    return treatment.status === "offered"
+      ? treatment.customerIntroReplies[0] ?? ""
+      : "";
+  }
+
+  const treatmentNames = uniqueKeys
+    .map((key) => snapshot.clinic.treatmentList.find((item) => item.key === key)?.name)
+    .filter((name): name is string => Boolean(name));
+  return treatmentNames.length > 1
+    ? `🎉 這項方案包含 ${treatmentNames.join("＋")}；各項療程方向不同，會依您在意的部位與需求由醫師評估搭配方式。`
+    : "";
 }
 
 function approvedPriceQuoteContract(
@@ -168,6 +220,7 @@ function approvedPriceQuoteContract(
   const treatmentNames = resolution.treatmentKeys
     .map((key) => snapshot.clinic.treatmentList.find((item) => item.key === key)?.name)
     .filter((name): name is string => Boolean(name));
+  const treatmentAvailability = approvedTreatmentAvailability(snapshot, resolution.treatmentKeys);
   return {
     applicability: { ...resolution.applicability },
     assetUrls: [...resolution.customerAssetUrls],
@@ -177,6 +230,7 @@ function approvedPriceQuoteContract(
     role,
     snapshotId: resolution.provenance.snapshotId,
     subjectLabel: treatmentNames.join("＋") || resolution.campaignLabel || "核准方案",
+    ...(treatmentAvailability ? { treatmentAvailability } : {}),
     treatmentKeys: [...resolution.treatmentKeys],
   };
 }
@@ -192,6 +246,45 @@ function approvedPriceReplyMessages(
       previewImageUrl: url,
       type: "image",
     } satisfies LineImageMessage)),
+    { text: replyText, type: "text" } satisfies LineTextMessage,
+  ];
+}
+
+function promotionCatalogReplyMessages(
+  resolution: Extract<PromotionCatalogResolution, { status: "approved_current" }>,
+  replyText: string,
+): RendererReplyPlan["richMessages"] {
+  const cards: PromotionCarouselCard[] = resolution.items.map((item) => {
+    const imageUrl = item.customerAssetUrls[0];
+    return {
+      ...(imageUrl ? {
+        aspectRatio: imageUrl.includes("/demo/promotions/anniversary-2026/") ? "20:13" : undefined,
+        imageUrl,
+      } : {}),
+      ctaLabel: "了解這項活動",
+      ctaText: approvedPromotionCatalogSelectionText(item),
+      priceText: item.customerPriceText,
+      ...(item.branchScope ? { subtitle: item.branchScope } : {}),
+      title: item.displayName,
+    };
+  });
+  return [
+    ...buildPromotionCarouselMessages(cards, "目前核准活動"),
+    { text: replyText, type: "text" } satisfies LineTextMessage,
+  ];
+}
+
+/**
+ * Keep approved price artwork/carousels, but make the booking question the one
+ * final text message. LINE attaches quick replies to that last message and
+ * accepts at most five reply messages in one webhook response.
+ */
+function appendBookingPromptToRichMessages(
+  messages: readonly RendererReplyPlan["richMessages"][number][],
+  replyText: string,
+): RendererReplyPlan["richMessages"] {
+  return [
+    ...messages.filter((message) => message.type !== "text").slice(0, 4),
     { text: replyText, type: "text" } satisfies LineTextMessage,
   ];
 }
@@ -701,6 +794,12 @@ export async function hydrateConversationV2ReplyPlan(
         replyText: fallbackText,
       },
       {
+        approvedCustomerCopy: unique([
+          ...treatmentResolution.customerIntroReplies,
+          ...treatmentResolution.customerAspectReplies,
+          ...treatmentResolution.customerConcernReplies,
+          ...(approvedReplyAsset ? [approvedReplyAsset.customerCopy] : []),
+        ]),
         approvedFacts: unique([...treatmentResolution.facts, ...approvedAssetFacts]),
         approvedKnowledge: unique([...treatmentResolution.facts, ...approvedAssetFacts]),
         concernKeys: replyPlan.knowledgeQuery.concernKeys,
@@ -724,6 +823,7 @@ export async function hydrateConversationV2ReplyPlan(
       },
     );
     return {
+      ...(approvedReplyAsset ? { approvedReplyAssetId: approvedReplyAsset.id } : {}),
       dataStatus: treatmentResolution.profileCompleteness === "complete"
         ? "ready"
         : treatmentResolution.profileCompleteness === "partial"
@@ -750,6 +850,61 @@ export async function hydrateConversationV2ReplyPlan(
   }
 
   if (replyPlan.dialogueAct === "answer_price" && replyPlan.pricingQuery) {
+    if (replyPlan.pricingQuery.kind === "browse") {
+      const promotionCatalogResolution = resolveApprovedPromotionCatalog(input.snapshot);
+      if (promotionCatalogResolution.status === "approved_current") {
+        const displayNames = unique(
+          promotionCatalogResolution.items.map((item) => item.displayName),
+        );
+        const replyText = unique([
+          `🎉 目前有 ${promotionCatalogResolution.items.length} 組診所核准活動，可左右滑動查看。`,
+          `包含：${displayNames.join("、")}。`,
+          "點選想了解的方案，我會接著介紹、回答核准價格並協助預約 😊",
+        ]).join("\n");
+        return {
+          dataStatus: "ready",
+          promotionCatalogResolution,
+          rendererPlan: deterministicPlan({
+            action: replyPlan.action,
+            dialogueAct: "quote_approved_price",
+            exactPriceFacts: promotionCatalogResolution.items.flatMap((item) => unique([
+              `核准價格：${item.customerPriceText}`,
+              item.branchScope ?? "",
+            ])),
+            matchedKey: "conversation_v2:promotion_catalog:approved_current",
+            replyText,
+            responseContract: replyPlan.responseContract,
+            richMessages: promotionCatalogReplyMessages(promotionCatalogResolution, replyText),
+            treatmentKeys: [],
+          }),
+          snapshotId: input.snapshot.snapshotId,
+          stateCommit: "commit",
+        };
+      }
+
+      const replyText = unique([
+        "🎉 目前活動資料正在更新，我先請真人客服協助確認。",
+        input.snapshot.clinic.humanSupportHours.fallbackSummary,
+        "您也可以先告訴我想改善的部位或困擾，我會先幫您整理 😊",
+      ]).join("\n");
+      return {
+        dataStatus: "unresolved",
+        promotionCatalogResolution,
+        rendererPlan: deterministicPlan({
+          action: replyPlan.action,
+          dialogueAct: "quote_approved_price",
+          exactPriceFacts: [],
+          matchedKey: `conversation_v2:promotion_catalog:unavailable:${promotionCatalogResolution.reason}`,
+          replyText,
+          responseContract: replyPlan.responseContract,
+          richMessages: [{ text: replyText, type: "text" }],
+          treatmentKeys: [],
+        }),
+        snapshotId: input.snapshot.snapshotId,
+        stateCommit: "commit",
+      };
+    }
+
     const priceResolution = resolveApprovedPrice(input.snapshot, replyPlan.pricingQuery);
     const genericBotoxAlternative =
       priceResolution.status !== "approved_current" &&
@@ -797,7 +952,19 @@ export async function hydrateConversationV2ReplyPlan(
     const priceSupplements = responseContract.mode === "enforce"
       ? supplementHydration.supplements
       : [];
-    const replyText = priceResolution.status === "approved_current"
+    const selectedOfferIntroduction =
+      replyPlan.pricingQuery.selectionSource === "approved_catalog_action"
+        ? selectedCatalogOfferIntroduction(
+            input.snapshot,
+            priceResolution.status === "approved_current"
+              ? priceResolution.treatmentKeys
+              : replyPlan.pricingQuery.treatmentKeys,
+          )
+        : "";
+    const selectedOfferCta = selectedOfferIntroduction
+      ? "😊 想先安排免費諮詢，還是繼續詢問這項方案？"
+      : "";
+    const basePriceReply = priceResolution.status === "approved_current"
       ? hasDistinctAlternative
         ? unique([
             `🟢 ${customerPriceReply(input.snapshot, priceResolution)}`,
@@ -812,6 +979,9 @@ export async function hydrateConversationV2ReplyPlan(
             `📅 如果您願意，我可以先幫您整理免費諮詢需求，品牌方案價格再由真人客服協助確認。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`,
           ]).join("\n\n")
         : priceGapReply(priceResolution);
+    const replyText = selectedOfferIntroduction
+      ? unique([selectedOfferIntroduction, basePriceReply, selectedOfferCta]).join("\n\n")
+      : basePriceReply;
     const approvedPriceReply: ApprovedPriceReplyContract | undefined =
       priceResolution.status === "approved_current"
         ? {
@@ -969,21 +1139,69 @@ export async function hydrateConversationV2ReplyPlan(
       };
     }
     const expectedField = input.nextState.bookingTask.expectedField;
-    const replyText = expectedField
+    const bookingPrompt = expectedField
       ? BOOKING_PROMPTS[expectedField]
       : `已收到您提供的預約資料，真人客服會接續確認可預約時段；目前尚未完成預約。\n${input.snapshot.clinic.humanSupportHours.fallbackSummary}`;
+    const supplementalPrice = replyPlan.pricingQuery
+      ? await hydrateConversationV2ReplyPlan(
+          {
+            ...input,
+            result: {
+              action: input.result.action,
+              replyPlan: {
+                ...replyPlan,
+                dialogueAct: "answer_price",
+                templateKey: "approved_price_lookup",
+                templateVariables: {
+                  priceKind: replyPlan.pricingQuery.kind,
+                  treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
+                },
+              },
+            },
+          },
+          dependencies,
+        )
+      : undefined;
+    const supplementalRendererPlan = supplementalPrice?.rendererPlan;
+    const supplementalText = supplementalRendererPlan?.fallbackText.trim() ?? "";
+    const supplementalExactPriceFacts = supplementalRendererPlan
+      ? unique([
+          ...supplementalRendererPlan.exactPriceFacts,
+          ...(supplementalRendererPlan.approvedPriceReply?.quotes.map(
+            (quote) => `核准價格：${quote.customerPriceText}`,
+          ) ?? []),
+        ])
+      : [];
+    const replyText = unique([supplementalText, bookingPrompt]).join("\n\n");
+    const richMessages = supplementalRendererPlan?.richMessages.length
+      ? appendBookingPromptToRichMessages(supplementalRendererPlan.richMessages, replyText)
+      : undefined;
     return {
-      dataStatus: "ready",
+      ...(supplementalPrice?.alternativePriceResolution
+        ? { alternativePriceResolution: supplementalPrice.alternativePriceResolution }
+        : {}),
+      dataStatus: supplementalPrice?.dataStatus ?? "ready",
+      ...(supplementalPrice?.priceResolution
+        ? { priceResolution: supplementalPrice.priceResolution }
+        : {}),
+      ...(supplementalPrice?.promotionCatalogResolution
+        ? { promotionCatalogResolution: supplementalPrice.promotionCatalogResolution }
+        : {}),
       rendererPlan: deterministicPlan({
         action: replyPlan.action,
         dialogueAct: replyPlan.dialogueAct,
+        exactPriceFacts: supplementalExactPriceFacts,
         matchedKey: input.nextState.bookingTask.intent === "modify"
-          ? "booking_modify_request"
+          ? `booking_modify_request${supplementalPrice ? ":with_price" : ""}`
           : input.nextState.bookingTask.intent === "cancel"
-            ? "booking_cancel_request"
-            : "booking_intake",
+            ? `booking_cancel_request${supplementalPrice ? ":with_price" : ""}`
+            : `booking_intake${supplementalPrice ? ":with_price" : ""}`,
         replyText,
         responseContract: replyPlan.responseContract,
+        richMessages,
+        treatmentKeys: replyPlan.pricingQuery
+          ? [...replyPlan.pricingQuery.treatmentKeys]
+          : undefined,
       }),
       snapshotId: input.snapshot.snapshotId,
       stateCommit: "commit",

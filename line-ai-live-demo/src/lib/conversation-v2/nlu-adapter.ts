@@ -12,6 +12,8 @@ import {
 import {
   isHedgedTreatmentReference,
   isPriceInquiryWithTypoTolerance,
+  isPurePostTreatmentActivityQuestion,
+  isPromotionBrowseIntent,
 } from "@/lib/pricing-subject";
 import {
   CONVERSATION_MOVES,
@@ -105,6 +107,7 @@ function hasDeterministicPriceInquiry(
     /(?:沒有|沒|無)(?:價格|價錢|價位|費用|收費|報價)(?:資料|資訊|概念)/gu,
     "",
   );
+  if (isPromotionBrowseIntent(inquiryText)) return true;
   const hasExplicitTreatment = matchClinicOntology(inquiryText, ontology).treatments.length > 0;
   return Boolean(
     isPriceInquiryWithTypoTolerance(inquiryText, hasExplicitTreatment) &&
@@ -1340,6 +1343,12 @@ export function adaptNluFrameToConversationV2Turn(
     "select_options",
     "urgent_safety",
   ]);
+  const deterministicAftercareOwnsTurn =
+    isPurePostTreatmentActivityQuestion(input.text) &&
+    !protectedSpeechActs.has(resolved.speechAct) &&
+    !supplemental.selection &&
+    !supplemental.clarification &&
+    !supplemental.negationGuard;
   const deterministicPriceOwnsTurn =
     hasDeterministicPriceInquiry(input.text, ontology) &&
     !protectedSpeechActs.has(resolved.speechAct) &&
@@ -1349,9 +1358,11 @@ export function adaptNluFrameToConversationV2Turn(
   // Explicit current-text price wording is stronger than a model that calls the
   // same sentence a treatment introduction. It still cannot outrank safety,
   // booking, handoff, a displayed selection, or a current-text negation guard.
-  const resolution = deterministicPriceOwnsTurn
-    ? { needsClarification: false, speechAct: "ask_price" as const }
-    : resolved;
+  const resolution = deterministicAftercareOwnsTurn
+    ? { needsClarification: false, speechAct: "ask_treatment_detail" as const }
+    : deterministicPriceOwnsTurn
+      ? { needsClarification: false, speechAct: "ask_price" as const }
+      : resolved;
   const selectedNegationGuard =
     supplemental.valid &&
     supplemental.negationGuard &&
@@ -1360,6 +1371,7 @@ export function adaptNluFrameToConversationV2Turn(
       ? supplemental.negationGuard
       : undefined;
   const selectedSemanticAnchor =
+    !deterministicAftercareOwnsTurn &&
     !selectedNegationGuard &&
     supplemental.valid &&
     supplemental.semanticAnchor &&
@@ -1370,13 +1382,16 @@ export function adaptNluFrameToConversationV2Turn(
   const deterministicPriceOwner = deterministicPriceOwnsTurn
     ? adaptDeterministicPriceEntities(input.text, ontology, registry)
     : undefined;
-  const deterministicPriceEntities = deterministicPriceOwner;
+  const deterministicAftercareOwner = deterministicAftercareOwnsTurn
+    ? adaptDeterministicPriceEntities(input.text, ontology, registry)
+    : undefined;
+  const deterministicCurrentTextEntities = deterministicPriceOwner ?? deterministicAftercareOwner;
   const effectiveEntities = selectedNegationGuard
     ? adaptNegationGuardEntities(selectedNegationGuard, registry)
     : selectedSemanticAnchor
     ? adaptSemanticAnchorEntities(selectedSemanticAnchor, registry)
-    : deterministicPriceEntities
-    ? deterministicPriceEntities
+    : deterministicCurrentTextEntities
+    ? deterministicCurrentTextEntities
     : entities;
   const hasResolvedNegation = Boolean(
     selectedNegationGuard &&
@@ -1397,6 +1412,8 @@ export function adaptNluFrameToConversationV2Turn(
   const questionAspect = selectedSemanticAnchor?.questionAspect ??
     (selectedNegationGuard
       ? hasResolvedAffirmation ? "overview" : "none"
+      : deterministicAftercareOwnsTurn
+      ? "comfort_recovery"
       : lowConfidenceDeterministicPrice
       ? "price_unspecified"
       : parsedFrame.dialogue.focus);
@@ -1409,6 +1426,8 @@ export function adaptNluFrameToConversationV2Turn(
           ? parsedFrame.dialogue.aspects
           : [],
       )
+    : deterministicAftercareOwnsTurn
+    ? normalizedQuestionAspects("comfort_recovery")
     : parsedFrame.confidence >= CONVERSATION_V2_NLU_MIN_CONFIDENCE
     ? normalizedQuestionAspects(
         questionAspect,
@@ -1431,13 +1450,13 @@ export function adaptNluFrameToConversationV2Turn(
         ? hasResolvedAffirmation ? "start" : hasResolvedNegation ? "reject" : "none"
         : parsedFrame.dialogue.move),
     concerns: makeMentionsConservative(effectiveEntities.concerns, resolution.needsClarification),
-    confidence: selectedSemanticAnchor || selectedNegationGuard || deterministicPriceOwnsTurn || trustedBookingSpeechAct(supplemental.booking)
+    confidence: selectedSemanticAnchor || selectedNegationGuard || deterministicAftercareOwnsTurn || deterministicPriceOwnsTurn || trustedBookingSpeechAct(supplemental.booking)
       ? 1
       : parsedFrame.confidence,
     dialogueReference: selectedSemanticAnchor?.dialogueReference ??
       (selectedNegationGuard
         ? hasResolvedNegation || hasResolvedAffirmation ? "explicit" : "none"
-        : deterministicPriceEntities?.treatments.length
+        : deterministicCurrentTextEntities?.treatments.length
           ? "explicit"
         : parsedFrame.dialogue.reference),
     ...(supplemental.hardDecision?.reason

@@ -1,6 +1,9 @@
 import type { TreatmentConversationBehavior } from "@/lib/conversation-behavior";
 import type { ConversationMove, QuestionAspect } from "@/lib/dialogue-semantics";
-import { APPROVED_NOTION_TREATMENTS } from "@/lib/approved-notion-treatments";
+import {
+  APPROVED_NOTION_TREATMENTS,
+  APPROVED_NOTION_TREATMENT_MERGES,
+} from "@/lib/approved-notion-treatments";
 
 export type CustomerQuickReplyStage = "approach" | "consultation" | "followup" | "initial";
 
@@ -141,6 +144,20 @@ export type ConcernConfig = {
   summary: string;
 };
 
+/**
+ * Customer-facing discovery groups are deliberately separate from the more
+ * granular clinical concern ontology.  They only control the approved LINE
+ * entry buttons and which already-approved concern mappings may be projected;
+ * they are not diagnoses and never decide personal suitability.
+ */
+export type CustomerConcernGroupConfig = {
+  concernKeys: string[];
+  key: string;
+  label: string;
+  /** Presentation order only. Every key must also be present in the linked concern mappings. */
+  treatmentKeyOrder: string[];
+};
+
 export type TreatmentAreaKey =
   | "face"
   | "jawline"
@@ -197,6 +214,7 @@ export type ClinicConfig = {
     overviewPrefix: string;
   };
   areaList: TreatmentAreaConfig[];
+  customerConcernGroups: CustomerConcernGroupConfig[];
   concernList: ConcernConfig[];
   treatmentList: TreatmentConfig[];
 };
@@ -225,6 +243,62 @@ function buildTreatmentUnsupportedReply(treatmentName: string, customReply?: str
   }
 
   return `目前系統只會依院內核准內容說明 ${treatmentName} 的基本資訊；如果您想問更細的個人適合度、術後反應、效果保證或價格安排，我先幫您整理需求，後續由真人客服協助。`;
+}
+
+function launchL1CustomerQuickReplies(name: string): CustomerQuickReplyChoice[] {
+  return [
+    {
+      label: "適合方向",
+      nextStage: "followup",
+      semantic: {
+        assetKey: "approved_l1_suitability",
+        assetKind: "quick",
+        questionAspect: "suitability",
+        type: "approved_asset",
+      },
+      text: `想了解 ${name} 適合改善什麼`,
+      stage: "initial",
+    },
+    { label: "價格／活動", text: `${name} 目前有活動嗎`, stage: "initial" },
+    { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "initial" },
+    { label: "真人客服協助", text: "我要找真人客服", stage: "initial" },
+    { label: "預約免費諮詢", text: "我要預約免費諮詢", stage: "followup" },
+    { label: "真人客服協助", text: "我要找真人客服", stage: "followup" },
+    {
+      label: "繼續詢問",
+      semantic: {
+        assetKey: "approved_l1_continue",
+        assetKind: "quick",
+        questionAspect: "benefits",
+        type: "approved_asset",
+      },
+      text: `我想繼續了解 ${name}`,
+      stage: "followup",
+    },
+  ];
+}
+
+function launchL1ConsultationGuide(name: string): TreatmentConversationPack {
+  return {
+    customerQuickReplies: launchL1CustomerQuickReplies(name),
+    discoveryQuestion: `😊 您想先了解 ${name} 的適合方向、價格活動，還是安排免費諮詢呢？`,
+    featureSummary: `${name} 會依客人主要困擾與部位，由醫師評估適合方向。`,
+    followupPrompt: "😊 您可以告訴我主要在意的部位或困擾，我先幫您整理評估方向。",
+    quickReplies: [
+      {
+        followupPrompt: "😊 您目前主要在意哪個部位或困擾呢？",
+        key: "approved_l1_suitability",
+        reply: `${name} 可先依您主要在意的部位與困擾評估方向，實際是否適合仍需由醫師確認。`,
+        terms: [`想了解 ${name} 適合改善什麼`],
+      },
+      {
+        followupPrompt: "😊 您可以告訴我主要在意的部位或困擾，我先幫您整理評估方向。",
+        key: "approved_l1_continue",
+        reply: `可以的，您想繼續了解 ${name} 的哪個部分呢？`,
+        terms: [`我想繼續了解 ${name}`],
+      },
+    ],
+  };
 }
 
 function withApprovedContent(treatments: RawTreatmentConfig[]): TreatmentConfig[] {
@@ -314,7 +388,7 @@ export const clinicConfig: ClinicConfig = {
   escalationPolicy: {
     autoResumeAfterMinutes: 120,
     humanRequestTerms: ["真人", "真人客服", "人工", "專人", "客服本人"],
-    personalizedConsultTerms: [],
+    personalizedConsultTerms: ["女醫師", "女醫生", "女性醫師", "女性醫生"],
     postProcedureAlertTerms: ["很腫", "發炎", "疼痛", "發燒", "流膿", "冒血", "紅腫", "不舒服", "異常", "副作用"],
     seriousComplaintTerms: ["客訴", "投訴", "申訴", "不爽", "生氣", "退費", "退款", "求償", "服務很差"],
   },
@@ -335,14 +409,30 @@ export const clinicConfig: ClinicConfig = {
   },
   pricePolicy: {
     browseTerms: [
+      "週年慶",
+      "周年慶",
+      "週年活動",
+      "周年活動",
+      "全部活動",
+      "所有活動",
+      "其他活動",
+      "還有其他活動",
+      "有什麼活動",
+      "有哪些活動",
+      "活動有哪些",
       "現在活動",
       "現在活動有哪些",
       "目前活動",
       "目前活動有哪些",
       "近期活動",
       "最近活動",
+      "全部優惠",
+      "所有優惠",
+      "其他優惠",
+      "還有其他優惠",
       "優惠有哪些",
       "有什麼優惠",
+      "有哪些優惠",
       "現在有什麼優惠",
       "最近有什麼活動",
       "現在有什麼活動",
@@ -420,7 +510,7 @@ export const clinicConfig: ClinicConfig = {
       key: "jawline_looseness",
       keywords: ["嘴邊肉", "下顎線", "輪廓", "輪廓線", "雙下巴", "雙下八", "下巴肉", "肉肉下巴", "肉肉臉", "下巴線條", "臉部鬆弛"],
       label: "雙下巴／嘴邊肉等臉部輪廓",
-      recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus"],
+      recommendedTreatmentKeys: ["onda_pro", "tenthermage", "ultherapy", "qplus", "emface"],
       summary: "這類通常會先往輪廓緊實、下顎線整理與局部脂肪管理方向評估。",
     },
     {
@@ -444,7 +534,7 @@ export const clinicConfig: ClinicConfig = {
       key: "pores_texture",
       keywords: ["毛孔", "膚質", "粗糙", "粉刺", "出油", "皮膚粗糙"],
       label: "毛孔／膚質",
-      recommendedTreatmentKeys: ["pico", "hydrafacial", "skin_booster", "fisbo"],
+      recommendedTreatmentKeys: ["pico", "m22_ipl", "lumecca", "hydrafacial", "skin_booster"],
       summary: "這類通常會先往膚質整理、清潔保養與整體細緻度方向評估。",
     },
     {
@@ -460,7 +550,7 @@ export const clinicConfig: ClinicConfig = {
       key: "dullness_brightening",
       keywords: ["暗沉", "提亮", "膚色不均", "氣色差", "美白"],
       label: "暗沉／提亮",
-      recommendedTreatmentKeys: ["pico", "skin_booster", "hydrafacial"],
+      recommendedTreatmentKeys: ["pico", "m22_ipl", "lumecca", "hydrafacial", "skin_booster"],
       summary: "這類通常會先往亮白、膚色均勻與整體膚況整理方向評估。",
     },
     {
@@ -468,8 +558,34 @@ export const clinicConfig: ClinicConfig = {
       key: "general_looseness",
       keywords: ["鬆弛", "下垂", "拉提", "緊實", "老化"],
       label: "鬆弛／下垂／拉提",
-      recommendedTreatmentKeys: ["tenthermage", "ultherapy", "qplus", "onda_pro"],
+      recommendedTreatmentKeys: ["tenthermage", "phoenix_thermage", "ultherapy", "qplus", "onda_pro", "emface"],
       summary: "這類通常會先往拉提、緊實與輪廓支撐方向評估。",
+    },
+  ],
+  customerConcernGroups: [
+    {
+      concernKeys: ["jawline_looseness"],
+      key: "double_chin_marionette",
+      label: "雙下巴／嘴邊肉",
+      treatmentKeyOrder: ["onda_pro", "tenthermage", "ultherapy", "qplus", "emface"],
+    },
+    {
+      concernKeys: ["dynamic_wrinkles", "nasolabial_fold"],
+      key: "fine_lines_wrinkles",
+      label: "細紋／皺紋",
+      treatmentKeyOrder: ["botox", "tenthermage", "filler", "counterclockwise"],
+    },
+    {
+      concernKeys: ["pores_texture", "dullness_brightening"],
+      key: "skin_texture_pores_spots",
+      label: "膚質／毛孔／斑點",
+      treatmentKeyOrder: ["pico", "m22_ipl", "lumecca", "hydrafacial", "skin_booster"],
+    },
+    {
+      concernKeys: ["general_looseness"],
+      key: "facial_looseness_sagging",
+      label: "臉部鬆弛／下垂",
+      treatmentKeyOrder: ["tenthermage", "phoenix_thermage", "ultherapy", "qplus", "onda_pro", "emface"],
     },
   ],
   treatmentList: withApprovedContent([
@@ -629,6 +745,7 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["蜂巢探頭", "蜂巢皮秒"],
       category: "laser",
+      consultationGuide: launchL1ConsultationGuide("蜂巢探頭"),
       evaluationNote: "是否要搭配蜂巢探頭，仍需依膚況與現場評估為主。",
       intro:
         "蜂巢探頭可先理解為探索皮秒可搭配的探頭模式之一，通常會和皮秒雷射一起評估，不是獨立的另一台儀器。",
@@ -639,6 +756,7 @@ export const clinicConfig: ClinicConfig = {
       aliases: ["探索皮秒", "皮秒", "蜂巢", "蜂巢皮秒"],
       category: "laser",
       consultationGuide: {
+        customerQuickReplies: launchL1CustomerQuickReplies("探索皮秒"),
         concernReplies: [
           {
             concernKey: "pores_texture",
@@ -680,6 +798,18 @@ export const clinicConfig: ClinicConfig = {
         followupPrompt: "您可以告訴我最在意的膚況，我先幫您整理諮詢方向😊",
         quickReplies: [
           {
+            key: "approved_l1_suitability",
+            terms: ["想了解 探索皮秒 適合改善什麼"],
+            reply: "探索皮秒可先依色素、膚質與整體膚況需求評估方向，實際是否適合仍需由醫師確認。",
+            followupPrompt: "😊 您目前主要在意毛孔、痘疤、斑點，還是膚色不均呢？",
+          },
+          {
+            key: "approved_l1_continue",
+            terms: ["我想繼續了解 探索皮秒"],
+            reply: "可以的，您想繼續了解探索皮秒的適合方向、價格活動，還是安排免費諮詢呢？",
+            followupPrompt: "😊 您也可以直接告訴我主要在意的膚況，我再依核准內容接著整理。",
+          },
+          {
             key: "features",
             terms: ["特色", "原理", "怎麼做", "探頭"],
             reply: "🟢 探索皮秒會依色素、膚質與整體膚況需求評估；蜂巢探頭是可搭配的模式之一，是否需要會依現場膚況判斷。",
@@ -699,18 +829,28 @@ export const clinicConfig: ClinicConfig = {
       name: "探索皮秒",
     },
     {
-      aliases: ["十蓓電波", "十倍電波", "眼周電波", "眼周探頭", "韓國十倍電波", "韓國十蓓電波"],
+      aliases: ["十蓓電波", "十蓓緊膚", "十倍電波", "韓國十倍電波", "韓國十蓓電波"],
       brandReply:
         "目前院內眼周電波也是十蓓電波的眼周探頭；如果您想了解眼周細紋、緊實或整體眼周評估方向，我也可以先幫您整理需求。",
       category: "energy",
+      consultationGuide: launchL1ConsultationGuide("十蓓電波"),
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
       intro: "十蓓電波可先理解為緊實與輪廓管理的評估方向之一，常見會用在鬆弛、下顎線、嘴邊肉等整體規劃；眼周也可搭配十蓓電波的眼周探頭做進一步評估。",
       key: "tenthermage",
       name: "十蓓電波",
     },
     {
-      aliases: ["鳳凰電波", "鳳凰"],
+      aliases: ["鳳凰電波", "鳳凰", "鳳凰眼周", "鳳凰電波眼周", "鳳凰眼周電波"],
+      brandOptions: [
+        {
+          aliases: ["鳳凰眼周", "鳳凰電波眼周", "鳳凰眼周電波"],
+          customerReply: "鳳凰眼周需依眼周狀況與使用規格由醫師評估；目前不套用一般鳳凰電波價格。",
+          key: "phoenix_eye",
+          name: "鳳凰眼周",
+        },
+      ],
       category: "energy",
+      consultationGuide: launchL1ConsultationGuide("鳳凰電波"),
       evaluationNote: "實際是否適合仍需依部位狀況與醫師現場評估為主。",
       intro: "鳳凰電波是院內提供的電波療程之一；若您想了解，可以先告訴我在意的部位或困擾，我幫您整理諮詢方向，實際仍需由醫師現場評估。",
       key: "phoenix_thermage",
@@ -719,6 +859,7 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["美國音波", "美國音波2.0", "音波拉提"],
       category: "energy",
+      consultationGuide: launchL1ConsultationGuide("美國音波 2.0"),
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
       intro: "美國音波 2.0 可先理解為拉提與輪廓線條管理的評估方向之一，常見會討論鬆弛、下垂與整體拉提需求。",
       key: "ultherapy",
@@ -727,6 +868,7 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["q+音波", "q音波"],
       category: "energy",
+      consultationGuide: launchL1ConsultationGuide("Q+音波"),
       evaluationNote: "實際是否適合仍需依部位狀況與現場評估為主。",
       intro: "Q+音波可先理解為緊實、拉提與輪廓管理的評估方向之一，通常會依老化鬆弛與線條需求做整體討論。",
       key: "qplus",
@@ -1036,7 +1178,7 @@ export const clinicConfig: ClinicConfig = {
       name: "伊蓮絲",
     },
     {
-      aliases: ["熊貓針"],
+      aliases: ["熊貓針", "雙美", "雙美膠原蛋白", "Sunmax"],
       category: "injectable",
       evaluationNote: "實際是否適合、施作部位與搭配方式仍需依眼周狀況與醫師評估為主。",
       intro: "熊貓針通常會拿來討論眼周暗沉、細紋、淚溝與整體眼周修飾方向，實際安排仍會依眼周條件與現場評估做調整。",
@@ -1109,6 +1251,7 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["mounjaro", "猛健樂"],
       category: "injectable",
+      consultationGuide: launchL1ConsultationGuide("猛健樂 Mounjaro"),
       educationMode: "general_education",
       evaluationNote: "這屬於需要醫師完整評估與處方管理的項目，不可自行判斷適合度或用法。",
       intro: "猛健樂屬於需由醫師評估與處方管理的項目；如果您想了解，可以先說明目前需求，實際適應症、是否適合、用法與追蹤方式都需由醫師判斷。",
@@ -1197,11 +1340,11 @@ export const clinicConfig: ClinicConfig = {
       name: "miraDry 清新微波",
     },
     {
-      aliases: ["emfemme", "蝴蝶電波", "emfemme蝴蝶電波", "蝴蝶電波forma", "forma私密電波"],
+      aliases: ["emfemme", "閨蜜電波", "emfemme閨蜜電波"],
       category: "energy",
-      educationMode: "general_education",
-      evaluationNote: "私密療程需由醫師了解個人需求與健康狀況後評估。",
-      intro: "EMFEMME 蝴蝶電波屬私密保養與緊實相關的評估項目；實際是否適合與療程安排需由醫師了解個人需求後判斷。",
+      educationMode: "human_only",
+      evaluationNote: "EMFEMME／閨蜜電波是舊名稱入口，需由真人客服確認實際想詢問的院內品項。",
+      intro: "EMFEMME／閨蜜電波是舊名稱入口，不作為獨立正式療程介紹；由真人客服協助確認需求。",
       key: "emfemme",
       name: "EMFEMME 蝴蝶電波",
     },
@@ -1224,8 +1367,10 @@ export const clinicConfig: ClinicConfig = {
       name: "魔塑電波",
     },
     {
-      aliases: ["emface"],
+      aliases: ["emface", "菲斯波"],
+      availableBranchNames: ["台中館"],
       category: "energy",
+      consultationGuide: launchL1ConsultationGuide("EMFACE"),
       educationMode: "general_education",
       evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
       intro: "EMFACE 可先從臉部肌肉、緊實與輪廓管理方向了解；實際是否適合與療程安排仍需由醫師現場評估。",
@@ -1253,6 +1398,7 @@ export const clinicConfig: ClinicConfig = {
     {
       aliases: ["ilib", "ilib靜脈雷射", "靜脈雷射"],
       category: "laser",
+      consultationGuide: launchL1ConsultationGuide("ILIB 靜脈雷射"),
       educationMode: "general_education",
       evaluationNote: "這屬於需要醫師評估健康狀況與療程適應性的項目。",
       intro: "ILIB 靜脈雷射屬需要醫師評估健康狀況與療程適應性的項目；可以先整理想了解的方向，後續由醫師進一步說明。",
@@ -1278,8 +1424,9 @@ export const clinicConfig: ClinicConfig = {
       name: "隆乳植入物諮詢",
     },
     {
-      aliases: ["除毛", "亞歷山大", "海神"],
+      aliases: ["除毛", "腋下除毛", "亞歷山大", "海神"],
       category: "laser",
+      consultationGuide: launchL1ConsultationGuide("除毛"),
       evaluationNote: "實際安排仍需依部位、毛髮狀況與現場評估為主。",
       intro: "除毛療程通常會依部位、毛髮粗細與膚況做評估；目前常見可討論的機型方向包含亞歷山大與海神。",
       key: "hair_removal",
@@ -1311,12 +1458,13 @@ export const clinicConfig: ClinicConfig = {
       name: "日式光纖",
     },
     {
-      aliases: ["菲斯波"],
+      aliases: ["菲斯波", "emface"],
       availableBranchNames: ["台中館"],
-      category: "skin_care",
-      evaluationNote: "實際是否適合、施作部位與安排方式，仍需依膚況與現場評估為主。",
-      intro:
-        "菲斯波可先理解為膚質管理與保養型療程的評估方向之一，常見會拿來討論肌膚細緻度、整體質感與日常保養需求；實際規劃仍會依膚況與想改善的重點調整。",
+      category: "energy",
+      consultationGuide: launchL1ConsultationGuide("EMFACE"),
+      educationMode: "general_education",
+      evaluationNote: "實際是否適合、部位與療程安排仍需由醫師現場評估。",
+      intro: "EMFACE 可先從臉部肌肉、緊實與輪廓管理方向了解；實際是否適合與療程安排仍需由醫師現場評估。",
       key: "fisbo",
       name: "菲斯波",
     },
@@ -1326,6 +1474,55 @@ export const clinicConfig: ClinicConfig = {
 
 export function normalizeClinicText(text: string) {
   return text.replace(/[\s\p{P}\p{S}]+/gu, "").trim().toLocaleLowerCase("en-US");
+}
+
+// This runtime boundary is intentionally narrower than the imported Notion
+// merge registry. Only customer-facing identities explicitly approved for the
+// current launch batch may change new-message ownership here; other imported
+// rows remain historical data until their own review.
+const TREATMENT_IDENTITY_MERGES: Readonly<Record<string, string>> = {
+  fisbo: APPROVED_NOTION_TREATMENT_MERGES.fisbo,
+  sunmax_collagen_brand: APPROVED_NOTION_TREATMENT_MERGES.sunmax_collagen_brand,
+};
+
+/**
+ * Maps only duplicate customer-facing identities. Exact key lookup remains
+ * unchanged so persisted conversation and booking keys stay readable.
+ */
+export function canonicalTreatmentKey(key: string) {
+  return TREATMENT_IDENTITY_MERGES[key] ?? key;
+}
+
+/**
+ * Finds a normalized clinic alias without treating a short ASCII alias as a
+ * substring inside another English word (for example VIO inside "previous").
+ */
+export function findNormalizedClinicAliasIndex(
+  normalizedMessage: string,
+  normalizedAlias: string,
+) {
+  if (!normalizedAlias) return -1;
+  const needsAsciiBoundary = /^[a-z0-9]+$/u.test(normalizedAlias);
+  let fromIndex = 0;
+  while (fromIndex <= normalizedMessage.length - normalizedAlias.length) {
+    const matchIndex = normalizedMessage.indexOf(normalizedAlias, fromIndex);
+    if (matchIndex < 0) return -1;
+    if (!needsAsciiBoundary) return matchIndex;
+    const before = normalizedMessage[matchIndex - 1] ?? "";
+    const after = normalizedMessage[matchIndex + normalizedAlias.length] ?? "";
+    const suffix = normalizedMessage.slice(matchIndex + normalizedAlias.length);
+    // Normalization removes whitespace, so an ordinary customer phrase such as
+    // "BOTOX 12U" becomes "botox12u".  A reviewed dose qualifier is a boundary,
+    // not evidence that the treatment alias is embedded in another English
+    // word.  Keep the normal ASCII boundary for unrelated words such as
+    // "previous", while allowing the common alias + dose form.
+    const followedByDose = /^[0-9]+(?:\.[0-9]+)?(?:u|單位)(?:[^a-z0-9]|$)/u.test(suffix);
+    if (!/[a-z0-9]/u.test(before) && (!/[a-z0-9]/u.test(after) || followedByDose)) {
+      return matchIndex;
+    }
+    fromIndex = matchIndex + 1;
+  }
+  return -1;
 }
 
 function matchBranchByMessage(message: string, includeInactive: boolean) {
@@ -1354,13 +1551,16 @@ export function findAllTreatmentsByMessage(message: string) {
       ...treatment.aliases.map((alias) => ({ alias, sourcePriority: 2 })),
       ...(treatment.recognitionTerms ?? []).map((alias) => ({ alias, sourcePriority: 2 })),
       ...(treatment.availableBrands ?? []).map((alias) => ({ alias, sourcePriority: 1 })),
-    ].map(({ alias, sourcePriority }) => ({
-      alias,
-      aliasLength: normalizeClinicText(alias).length,
-      messageIndex: normalizedMessage.indexOf(normalizeClinicText(alias)),
-      sourcePriority,
-      treatment,
-    })),
+    ].map(({ alias, sourcePriority }) => {
+      const normalizedAlias = normalizeClinicText(alias);
+      return {
+        alias,
+        aliasLength: normalizedAlias.length,
+        messageIndex: findNormalizedClinicAliasIndex(normalizedMessage, normalizedAlias),
+        sourcePriority,
+        treatment,
+      };
+    }),
   );
 
   const matches = candidates
@@ -1390,7 +1590,7 @@ export function findAllTreatmentsByMessage(message: string) {
   // treatment phrase, not two independently requested treatments. Only retain
   // the longest alias at a given message position; distinct phrases elsewhere
   // in the message (for example ONDA + 肉毒) remain separate matches.
-  return uniqueMatches
+  const selectedMatches = uniqueMatches
     .filter((match, index, all) => !all.some((other, otherIndex) =>
       otherIndex !== index &&
       other.messageIndex === match.messageIndex &&
@@ -1399,8 +1599,16 @@ export function findAllTreatmentsByMessage(message: string) {
         (other.aliasLength === match.aliasLength &&
           other.sourcePriority === match.sourcePriority &&
           otherIndex < index)),
-    ))
-    .map(({ treatment }) => treatment);
+    ));
+
+  const canonicalSeen = new Set<string>();
+  return selectedMatches.flatMap(({ treatment }) => {
+    const canonicalKey = canonicalTreatmentKey(treatment.key);
+    const canonicalTreatment = clinicConfig.treatmentList.find((item) => item.key === canonicalKey) ?? treatment;
+    if (canonicalSeen.has(canonicalTreatment.key)) return [];
+    canonicalSeen.add(canonicalTreatment.key);
+    return [canonicalTreatment];
+  });
 }
 
 export function findTreatmentByMessage(message: string) {

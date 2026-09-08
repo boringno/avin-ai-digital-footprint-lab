@@ -61,19 +61,33 @@ function stripApprovedClinicOfferingClaims(text: string) {
 }
 
 type AiReplyConstraintOptions = {
+  /** Exact customer-visible fragments loaded from clinic-approved content. */
+  approvedCustomerCopy?: readonly string[];
   groundedByApprovedKnowledge?: boolean;
   medical?: boolean;
 };
+
+function stripApprovedCustomerCopy(text: string, approvedCustomerCopy: readonly string[]) {
+  return approvedCustomerCopy.reduce((remaining, approvedText) => {
+    const normalizedApprovedText = normalizeGeneratedText(approvedText);
+    if (!normalizedApprovedText) return remaining;
+    return remaining.replaceAll(normalizedApprovedText, "");
+  }, text);
+}
 
 export function constrainMedicalAiReply(text: string, _footer: string, options: AiReplyConstraintOptions = {}) {
   const medical = options.medical ?? true;
   const groundedByApprovedKnowledge = options.groundedByApprovedKnowledge ?? false;
   const normalized = normalizeGeneratedText(text);
   const contentWithoutApprovedTreatmentNames = stripApprovedTreatmentNames(normalized);
+  const contentWithoutApprovedCustomerCopy = stripApprovedCustomerCopy(
+    normalized,
+    options.approvedCustomerCopy ?? [],
+  );
   const hasUnqualifiedSafetyClaim =
     SAFETY_TOPIC_PATTERN.test(normalized) && !SAFETY_QUALIFIER_PATTERN.test(normalized);
   const hasUnapprovedClinicFact = CLINIC_FACT_CLAIM_PATTERN.test(
-    stripApprovedClinicOfferingClaims(normalized),
+    stripApprovedClinicOfferingClaims(contentWithoutApprovedCustomerCopy),
   );
   if (
     !normalized ||

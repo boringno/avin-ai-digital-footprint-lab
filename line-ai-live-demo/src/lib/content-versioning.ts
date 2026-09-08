@@ -1,3 +1,5 @@
+import { pricingKindFor, pricingKinds, type PricingKind } from "@/lib/pricing-lifecycle";
+
 export const editableContentTypes = ["faq", "campaign"] as const;
 
 export type EditableContentType = (typeof editableContentTypes)[number];
@@ -26,6 +28,7 @@ export type CampaignApplicabilityFields = {
 };
 
 export type CampaignQuoteSettings = {
+  pricingKind: PricingKind;
   quotePriority: string;
 };
 
@@ -61,7 +64,7 @@ export function assertContentDraftInput(input: ContentDraftInput) {
   assertCampaignBookingFields(input.payload);
   assertCampaignApplicabilityFields(input.payload);
   assertCampaignQuoteSettings(input.payload);
-  if (!input.startAt || !input.endAt) {
+  if (pricingKindFor(input.payload) === "campaign" && (!input.startAt || !input.endAt)) {
     throw new Error("活動內容必須填寫開始與結束時間。");
   }
 }
@@ -106,11 +109,17 @@ export function writeCampaignApplicabilityFields(input: CampaignApplicabilityFie
 export function readCampaignQuoteSettings(
   payload: Record<string, unknown>,
 ): CampaignQuoteSettings {
-  return { quotePriority: optionalScalarText(payload.quote_priority) };
+  return {
+    pricingKind: pricingKindFor(payload),
+    quotePriority: optionalScalarText(payload.quote_priority),
+  };
 }
 
 export function writeCampaignQuoteSettings(input: CampaignQuoteSettings) {
-  return { quote_priority: input.quotePriority.trim() };
+  return {
+    pricing_kind: input.pricingKind,
+    quote_priority: input.quotePriority.trim(),
+  };
 }
 
 export type ContentVersionAction = "submit" | "approve" | "request_changes" | "publish" | "disable";
@@ -167,6 +176,13 @@ function assertCampaignApplicabilityFields(payload: Record<string, unknown>) {
 }
 
 function assertCampaignQuoteSettings(payload: Record<string, unknown>) {
+  const rawPricingKind = payload.pricing_kind;
+  if (
+    rawPricingKind !== undefined &&
+    (typeof rawPricingKind !== "string" || !pricingKinds.includes(rawPricingKind as PricingKind))
+  ) {
+    throw new Error("價格類型必須是期間活動或常態核准報價。");
+  }
   const raw = payload.quote_priority;
   if (raw === undefined || raw === "") return;
   const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : Number.NaN;

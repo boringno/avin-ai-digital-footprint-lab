@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 
 import {
   loadClinicFactsSnapshot,
+  resolveApprovedPromotionCatalog,
+  resolveApprovedPromotionCatalogSelection,
   resolveTreatmentFact,
   runtimeClinicFactsProvider,
   type ClinicFactsProvider,
@@ -35,6 +37,7 @@ import {
   isHedgedTreatmentReference,
   isPriceInquiry,
   isPriceInquiryWithTypoTolerance,
+  isPromotionBrowseIntent,
 } from "@/lib/pricing-subject";
 import { isSpecificPricingCampaign } from "@/lib/pricing-campaign-priority";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
@@ -61,6 +64,13 @@ import { resolveDeterministicNegationGuard } from "./deterministic-negation";
 import { resolveTrustedSemanticAnchor } from "./semantic-anchor";
 import { resolveTreatmentClarification } from "./treatment-clarification";
 import {
+  findCustomerConcernGroup,
+  isLaunchConcernEntryMessage,
+  projectLaunchConcernCandidates,
+  resolveCurrentConcernBranch,
+  resolveTreatmentBranchMismatch,
+} from "./concern-candidate-projection";
+import {
   projectConversationV2QuickReplies,
   withConversationV2QuickReplies,
 } from "./quick-replies";
@@ -71,6 +81,7 @@ import { resolvePriceSubjectForPolicy } from "./policy";
 import {
   cloneConversationV2State,
   createConversationV2State,
+  isConversationV2AiAssistanceEnabled,
   nextMissingBookingField,
   recordConversationV2TurnReceipt,
 } from "./state";
@@ -306,6 +317,24 @@ function attachDeterministicPriceApplicability(
   snapshot: ClinicFactsSnapshot,
   message: string,
 ): TurnUnderstanding {
+  const catalogSelection = resolveApprovedPromotionCatalogSelection(snapshot, message);
+  if (catalogSelection) {
+    return {
+      ...turn,
+      confidence: 1,
+      dialogueReference: "explicit",
+      priceApplicability: { ...catalogSelection.applicability },
+      priceSelection: {
+        applicability: { ...catalogSelection.applicability },
+        campaignId: catalogSelection.campaignId,
+        source: "approved_catalog_action",
+        treatmentKeys: [...catalogSelection.treatmentKeys],
+      },
+      questionAspect: "price_campaign",
+      questionAspects: ["price_campaign"],
+      speechAct: "ask_price",
+    };
+  }
   if (turn.speechAct !== "ask_price") return turn;
   const treatmentKeys = turn.treatments
     .filter((mention) => mention.polarity === "affirmed" && mention.resolution === "resolved")
@@ -511,6 +540,7 @@ export type ConversationV2LiveRouteResult =
       kind: "not_eligible";
     }
   | {
+      approvedReplyAssetId?: string;
       aiModel?: string;
       aiTokensIn?: number;
       aiTokensOut?: number;
@@ -849,6 +879,8 @@ function projectQuickRepliesIntoState(input: {
 }) {
   const projection = projectConversationV2QuickReplies(input.plan, input.state, {
     clinic: input.snapshot.clinic,
+    hasCurrentPromotionCatalog:
+      resolveApprovedPromotionCatalog(input.snapshot).status === "approved_current",
     issuedAt: input.now.toISOString(),
     ...(input.nextStage ? { nextStage: input.nextStage } : {}),
     snapshotId: input.snapshot.snapshotId,
@@ -860,6 +892,86 @@ function projectQuickRepliesIntoState(input: {
     delete state.pendingQuickReply;
   }
   return { plan: projection.plan, state };
+}
+
+function launchConcernEntryReplyText() {
+  return "😊 想先了解哪一類問題呢？可以選擇目前主要困擾或在意的部位，我會先提供可了解的療程方向，實際適合度仍由醫師或免費諮詢確認。";
+}
+
+function launchConcernCandidateReplyText(label: string, hasCandidates: boolean) {
+  return hasCandidates
+    ? `如果主要在意${label}，可以先了解以下幾個不同改善方向；實際適合度仍需由醫師或免費諮詢確認。`
+    : `我目前沒有可安全直接列出的${label}療程方向，建議先預約免費諮詢或由真人客服協助確認。`;
+}
+
+function launchConcernProjectedDecision(input: {
+  branchName?: string;
+  context: ConversationContext;
+  entry?: true;
+  groupKey?: string;
+  matchedKey: string;
+  now: Date;
+  snapshot: ClinicFactsSnapshot;
+  state: ConversationV2State;
+  turnId: string;
+}) {
+  const state = recordConversationV2TurnReceipt(input.state, input.turnId, input.now.toISOString());
+  const group = input.groupKey
+    ? findCustomerConcernGroup(input.snapshot.clinic, input.groupKey)
+    : undefined;
+  const candidateProjection = group
+    ? projectLaunchConcernCandidates({
+        ...(input.branchName ? { branchName: input.branchName } : {}),
+        groupKey: group.key,
+        snapshot: input.snapshot,
+      })
+    : undefined;
+  const replyText = input.entry
+    ? launchConcernEntryReplyText()
+    : group
+      ? launchConcernCandidateReplyText(group.label, (candidateProjection?.treatmentKeys.length ?? 0) > 0)
+      : "想先了解哪一類問題呢？我會先依院內核准內容整理方向。";
+  const basePlan = legacyDecisionToReplyPlan({
+    decisionType: "treatment_intro_reply",
+    matchedKey: input.matchedKey,
+    matchedType: "guided_reply",
+    replyText,
+  }, {
+    ...(group ? { concernKeys: group.concernKeys } : {}),
+    concernCandidateProjection: input.entry
+      ? {
+          ...(input.branchName ? { branchName: input.branchName } : {}),
+          kind: "entry",
+        }
+      : candidateProjection
+        ? {
+            ...(candidateProjection.branchName ? { branchName: candidateProjection.branchName } : {}),
+            groupKey: candidateProjection.groupKey,
+            kind: "candidates",
+            treatmentKeys: candidateProjection.treatmentKeys,
+          }
+        : undefined,
+    dialogueAct: input.entry ? "discover_need" : "recommend_direction",
+    fallbackText: replyText,
+    renderMode: "deterministic",
+    requiresHuman: false,
+  });
+  const projection = projectQuickRepliesIntoState({
+    now: input.now,
+    plan: basePlan,
+    snapshot: input.snapshot,
+    state,
+  });
+  return {
+    nextContext: projectStateToContext({
+      context: input.context,
+      matchedKey: input.matchedKey,
+      snapshot: input.snapshot,
+      state: projection.state,
+    }),
+    replyPlan: projection.plan,
+    replyText,
+  };
 }
 
 function normalizeDecisionType(value: string): RouterDecision["decisionType"] {
@@ -918,6 +1030,7 @@ function deterministicFallback(
   reason: string,
   turnId: string,
   at: string,
+  hasCurrentPromotionCatalog = false,
 ): RouterDecision {
   const receivedState = recordConversationV2TurnReceipt(state, turnId, at);
   const replyText = buildDeterministicFallbackText(context);
@@ -933,7 +1046,7 @@ function deterministicFallback(
       fallbackText: replyText,
       renderMode: "deterministic",
     },
-  ), receivedState);
+  ), receivedState, { hasCurrentPromotionCatalog });
   return {
     decisionType: "fallback_reply",
     matchedKey: replyPlan.matchedKey,
@@ -1272,6 +1385,98 @@ export async function routeConversationV2Canary(
       snapshotId: snapshot.snapshotId,
       state,
     });
+    const concernGroupSelection = quickReplySelection?.launchConcernGroupKey;
+    const explicitConcernEntry = isLaunchConcernEntryMessage(routingMessage);
+    // Safety and booking boundaries have already run above. A concern entry is
+    // presentation-only: it records the turn and projects approved choices,
+    // but does not create a treatment subject until the customer selects one.
+    if (
+      isConversationV2AiAssistanceEnabled(state.control.mode) &&
+      state.bookingTask.status !== "collecting" &&
+      (explicitConcernEntry || concernGroupSelection)
+    ) {
+      const currentBranch = resolveCurrentConcernBranch({
+        message: routingMessage,
+        state,
+      });
+      const projected = launchConcernProjectedDecision({
+        ...(currentBranch ? { branchName: currentBranch } : {}),
+        context: input.context,
+        ...(explicitConcernEntry ? { entry: true } : {}),
+        ...(concernGroupSelection ? { groupKey: concernGroupSelection } : {}),
+        matchedKey: explicitConcernEntry
+          ? "conversation_v2:launch_concern:entry"
+          : `conversation_v2:launch_concern:${concernGroupSelection}`,
+        now: input.now,
+        snapshot,
+        state,
+        turnId,
+      });
+      return {
+        dataStatus: "ready",
+        decision: {
+          decisionType: "treatment_intro_reply",
+          matchedKey: projected.replyPlan.matchedKey,
+          matchedType: "guided_reply",
+          nextContext: projected.nextContext,
+          replyPlan: projected.replyPlan,
+          replyText: projected.replyText,
+        },
+        gate,
+        kind: "routed",
+        nluTelemetry,
+        policyAction: "launch_concern_projection",
+        snapshotId: snapshot.snapshotId,
+      };
+    }
+    const branchMismatch = isPriceInquiryWithTypoTolerance(
+      routingMessage,
+      false,
+    )
+      ? undefined
+      : resolveTreatmentBranchMismatch({ message: routingMessage, snapshot });
+    if (
+      isConversationV2AiAssistanceEnabled(state.control.mode) &&
+      state.bookingTask.status !== "collecting" &&
+      branchMismatch
+    ) {
+      const city = branchMismatch.branchName.replace(/館$/u, "");
+      const replyText = [
+        `${branchMismatch.treatmentName}目前僅${branchMismatch.availableBranchNames.join("、")}提供。`,
+        `如果希望在${city}處理，我可以先了解你比較想改善哪一類問題？`,
+      ].join("\n");
+      const projected = launchConcernProjectedDecision({
+        branchName: branchMismatch.branchName,
+        context: input.context,
+        entry: true,
+        matchedKey: `conversation_v2:branch_mismatch:${branchMismatch.treatmentKey}`,
+        now: input.now,
+        snapshot,
+        state,
+        turnId,
+      });
+      const replyPlan = {
+        ...projected.replyPlan,
+        deterministicReply: replyText,
+        fallbackText: replyText,
+      };
+      return {
+        dataStatus: "ready",
+        decision: {
+          decisionType: "treatment_intro_reply",
+          matchedKey: replyPlan.matchedKey,
+          matchedType: "guided_reply",
+          nextContext: projected.nextContext,
+          replyPlan,
+          replyText,
+        },
+        gate,
+        kind: "routed",
+        nluTelemetry,
+        policyAction: "branch_mismatch_concern_entry",
+        snapshotId: snapshot.snapshotId,
+      };
+    }
     const nlu = await (dependencies.requestFrame ?? requestNluFrame)(routingMessage, {
       ontology: snapshot.ontology,
       recentTurns: episodeRecentTurns,
@@ -1329,12 +1534,19 @@ export async function routeConversationV2Canary(
             ontology: snapshot.ontology,
             state,
           });
+      const exactCatalogSelection = resolveApprovedPromotionCatalogSelection(
+        snapshot,
+        routingMessage,
+      );
       const deterministicPriceInquiry =
+        Boolean(exactCatalogSelection) ||
+        isPromotionBrowseIntent(routingMessage) || (
         isPriceInquiryWithTypoTolerance(
           routingMessage,
           matchClinicOntology(routingMessage, snapshot.ontology).treatments.length > 0,
         ) &&
-        !isHedgedTreatmentReference(routingMessage);
+        !isHedgedTreatmentReference(routingMessage)
+      );
       const treatmentClarification =
         trustedDeterministicBooking || negationGuard || semanticAnchor
           ? undefined
@@ -1361,6 +1573,7 @@ export async function routeConversationV2Canary(
             nlu?.errorCode ?? "nlu_unavailable",
             turnId,
             input.now.toISOString(),
+            resolveApprovedPromotionCatalog(snapshot).status === "approved_current",
           ),
           gate,
           kind: "routed",
@@ -1413,6 +1626,9 @@ export async function routeConversationV2Canary(
         const deterministicPlan = deterministicProjection?.plan ?? null;
         if (deterministicPlan) {
           return {
+            ...(deterministicHydrated.approvedReplyAssetId
+              ? { approvedReplyAssetId: deterministicHydrated.approvedReplyAssetId }
+              : {}),
             aiModel: nlu?.model,
             aiTokensIn: nlu?.tokensIn,
             aiTokensOut: nlu?.tokensOut,
@@ -1457,6 +1673,7 @@ export async function routeConversationV2Canary(
           nlu?.errorCode ?? "nlu_unavailable",
           turnId,
           input.now.toISOString(),
+          resolveApprovedPromotionCatalog(snapshot).status === "approved_current",
         ),
         gate,
         kind: "routed",
@@ -1664,6 +1881,9 @@ export async function routeConversationV2Canary(
       CUSTOMER_SAFE_TREATMENT_FALLBACK,
     );
     return {
+      ...(hydrated.approvedReplyAssetId
+        ? { approvedReplyAssetId: hydrated.approvedReplyAssetId }
+        : {}),
       aiModel: nlu.model,
       aiTokensIn: nlu.tokensIn,
       aiTokensOut: nlu.tokensOut,

@@ -73,7 +73,9 @@ export type PriceQuery = {
   applicability?: PriceApplicabilityDimensions;
   /** Internally selected clinic-approved offer. Never populated from free-form model output. */
   campaignId?: string;
-  kind: "campaign" | "regular" | "unspecified";
+  kind: "browse" | "campaign" | "regular" | "unspecified";
+  /** Trusted UI origin; allows a selected campaign card to receive its own approved introduction. */
+  selectionSource?: "approved_catalog_action";
   treatmentKeys: readonly string[];
 };
 
@@ -133,6 +135,47 @@ export type UnavailablePriceFact = {
 };
 
 export type PriceFactResolution = ApprovedCurrentPriceFact | UnavailablePriceFact;
+
+/**
+ * One customer-visible row in the current approved promotion catalog. It is
+ * intentionally narrower than PricingCampaign: dates, internal campaign
+ * labels, notes and fallback prose never cross this boundary.
+ */
+export type ApprovedPromotionCatalogItem = {
+  applicability: PriceApplicabilityDimensions;
+  branchScope: string | null;
+  campaignId: string;
+  customerAssetUrls: string[];
+  customerPriceText: string;
+  displayName: string;
+  provenance: ClinicFactProvenance;
+  status: "approved_current";
+  treatmentKeys: string[];
+};
+
+/**
+ * A customer action that round-tripped through the current approved catalog.
+ * The campaign id is selected deterministically from the pinned snapshot; it
+ * never comes from model output or an arbitrary client-supplied identifier.
+ */
+export type ApprovedPromotionCatalogSelection = {
+  campaignId: string;
+  applicability: PriceApplicabilityDimensions;
+  treatmentKeys: string[];
+};
+
+export type PromotionCatalogResolution =
+  | {
+      items: ApprovedPromotionCatalogItem[];
+      provenance: ClinicFactProvenance;
+      status: "approved_current";
+    }
+  | {
+      items: [];
+      provenance: ClinicFactProvenance;
+      reason: "not_provided" | "source_unavailable";
+      status: "unavailable";
+    };
 
 export type TreatmentKnowledgeResolution = {
   /** Customer-visible approved replies for the requested aspect (for example brands). */

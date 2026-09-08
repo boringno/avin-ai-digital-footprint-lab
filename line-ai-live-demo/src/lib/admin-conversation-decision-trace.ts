@@ -1,4 +1,5 @@
 export type ConversationDecisionTrace = {
+  approvedReplyAssetId: string | null;
   decisionType: string | null;
   fallbackReason: string | null;
   guardReplacedText: boolean | null;
@@ -32,6 +33,7 @@ export function getConversationDecisionTrace(payload: unknown): ConversationDeci
 
   const record = payload as Record<string, unknown>;
   const trace = {
+    approvedReplyAssetId: readString(record.conversation_v2_approved_reply_asset_id),
     decisionType: readString(record.decision_type),
     fallbackReason: readString(record.renderer_fallback_reason),
     guardReplacedText: readBoolean(record.renderer_guard_replaced_text),

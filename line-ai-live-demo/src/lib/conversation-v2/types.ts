@@ -139,6 +139,8 @@ export type KnowledgeContext = {
 
 export type PendingQuickReplySemantic =
   | { concernKey: string; kind: "concern" }
+  | { groupKey: string; kind: "launch_concern_group" }
+  | { kind: "treatment"; treatmentKey: string }
   | {
       areaKey?: string;
       concernKey?: string;
@@ -163,11 +165,17 @@ export type PendingQuickReplyChoice = {
  */
 export type PendingQuickReplyContract = {
   choices: PendingQuickReplyChoice[];
+  /** A branch named in the same live discovery exchange, never historic profile data. */
+  contextBranchName?: string;
   episodeId: string;
   expiresAt: string;
   contractId: string;
   issuedAt: string;
-  owner: { kind: "treatment"; treatmentKey: string };
+  owner: {
+    kind: "launch_concern" | "treatment";
+    /** Empty only when owner.kind is launch_concern; no treatment lookup may use it. */
+    treatmentKey: string;
+  };
   sourceSnapshotId: string;
   sourceTurnId: string;
 };
@@ -289,6 +297,13 @@ export type TurnUnderstanding = {
   handoffReason?: string;
   /** Structured price qualifiers extracted by NLU or a deterministic tool. */
   priceApplicability?: PriceApplicabilityDimensions;
+  /** Exact current offer selected through a snapshot-verified catalog action. */
+  priceSelection?: {
+    applicability: PriceApplicabilityDimensions;
+    campaignId: string;
+    source: "approved_catalog_action";
+    treatmentKeys: string[];
+  };
   questionAspect: QuestionAspect;
   /** Ordered current-message NLU candidate aspects; shadow-only and absent on legacy fixtures. */
   questionAspects?: QuestionAspect[];
@@ -356,8 +371,10 @@ export type DialoguePolicyAction =
       type: "answer_clinic_info";
     })
   | (PolicyActionBase & {
+      campaignId?: string;
       priceApplicability?: PriceApplicabilityDimensions;
-      priceKind: "campaign" | "regular" | "unspecified";
+      priceKind: "browse" | "campaign" | "regular" | "unspecified";
+      priceSelectionSource?: "approved_catalog_action";
       priceSubjectSource?: PriceSubjectSource;
       treatmentKeys: string[];
       type: "answer_price";

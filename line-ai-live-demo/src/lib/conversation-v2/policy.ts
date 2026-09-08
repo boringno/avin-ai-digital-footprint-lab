@@ -1,5 +1,9 @@
 import { findAllTreatmentsByMessage, findTreatmentByMessage } from "@/lib/clinic-config";
-import { isHedgedTreatmentReference, isPriceInquiry } from "@/lib/pricing-subject";
+import {
+  isHedgedTreatmentReference,
+  isPriceInquiry,
+  isPromotionBrowseIntent,
+} from "@/lib/pricing-subject";
 import {
   createOffResponseContract,
   type ResponseContractRuntimeMode,
@@ -54,6 +58,18 @@ function explicitPriceTreatmentKey(text: string) {
   // treatment the customer just declined. Defer to the model's entities instead.
   const named = findAllTreatmentsByMessage(text);
   return named.length === 1 ? named[0]?.key : undefined;
+}
+
+/**
+ * A catalog browse belongs to the current sentence, not to whichever treatment
+ * happened to be active before it.  Keep this deterministic so a stale ONDA or
+ * botox subject cannot turn "全部活動" into a single-treatment quote.
+ *
+ * Conversely, "Q+ 有什麼活動" names a treatment in the same sentence and must
+ * stay on the ordinary explicit-subject price path.
+ */
+function isBroadPromotionBrowseTurn(turn: TurnUnderstanding) {
+  return isPromotionBrowseIntent(turn.text) && findAllTreatmentsByMessage(turn.text).length === 0;
 }
 
 function isPureExplicitTreatmentContinuationAnswer(turn: TurnUnderstanding) {
@@ -781,10 +797,14 @@ function deterministicPlan(
         dialogueAct: "answer_price",
         mode: "deterministic",
         pricingQuery: {
+          ...(action.campaignId ? { campaignId: action.campaignId } : {}),
           ...(action.priceApplicability
             ? { applicability: { ...action.priceApplicability } }
             : {}),
           kind: action.priceKind,
+          ...(action.priceSelectionSource
+            ? { selectionSource: action.priceSelectionSource }
+            : {}),
           treatmentKeys: [...action.treatmentKeys],
         },
         pricingSubjectSource: action.priceSubjectSource,
@@ -854,6 +874,15 @@ function planForAction(
   } else {
     plan = deterministicPlan(action);
   }
+  if (
+    plan.mode === "deterministic" &&
+    (plan.dialogueAct === "collect_booking" || plan.dialogueAct === "manage_booking")
+  ) {
+    const supplementalPricing = bookingSupplementalPricing(state, turn);
+    if (supplementalPricing) {
+      plan = { ...plan, ...supplementalPricing };
+    }
+  }
   return {
     ...plan,
     responseContract: buildResponseContractForAction({
@@ -862,6 +891,62 @@ function planForAction(
       requestedMode: responseContractMode,
       turn,
     }),
+  };
+}
+
+/**
+ * A booking request remains the single state-owning action, but it must not
+ * discard an explicit price or promotion question in the same customer turn.
+ * The query carries only deterministic identifiers into hydration; the clinic
+ * facts resolver remains the sole authority for customer-visible amounts.
+ */
+function bookingSupplementalPricing(
+  state: ConversationV2State,
+  turn: TurnUnderstanding,
+): Pick<DeterministicReplyPlan, "pricingQuery" | "pricingSubjectSource"> | undefined {
+  const requestsPrice =
+    isPriceInquiry(turn.text) ||
+    isPromotionBrowseIntent(turn.text) ||
+    (turn.questionAspects ?? []).some((aspect) =>
+      ["price_campaign", "price_regular", "price_unspecified"].includes(aspect),
+    );
+  if (!requestsPrice) return undefined;
+
+  if (turn.priceSelection) {
+    return {
+      pricingQuery: {
+        applicability: { ...turn.priceSelection.applicability },
+        campaignId: turn.priceSelection.campaignId,
+        kind: "campaign",
+        selectionSource: turn.priceSelection.source,
+        treatmentKeys: [...turn.priceSelection.treatmentKeys],
+      },
+      pricingSubjectSource: "explicit_current",
+    };
+  }
+
+  if (isBroadPromotionBrowseTurn(turn)) {
+    return {
+      pricingQuery: { kind: "browse", treatmentKeys: [] },
+    };
+  }
+
+  const priceSubject = resolvePriceSubjectForPolicy(state, turn);
+  const bookingTreatmentKeys = turn.booking?.fields?.treatmentKeys ?? [];
+  const treatmentKeys = priceSubject.treatmentKeys.length > 0
+    ? priceSubject.treatmentKeys
+    : bookingTreatmentKeys;
+  if (priceSubject.blockedByUnconfirmedMention || treatmentKeys.length === 0) {
+    return undefined;
+  }
+  const applicability = priceApplicabilityForTurn(state, turn);
+  return {
+    pricingQuery: {
+      ...(applicability ? { applicability } : {}),
+      kind: priceKindForTurn(turn),
+      treatmentKeys: [...treatmentKeys],
+    },
+    pricingSubjectSource: priceSubject.source ?? "explicit_current",
   };
 }
 
@@ -1136,56 +1221,78 @@ export function evaluateDialoguePolicy(
       type: "fallback_clarify",
     };
   } else if (turn.speechAct === "ask_price") {
-    const priceKind = priceKindForTurn(turn);
-    const priceApplicability = priceApplicabilityForTurn(state, turn);
-    if (turn.clarification?.slot === "treatment") {
-      const awaiting = makeAwaiting(turn, state)!;
-      const areaKeys = confirmedKeys(turn, turn.areas);
-      const concernKeys = confirmedKeys(turn, turn.concerns);
+    if (turn.priceSelection) {
       action = {
-        areaKeys,
         at: turn.receivedAt,
-        awaiting: {
-          ...awaiting,
-          continuation: {
-            kind: "answer_price",
-            ...(priceApplicability ? { priceApplicability } : {}),
-            priceKind,
-          },
-          knowledgeMode: "replace_active_subject",
-          pendingKnowledge: {
-            areaKeys,
-            concernKeys,
-            treatmentKeys: [],
-          },
-          responseContext: turnPreferenceContext,
-        },
-        concernKeys,
-        knowledgeMode: "merge",
-        responseContext: turnPreferenceContext,
-        taskKind: "learn_treatment",
+        campaignId: turn.priceSelection.campaignId,
+        priceApplicability: { ...turn.priceSelection.applicability },
+        priceKind: "campaign",
+        priceSelectionSource: turn.priceSelection.source,
+        priceSubjectSource: "explicit_current",
+        treatmentKeys: [...turn.priceSelection.treatmentKeys],
+        turnId: turn.turnId,
+        type: "answer_price",
+      };
+    } else if (isBroadPromotionBrowseTurn(turn)) {
+      action = {
+        at: turn.receivedAt,
+        priceKind: "browse",
         treatmentKeys: [],
         turnId: turn.turnId,
-        type: "clarify",
+        type: "answer_price",
       };
     } else {
-      const priceSubject = resolvePriceSubjectForPolicy(state, turn);
-      action = priceSubject.blockedByUnconfirmedMention || priceSubject.treatmentKeys.length === 0
-        ? {
-            at: turn.receivedAt,
-            prompt: "想確認一下，您要詢問哪一項療程的價格呢？",
-            turnId: turn.turnId,
-            type: "fallback_clarify",
-          }
-        : {
-            at: turn.receivedAt,
-            priceApplicability,
-            priceKind,
-            priceSubjectSource: priceSubject.source,
-            treatmentKeys: priceSubject.treatmentKeys,
-            turnId: turn.turnId,
-            type: "answer_price",
-          };
+      const priceKind = priceKindForTurn(turn);
+      const priceApplicability = priceApplicabilityForTurn(state, turn);
+      if (turn.clarification?.slot === "treatment") {
+        const awaiting = makeAwaiting(turn, state)!;
+        const areaKeys = confirmedKeys(turn, turn.areas);
+        const concernKeys = confirmedKeys(turn, turn.concerns);
+        action = {
+          areaKeys,
+          at: turn.receivedAt,
+          awaiting: {
+            ...awaiting,
+            continuation: {
+              kind: "answer_price",
+              ...(priceApplicability ? { priceApplicability } : {}),
+              priceKind,
+            },
+            knowledgeMode: "replace_active_subject",
+            pendingKnowledge: {
+              areaKeys,
+              concernKeys,
+              treatmentKeys: [],
+            },
+            responseContext: turnPreferenceContext,
+          },
+          concernKeys,
+          knowledgeMode: "merge",
+          responseContext: turnPreferenceContext,
+          taskKind: "learn_treatment",
+          treatmentKeys: [],
+          turnId: turn.turnId,
+          type: "clarify",
+        };
+      } else {
+        const priceSubject = resolvePriceSubjectForPolicy(state, turn);
+        action = priceSubject.blockedByUnconfirmedMention || priceSubject.treatmentKeys.length === 0
+          ? {
+              at: turn.receivedAt,
+              prompt: "想確認一下，您要詢問哪一項療程的價格呢？",
+              turnId: turn.turnId,
+              type: "fallback_clarify",
+            }
+          : {
+              at: turn.receivedAt,
+              priceApplicability,
+              priceKind,
+              priceSubjectSource: priceSubject.source,
+              treatmentKeys: priceSubject.treatmentKeys,
+              turnId: turn.turnId,
+              type: "answer_price",
+            };
+      }
     }
   } else if (turn.speechAct === "ask_clinic_info") {
     action = {

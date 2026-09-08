@@ -192,15 +192,29 @@ function resolveBranchAvailability(
       scope: "selected",
     };
   }
-  if (snapshot.explicitAllBranchTreatmentKeys.has(treatment.key)) {
+  if (
+    treatment.clinicAvailability.scope === "all_active_branches" ||
+    snapshot.explicitAllBranchTreatmentKeys.has(treatment.key)
+  ) {
     return {
       branchNames: unique(snapshot.clinic.branches.filter((branch) => branch.isActive).map((branch) => branch.name)),
       scope: "all",
     };
   }
-  // The legacy adapter derived all_active_branches from a missing field. V2
-  // must not turn that absence into a customer-visible all-branch claim.
   return { branchNames: [], scope: "unknown" };
+}
+
+function customerBranchAvailabilityReply(
+  treatmentName: string,
+  availability: OfferedTreatmentFact["branchAvailability"],
+) {
+  if (availability.scope === "selected" && availability.branchNames.length > 0) {
+    return `${treatmentName}目前僅${availability.branchNames.join("、")}提供。`;
+  }
+  if (availability.scope === "all" && availability.branchNames.length > 0) {
+    return `${treatmentName}目前四館皆有提供。`;
+  }
+  return "";
 }
 
 function treatmentMissingFields(
@@ -301,6 +315,10 @@ export function resolveTreatmentFact(
   }
 
   const branchAvailability = resolveBranchAvailability(snapshot, treatment);
+  const branchAvailabilityReply = customerBranchAvailabilityReply(
+    treatment.name,
+    branchAvailability,
+  );
   const customerAspectReplies = treatment.educationMode === "human_only"
     ? []
     : approvedCustomerAspectReplies(treatment, questionAspect);
@@ -308,6 +326,7 @@ export function resolveTreatmentFact(
     ? []
     : [
         ...buildTreatmentApprovedFactsForMode(treatment, mode),
+        branchAvailabilityReply,
         ...(questionAspect === "brands" || questionAspect === "brand_difference"
           ? [
               ...(treatment.availableBrands.length > 0
@@ -323,7 +342,7 @@ export function resolveTreatmentFact(
   const missingFields = treatmentMissingFields(treatment, mode, questionAspect);
   const customerIntroReplies = treatment.educationMode === "human_only"
     ? []
-    : unique(treatment.approvedIntroReplies);
+    : unique([...treatment.approvedIntroReplies, branchAvailabilityReply]);
   return {
     branchAvailability,
     customerAspectReplies,

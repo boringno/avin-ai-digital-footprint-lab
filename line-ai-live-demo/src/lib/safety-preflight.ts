@@ -400,6 +400,10 @@ function hasContraindicationOrMedicalHistorySignal(message: string) {
   }
   const normalizedMessage = message.replace(/\s+/g, "").toLowerCase();
   return (
+    /(?:直接|自行|自己)?停藥/u.test(normalizedMessage) ||
+    /(?:自行|自己).{0,8}(?:加量|減量|調整劑量)/u.test(normalizedMessage) ||
+    /(?:要|該|應該|可以|能不能|能否)?(?:打|用|吃)?幾(?:mg|毫克)/u.test(normalizedMessage) ||
+    /(?:怎麼|如何).{0,8}(?:打|施打|用藥|吃藥)/u.test(normalizedMessage) ||
     /我有.{1,30}(?:可以|可不可以|能不能|能否|適不適合)/u.test(normalizedMessage) ||
     /我在(?:吃|服用)|我正在用/u.test(normalizedMessage) ||
     /(?:我有)?.{0,30}病史/u.test(normalizedMessage) ||
@@ -539,6 +543,17 @@ export function runImmediateSafetyPreflight(input: {
       matchedKey: "price_commitment_request",
       matchedType: "handoff_rule",
       replyText: buildHumanHandoffReply("價格承諾這類問題需要由真人客服進一步確認，我先幫您整理想了解的療程與館別。", now),
+    };
+  }
+  if (includesAnyTerm(message, clinicConfig.escalationPolicy.personalizedConsultTerms)) {
+    return {
+      decisionType: "handoff_pending",
+      matchedKey: "personalized_consult",
+      matchedType: "handoff_rule",
+      replyText: buildHumanHandoffReply(
+        "已幫您記錄女醫師的偏好；實際可安排的醫師與時段需要由真人客服依各館排班確認，線上先不保證一定能安排。",
+        now,
+      ),
     };
   }
   if (includesAnyTerm(message, clinicConfig.escalationPolicy.humanRequestTerms)) {

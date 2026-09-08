@@ -1,4 +1,11 @@
-import { clinicConfig, findTreatmentByMessage, type ClinicConfig, type TreatmentConfig } from "../src/lib/clinic-config";
+import {
+  canonicalTreatmentKey,
+  clinicConfig,
+  findTreatmentBrandByMessage,
+  findTreatmentByMessage,
+  type ClinicConfig,
+  type TreatmentConfig,
+} from "../src/lib/clinic-config";
 import { APPROVED_NOTION_TREATMENT_MERGES } from "../src/lib/approved-notion-treatments";
 import {
   CLINIC_CONFIG_CONTENT_VERSION,
@@ -98,10 +105,144 @@ function validateNotionApprovedTreatments() {
     findTreatmentByMessage("想問奇蹟肉毒")?.key === "botox",
     "TK8: approved Botox brand alias must resolve to the canonical Botox conversation family",
   );
+  for (const [message, expectedKey] of [
+    ["VIO除毛", "hair_removal_vio"],
+    ["瑞絲朗", "restylane_brand"],
+    ["瑞絲朗 Defyne", "restylane_defyne_brand"],
+    ["Restylane Defyne", "restylane_defyne_brand"],
+    ["瑞絲朗 Kysse", "restylane_kysse_brand"],
+    ["Restylane Kysse", "restylane_kysse_brand"],
+    ["瑞絲朗 Vital Light", "restylane_vital_light_brand"],
+    ["Restylane Vital Light", "restylane_vital_light_brand"],
+    ["瑞絲朗 Volyme", "restylane_volyme_brand"],
+    ["Restylane Volyme", "restylane_volyme_brand"],
+  ] as const) {
+    assert(
+      findTreatmentByMessage(message)?.key === expectedKey,
+      `TK8: ${message} must resolve to ${expectedKey} instead of a generic or overlapping owner`,
+    );
+  }
   assert(
-    Object.values(APPROVED_NOTION_TREATMENT_MERGES).every((key) => key === "botox") &&
-      Object.keys(APPROVED_NOTION_TREATMENT_MERGES).length === 3,
-    "TK8: all three approved Botox brand rows must be explicitly merged into the canonical family",
+    findTreatmentByMessage("previous treatment")?.key !== "hair_removal_vio",
+    "TK8: the ASCII VIO alias must not match inside an unrelated English word",
+  );
+  assert(APPROVED_NOTION_TREATMENT_MERGES.botox_classic_brand === "botox", "TK8: classic Botox must retain its canonical owner");
+  assert(APPROVED_NOTION_TREATMENT_MERGES.dysport_brand === "botox", "TK8: Dysport must retain its canonical owner");
+  assert(APPROVED_NOTION_TREATMENT_MERGES.neuronox_brand === "botox", "TK8: Neuronox must retain its canonical owner");
+  assert(
+    APPROVED_NOTION_TREATMENT_MERGES.sunmax_collagen_brand === "panda_needle",
+    "TK8: Sunmax collagen must merge into Panda Needle at the customer identity layer",
+  );
+  assert(
+    APPROVED_NOTION_TREATMENT_MERGES.fisbo === "emface",
+    "TK8: Fisbo must merge into EMFACE at the customer identity layer",
+  );
+  assert(
+    canonicalTreatmentKey("dysport_brand") === "dysport_brand" &&
+      canonicalTreatmentKey("neuronox_brand") === "neuronox_brand",
+    "TK8: unapproved brand mappings must not change runtime customer identity ownership",
+  );
+
+  const identityCases = [
+    ["EMFACE", "emface"],
+    ["菲斯波", "emface"],
+    ["熊貓針", "panda_needle"],
+    ["雙美膠原蛋白", "panda_needle"],
+    ["蝴蝶電波", "butterfly_forma_rf"],
+    ["FORMA V", "butterfly_forma_rf"],
+    ["鳳凰眼周", "phoenix_thermage"],
+    ["十蓓眼周", "tenthermage_eye_tip"],
+  ] as const;
+  const resolver = createTreatmentKnowledgeResolver();
+  for (const [message, expectedKey] of identityCases) {
+    assert(findTreatmentByMessage(message)?.key === expectedKey, `TK8: config matcher must resolve ${message} to ${expectedKey}`);
+    assert(resolver.resolveByMessage(message)?.key === expectedKey, `TK8: knowledge resolver must resolve ${message} to ${expectedKey}`);
+  }
+
+  assert(resolver.resolveByKey("fisbo")?.key === "fisbo", "TK8: legacy Fisbo state keys must remain readable");
+  const emface = requireTreatment("emface");
+  const legacyFisbo = requireTreatment("fisbo");
+  assert(
+    JSON.stringify(emface.availableBranchNames) === JSON.stringify(["台中館"]),
+    "TK8: EMFACE must be available only at Taichung",
+  );
+  assert(
+    JSON.stringify(legacyFisbo.availableBranchNames) === JSON.stringify(["台中館"]),
+    "TK8: legacy Fisbo must retain the Taichung-only boundary",
+  );
+  assert(legacyFisbo.category === emface.category, "TK8: legacy Fisbo must not retain a conflicting skin-care category");
+  assert(legacyFisbo.intro === emface.intro, "TK8: legacy Fisbo must not retain a conflicting skin-care introduction");
+  assert(
+    !clinicConfig.concernList
+      .find((concern) => concern.key === "pores_texture")
+      ?.recommendedTreatmentKeys.some((key) => key === "fisbo" || key === "emface"),
+    "TK8: the legacy pores/skin-care recommendation must not be repointed to EMFACE",
+  );
+  assert(resolver.resolveByKey("sunmax_collagen_brand")?.key === "sunmax_collagen_brand", "TK8: legacy Sunmax state keys must remain readable");
+  assert(requireTreatment("emfemme").educationMode === "human_only", "TK8: EMFEMME must remain a safe legacy handoff entry");
+  assert(
+    findTreatmentByMessage("眼周電波") === undefined,
+    "TK8: generic eye RF wording must not guess Phoenix or Tenthermage",
+  );
+  const phoenixEye = findTreatmentBrandByMessage("鳳凰眼周多少錢", "phoenix_thermage");
+  assert(
+    phoenixEye?.key === "phoenix_eye" && phoenixEye.genericPriceEligible !== true,
+    "TK8: Phoenix eye must carry a non-generic price qualifier",
+  );
+}
+
+function validateLaunchP0Baseline() {
+  const launchP0Keys = [
+    "onda_pro",
+    "botox",
+    "pico",
+    "pico_honeycomb_tip",
+    "tenthermage",
+    "tenthermage_eye_tip",
+    "phoenix_thermage",
+    "qplus",
+    "ultherapy",
+    "hair_removal_vio",
+    "hair_removal",
+    "bei_en_xi_brand",
+    "teosyal_1_3_brand",
+    "teosyal_4_brand",
+    "powder_glow_bottle",
+    "ailewei_brand",
+    "emface",
+    "ilib",
+    "mounjaro",
+  ] as const;
+
+  for (const key of launchP0Keys) {
+    const treatment = requireTreatment(key);
+    assert(treatment.approvedContent.introReplies[0]?.trim(), `TK9: ${key} must have approved launch L1 copy`);
+    assert(treatment.consultationGuide, `TK9: ${key} must have a launch L1 consultation seam`);
+    assert(
+      treatment.consultationGuide.customerQuickReplies?.some((choice) => choice.text === "我要預約免費諮詢"),
+      `TK9: ${key} must expose the existing free-consultation booking entry`,
+    );
+    assert(
+      treatment.consultationGuide.customerQuickReplies?.some((choice) => choice.text === "我要找真人客服"),
+      `TK9: ${key} must expose human support`,
+    );
+  }
+
+  assert(findTreatmentByMessage("十蓓緊膚")?.key === "tenthermage", "TK9: 十蓓緊膚 must resolve to Tenthermage");
+  assert(findTreatmentByMessage("腋下除毛")?.key === "hair_removal", "TK9: 腋下除毛 must resolve to the hair-removal owner");
+
+  const resolver = createTreatmentKnowledgeResolver();
+  const defaultAll = resolver.resolveByKey("qplus");
+  assert(
+    defaultAll?.clinicAvailability.scope === "all_active_branches" &&
+      defaultAll.clinicAvailability.branchNames.length === clinicConfig.branches.filter((branch) => branch.isActive).length,
+    "TK9: a treatment without an explicit branch exception must default to every active clinic branch",
+  );
+  const selected = resolver.resolveByKey("emface");
+  assert(
+    selected?.clinicAvailability.scope === "selected_branches" &&
+      JSON.stringify(selected.clinicAvailability.branchNames) === JSON.stringify(["台中館"]),
+    "TK9: an explicit branch exception must not be widened by the launch default",
   );
 }
 
@@ -177,6 +318,7 @@ function main() {
   validateNewConfigWithoutRouterException();
   validateAdapterDirectly();
   validateNotionApprovedTreatments();
+  validateLaunchP0Baseline();
   console.log("Treatment knowledge validation passed: 89 canonical approved treatments, packs, Notion L1 content, quick replies, branches, sources, versions, and generic extension");
 }
 

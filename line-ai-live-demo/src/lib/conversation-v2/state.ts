@@ -244,7 +244,9 @@ function isPersistedAwaitingState(value: unknown) {
 }
 
 function isPendingQuickReplyContract(value: unknown): value is PendingQuickReplyContract {
-  if (!isRecord(value) || !isRecord(value.owner) || !Array.isArray(value.choices)) return false;
+  if (!isRecord(value) || !Array.isArray(value.choices)) return false;
+  const owner = value.owner;
+  if (!isRecord(owner)) return false;
   const issuedAt = typeof value.issuedAt === "string" ? new Date(value.issuedAt).getTime() : Number.NaN;
   const expiresAt = typeof value.expiresAt === "string" ? new Date(value.expiresAt).getTime() : Number.NaN;
   if (
@@ -252,15 +254,25 @@ function isPendingQuickReplyContract(value: unknown): value is PendingQuickReply
     typeof value.episodeId !== "string" || !value.episodeId ||
     !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) ||
     expiresAt <= issuedAt || expiresAt - issuedAt > 30 * 60 * 1000 ||
-    value.owner.kind !== "treatment" ||
-    typeof value.owner.treatmentKey !== "string" || !value.owner.treatmentKey
+    !["treatment", "launch_concern"].includes(String(owner.kind)) ||
+    typeof owner.treatmentKey !== "string" ||
+    (owner.kind === "treatment" && !owner.treatmentKey) ||
+    (owner.kind === "launch_concern" && owner.treatmentKey !== "") ||
+    (value.contextBranchName !== undefined &&
+      (typeof value.contextBranchName !== "string" || !value.contextBranchName))
     || typeof value.sourceSnapshotId !== "string" || !value.sourceSnapshotId
     || typeof value.sourceTurnId !== "string" || !value.sourceTurnId
   ) return false;
-  return value.choices.length <= 4 && value.choices.every((choice) => {
+  return value.choices.length <= 6 && value.choices.every((choice) => {
     if (!isRecord(choice) || !isRecord(choice.semantic)) return false;
     const semantic = choice.semantic;
-    const validSemantic = semantic.kind === "concern"
+    const validSemantic = semantic.kind === "launch_concern_group"
+      ? owner.kind === "launch_concern" &&
+        typeof semantic.groupKey === "string" && Boolean(semantic.groupKey)
+      : semantic.kind === "treatment"
+        ? owner.kind === "launch_concern" &&
+          typeof semantic.treatmentKey === "string" && Boolean(semantic.treatmentKey)
+      : semantic.kind === "concern"
       ? typeof semantic.concernKey === "string" && Boolean(semantic.concernKey)
       : semantic.kind === "approved_asset" &&
         typeof semantic.replyAssetId === "string" && Boolean(semantic.replyAssetId) &&

@@ -492,6 +492,23 @@ async function main() {
   );
   assert(groundedClinicCopy.includes("本院有提供 ONDA PRO"), "M9: approved treatment availability must not be replaced by a generic fallback");
   assert(groundedClinicCopy.includes("全程無痛"), "M9: explicitly approved clinic copy must remain usable as the clinic requested");
+  const approvedThreadLiftCopy = "埋線拉提／線雕是院內可評估的非手術輪廓療程；會依部位、鬆弛程度與需求由醫師評估線材與施作方向。";
+  assert(
+    constrainMedicalAiReply(approvedThreadLiftCopy, FOOTER, {
+      approvedCustomerCopy: [approvedThreadLiftCopy],
+      groundedByApprovedKnowledge: true,
+      medical: true,
+    }) === approvedThreadLiftCopy,
+    "M9: exact clinic-approved customer copy must not be mistaken for an unapproved doctor claim",
+  );
+  assert(
+    !constrainMedicalAiReply(`${approvedThreadLiftCopy} 王醫師擅長埋線拉提。`, FOOTER, {
+      approvedCustomerCopy: [approvedThreadLiftCopy],
+      groundedByApprovedKnowledge: true,
+      medical: true,
+    }).includes("王醫師"),
+    "M9: trusting exact approved copy must not authorize an added doctor claim",
+  );
   const groundedUnapprovedDevice = constrainMedicalAiReply(
     "本院有提供 ONDA PRO，也使用德國原廠海芙儀器。",
     FOOTER,

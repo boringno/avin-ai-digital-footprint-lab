@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { POST } from "../app/api/line/webhook/route";
+import { routeCustomerMessage } from "../src/lib/router";
+import { loadConversationContext, saveConversationContext } from "../src/lib/conversation-context";
+import { createEmptyConversationState, loadConversationState, saveConversationState } from "../src/lib/conversation-state";
+import { evaluateConversationV2CanaryGate, type ConversationV2RuntimeMode } from "../src/lib/conversation-v2/canary-gate";
 
 import {
+  approvedPromotionCatalogSelectionText,
   createStaticClinicFactsProvider,
+  loadClinicFactsSnapshot,
+  resolveApprovedPromotionCatalog,
   type ClinicFactsProvider,
   type PriceCatalogEntry,
 } from "../src/lib/clinic-facts";
@@ -24,6 +35,8 @@ import {
 import { getRuntimeConfig } from "../src/lib/live-demo-config";
 import { legacyDecisionToReplyPlan } from "../src/lib/reply-plan";
 import { renderReplyPlan } from "../src/lib/reply-renderer";
+import { materializeRuntimeContentReleaseSnapshot } from "../src/lib/runtime-content-release";
+import { loadSeedData } from "../src/lib/seed-loader";
 
 const NOW = new Date("2026-08-17T12:00:00+08:00");
 
@@ -116,7 +129,180 @@ function countedProvider(base: ClinicFactsProvider, counts: { provider: number }
   };
 }
 
+async function validateProductionAudience() {
+  // No dotenv, credentials, LINE sends or remote DB writes in these tests.
+  assert.ok(!process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_URL, "Run audience fixtures without Supabase credentials");
+  const keys = ["CONVERSATION_V2_MODE", "LINE_CHANNEL_STAGE", "CONVERSATION_V2_CANARY_USER_IDS", "CONVERSATION_V2_RESPONSE_CONTRACT_MODE", "OPENAI_NLU_MODE", "OPENAI_NLU_DECISION_MODE", "LIVE_DEMO_SKIP_SIGNATURE_VERIFY", "LIVE_DEMO_LOG_DIR"];
+  const saved = new Map(keys.map((key) => [key, process.env[key]]));
+  const logDir = await fs.mkdtemp(path.join(os.tmpdir(), "line-p01-audience-"));
+  let eventNumber = 0;
+  const configure = (mode: ConversationV2RuntimeMode) => {
+    process.env.CONVERSATION_V2_MODE = mode;
+    process.env.LINE_CHANNEL_STAGE = "production";
+    process.env.CONVERSATION_V2_CANARY_USER_IDS = "p01-allowed";
+    process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE = "shadow";
+    process.env.OPENAI_NLU_MODE = "off";
+    process.env.OPENAI_NLU_DECISION_MODE = "off";
+    process.env.LIVE_DEMO_SKIP_SIGNATURE_VERIFY = "false";
+    process.env.LIVE_DEMO_LOG_DIR = logDir;
+  };
+  const request = async (userId: string, options: { fail?: boolean; source?: "user" | "group" | "room"; nonText?: boolean; message?: string; realLegacy?: boolean } = {}) => {
+    let v2 = 0;
+    let v1 = 0;
+    const event = {
+      type: "message", webhookEventId: `p01-${++eventNumber}`, timestamp: Date.now(),
+      replyToken: "fixture-not-sent", source: { type: options.source ?? "user", userId },
+      message: { type: options.nonText ? "image" : "text", id: `p01-message-${eventNumber}`, text: options.message ?? "想了解 ONDA" },
+    };
+    const response = await processWebhookRequestBody(JSON.stringify({ events: [event] }), {
+      includePending: false,
+      routeConversationV2: async (input) => {
+        const routed = await routeConversationV2Canary(input, {
+          factsProvider: options.fail ? { loadSnapshot: async () => { throw new Error("injected offline provider failure"); } } : createStaticClinicFactsProvider(),
+          requestFrame: async () => nluResult(frame()),
+        });
+        if (routed.kind === "routed") v2 += 1;
+        return routed;
+      },
+      routeLegacy: async (input) => {
+        v1 += 1;
+        if (options.realLegacy) return routeCustomerMessage(input);
+        const { conversationContext } = input;
+        return { decisionType: "clinic_info_reply", matchedKey: "p01:legacy", matchedType: "config", replyText: "測試用既有路徑", nextContext: conversationContext ?? createEmptyConversationContext(userId) };
+      },
+    });
+    return { response, v2, v1 };
+  };
+  try {
+    configure("production_all");
+    assert.equal(getRuntimeConfig().conversationV2Mode, "production_all", "P0-1: explicit production audience must be supported");
+    assert.equal(getRuntimeConfig().conversationV2ResponseContractMode, "shadow");
+    delete process.env.CONVERSATION_V2_MODE;
+    assert.equal(getRuntimeConfig().conversationV2Mode, "off", "production stage must not enable V2 by default");
+    configure("production_all");
+    process.env.CONVERSATION_V2_RESPONSE_CONTRACT_MODE = "enforce";
+    assert.equal(getRuntimeConfig().conversationV2ResponseContractMode, "enforce");
+    configure("production_all");
+    const a = await request("p01-stranger");
+    assert.deepEqual([a.v2, a.v1], [1, 0], "A: actual webhook must select V2, never V1");
+    assert.equal(a.response.results[0]?.routeVersion, "v2");
+    assert.ok(a.response.results[0]?.replyPayload, "A: final LINE payload exists (not sent)");
+    const nextTurn = await request("p01-stranger", { message: "雙下巴" });
+    assert.deepEqual([nextTurn.v2, nextTurn.v1], [1, 0]);
+    configure("canary");
+    const b = await request("p01-allowed");
+    const c = await request("p01-not-allowed");
+    assert.deepEqual([b.v2, b.v1, c.v2, c.v1], [1, 0, 0, 1], "B/C: canary unchanged");
+    configure("demo_all");
+    process.env.LINE_CHANNEL_STAGE = "demo";
+    const d = await request("p01-demo");
+    assert.deepEqual([d.v2, d.v1], [1, 0], "D: demo all unchanged");
+
+    const invalid: Array<Record<string, string>> = [
+      { CONVERSATION_V2_MODE: "demo_all" },
+      { LINE_CHANNEL_STAGE: "demo" }, { LINE_CHANNEL_STAGE: "unconfigured" },
+      { LINE_CHANNEL_STAGE: "typo" }, { CONVERSATION_V2_MODE: "typo" },
+      { LIVE_DEMO_SKIP_SIGNATURE_VERIFY: "true" },
+      { OPENAI_NLU_MODE: "shadow" }, { OPENAI_NLU_DECISION_MODE: "canary" },
+      { CONVERSATION_V2_MODE: "off", CONVERSATION_V2_RESPONSE_CONTRACT_MODE: "enforce" },
+      { CONVERSATION_V2_MODE: "shadow", CONVERSATION_V2_RESPONSE_CONTRACT_MODE: "enforce" },
+    ];
+    for (const bad of invalid) {
+      configure("production_all");
+      const contextBefore = await loadConversationContext("p01-stranger");
+      const lifecycleBefore = await loadConversationState("p01-stranger");
+      const filesBefore = await fs.readdir(logDir, { recursive: true });
+      Object.assign(process.env, bad);
+      assert.throws(() => getRuntimeConfig(), /CONVERSATION_V2|LINE_CHANNEL_STAGE|legacy NLU/u);
+      // Exercise the real POST entry: configuration must fail before parsing,
+      // routing, state writes, reply sending, or scheduling post-processing.
+      await assert.rejects(() => POST(new Request("http://localhost/api/line/webhook", {
+        method: "POST", body: JSON.stringify({ events: [{ type: "message", source: { type: "user", userId: "p01-stranger" }, message: { type: "text", text: "我要預約" } }] }),
+      })), /CONVERSATION_V2|LINE_CHANNEL_STAGE|legacy NLU/u);
+      assert.deepEqual(await fs.readdir(logDir, { recursive: true }), filesBefore);
+      configure("production_all");
+      assert.deepEqual(await loadConversationContext("p01-stranger"), contextBefore);
+      assert.deepEqual(await loadConversationState("p01-stranger"), lifecycleBefore);
+    }
+    delete process.env.LINE_CHANNEL_STAGE;
+    assert.throws(() => getRuntimeConfig(), /requires LINE_CHANNEL_STAGE=production/u);
+    configure("production_all");
+    assert.throws(() => evaluateConversationV2CanaryGate({ mode: "production_all", sourceType: "user", userId: "x", allowlistedUserIds: new Set() }), /requires LINE_CHANNEL_STAGE=production/u);
+    assert.equal(evaluateConversationV2CanaryGate({ mode: "production_all", lineChannelStage: "production", sourceType: "user", userId: "", allowlistedUserIds: new Set() }).eligible, false);
+    for (const source of ["group", "room"] as const) {
+      const j = await request(`p01-${source}`, { source });
+      assert.deepEqual([j.v2, j.v1], [0, 0]);
+      assert.equal(j.response.results[0]?.replyPayload, null, "J: no group/room reply");
+    }
+    const image = await request("p01-image", { nonText: true });
+    assert.deepEqual([image.v2, image.v1], [0, 0]);
+    assert.equal(image.response.results[0]?.decision.matchedKey, "image");
+    for (const status of ["human_active", "ai_paused"] as const) {
+      const userId = `p01-${status}`;
+      await saveConversationState({ ...createEmptyConversationState(userId), status, aiResumeAt: null });
+      const k = await request(userId);
+      assert.deepEqual([k.v2, k.v1], [0, 0]);
+      assert.equal(k.response.results[0]?.replyPayload, null, "K: control precedes audience");
+    }
+    const l = await request("p01-failure", { fail: true });
+    assert.deepEqual([l.v2, l.v1], [1, 0]);
+    assert.equal(l.response.results[0]?.conversationV2DataStatus, "unavailable");
+    assert.ok(l.response.results[0]?.replyPayload, "L: V2 safe fallback produces reply");
+
+    // M: mode switches themselves neither reset a live booking nor handoff.
+    const userId = "p01-rollback";
+    const lifecycle = { ...createEmptyConversationState(userId), status: "ai_paused" as const, aiResumeAt: null, handoffReason: "manual_handoff" };
+    await saveConversationState(lifecycle);
+    const context = createEmptyConversationContext(userId);
+    context.bookingDraft = { ...context.bookingDraft, treatment: "ONDA PRO", branch: "高雄館", timeSlots: ["平日下午"] };
+    context.conversationV2State = createConversationV2State({ episodeId: "p01-preserved", now: new Date().toISOString() });
+    context.conversationV2State.bookingTask.status = "collecting";
+    await saveConversationContext(context);
+    const before = await loadConversationContext(userId);
+    for (const mode of ["production_all", "canary", "off", "production_all"] as const) {
+      configure(mode);
+      getRuntimeConfig();
+      const m = await request(userId);
+      assert.deepEqual([m.v2, m.v1], [0, 0]);
+      const after = await loadConversationContext(userId);
+      assert.deepEqual(after.bookingDraft, before.bookingDraft);
+      assert.deepEqual(after.conversationV2State, before.conversationV2State);
+      const state = await loadConversationState(userId);
+      assert.equal(state.status, "ai_paused");
+      assert.equal(state.handoffReason, lifecycle.handoffReason);
+    }
+    const activeUserId = "p01-active-booking";
+    configure("production_all");
+    const bookingStart = await request(activeUserId, { message: "我要預約 ONDA", realLegacy: true });
+    assert.deepEqual([bookingStart.v2, bookingStart.v1], [1, 0]);
+    assert.equal((await loadConversationContext(activeUserId)).conversationV2State?.bookingTask.status, "collecting");
+    configure("canary");
+    const bookingBranch = await request(activeUserId, { message: "高雄館", realLegacy: true });
+    assert.deepEqual([bookingBranch.v2, bookingBranch.v1], [0, 1]);
+    configure("off");
+    const bookingTime = await request(activeUserId, { message: "平日下午", realLegacy: true });
+    assert.deepEqual([bookingTime.v2, bookingTime.v1], [0, 1]);
+    const legacyBooking = (await loadConversationContext(activeUserId)).bookingDraft;
+    assert.equal(legacyBooking.branch, "高雄館");
+    assert.ok(legacyBooking.timeSlots.includes("平日下午"));
+    configure("production_all");
+    const bookingReturn = await request(activeUserId, { message: "初診", realLegacy: true });
+    assert.deepEqual([bookingReturn.v2, bookingReturn.v1], [1, 0]);
+    const returned = await loadConversationContext(activeUserId);
+    assert.equal(returned.bookingDraft.branch, legacyBooking.branch);
+    assert.deepEqual(returned.bookingDraft.timeSlots, legacyBooking.timeSlots);
+    assert.equal(returned.bookingDraft.treatment, legacyBooking.treatment);
+    assert.equal(returned.bookingDraft.isFirstVisit, "yes");
+    console.log("P0-1 A-M: production audience, real webhook/V1/V2 booking rollback, fail-closed POST and control fixtures passed (offline; no LINE send)");
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
+
 async function main() {
+  await validateProductionAudience();
   let passed = 0;
   const check = (condition: unknown, message: string) => {
     assert.ok(condition, message);
@@ -239,7 +425,7 @@ async function main() {
     sourceUserId: "U-demo-staff",
   }, {
     factsProvider: countedProvider(createStaticClinicFactsProvider(), demoAllCounts),
-    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all" }),
+    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all", lineChannelStage: "demo" }),
     requestFrame: async () => {
       demoAllCounts.nlu += 1;
       return nluResult(frame());
@@ -258,7 +444,7 @@ async function main() {
     sourceType: "group",
     sourceUserId: "U-demo-group",
   }, {
-    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all" }),
+    getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all", lineChannelStage: "demo" }),
   });
   check(demoAllGroup.kind === "not_eligible", "C4: demo_all must keep group and room sources off V2");
 
@@ -2636,6 +2822,515 @@ async function main() {
       duplicateWebhook.results[0]?.replyPayload === null,
     "C24: a duplicate V2 event must not render, reply, or execute V1",
   );
+
+  const anniversaryNow = new Date("2026-09-02T10:00:00+08:00");
+  const anniversarySeed = await loadSeedData();
+  const anniversaryFacts = createStaticClinicFactsProvider({
+    pricingCampaigns: anniversarySeed.pricingCampaigns,
+    snapshotId: "anniversary-card-roundtrip",
+  });
+  const anniversarySnapshot = await loadClinicFactsSnapshot(anniversaryFacts, {
+    now: anniversaryNow,
+  });
+  const anniversaryCatalog = resolveApprovedPromotionCatalog(anniversarySnapshot);
+  assert.equal(anniversaryCatalog.status, "approved_current");
+  if (anniversaryCatalog.status === "approved_current") {
+    check(
+      anniversaryCatalog.items.length === 19,
+      "C25: the live V2 round-trip fixture must contain all 19 approved anniversary campaigns",
+    );
+    const catalogUserId = "U-anniversary-catalog-live";
+    const catalogContext = createEmptyConversationContext(catalogUserId);
+    const staleCatalogState = createConversationV2State({
+      episodeId: "anniversary-catalog-live",
+      now: anniversaryNow.toISOString(),
+    });
+    staleCatalogState.activeTask = {
+      id: "anniversary-catalog-live:old-onda",
+      kind: "learn_treatment",
+      startedAt: anniversaryNow.toISOString(),
+      subjectKey: "treatment:onda_pro",
+    };
+    staleCatalogState.knowledge.treatmentKeys = ["onda_pro"];
+    staleCatalogState.pricingSubjectTreatmentKeys = ["onda_pro"];
+    catalogContext.conversationV2State = staleCatalogState;
+    const liveCatalog = await routeConversationV2Canary({
+      context: catalogContext,
+      eventIdentity: "event-anniversary-catalog-live",
+      message: "我想了解現在有哪些活動",
+      now: anniversaryNow,
+      sourceType: "user",
+      sourceUserId: catalogUserId,
+    }, {
+      factsProvider: anniversaryFacts,
+      getCanarySettings: () => ({
+        allowlistedUserIds: [],
+        mode: "demo_all",
+        lineChannelStage: "demo",
+        responseContractMode: "enforce",
+      }),
+      requestFrame: async () => ({
+        errorCode: "nlu_unavailable",
+        frame: null,
+        latencyMs: 1,
+        model: "fixture-nlu",
+        promptVersion: "fixture-v2",
+        tokensIn: 0,
+        tokensOut: 0,
+      }),
+    });
+    assert.equal(liveCatalog.kind, "routed");
+    if (liveCatalog.kind === "routed") {
+      const catalogFlexMessages = (liveCatalog.decision.replyMessages ?? [])
+        .filter((message) => message.type === "flex");
+      const catalogBubbles = catalogFlexMessages.flatMap(
+        (message) => message.contents.contents,
+      );
+      const catalogQuickReplyText = (liveCatalog.decision.replyPlan?.quickReplyItems ?? [])
+        .map((item) => `${item.action.label}:${item.action.text}`)
+        .join("\n");
+      check(
+        liveCatalog.policyAction === "answer_price" &&
+          liveCatalog.decision.matchedKey === "conversation_v2:promotion_catalog:approved_current" &&
+          catalogFlexMessages.length === 2 &&
+          catalogBubbles.length === 19 &&
+          /Q\+\s*音波/u.test(JSON.stringify(catalogBubbles)) &&
+          !/ONDA|肉毒/iu.test(catalogQuickReplyText),
+        `C25: the live generic activity button must show all campaigns despite stale ONDA state or NLU outage (${JSON.stringify({
+          bubbleCount: catalogBubbles.length,
+          matchedKey: liveCatalog.decision.matchedKey,
+          policyAction: liveCatalog.policyAction,
+          quickReplies: catalogQuickReplyText,
+        })})`,
+      );
+    }
+    for (const [itemIndex, item] of anniversaryCatalog.items.entries()) {
+      const actionText = approvedPromotionCatalogSelectionText(item);
+      const variants = [
+        {
+          label: "structured-nlu",
+          requestFrame: async () => nluResult(frame({
+            confidence: 0.99,
+            dialogue: {
+              focus: "price_campaign",
+              move: "start",
+              reference: "explicit",
+              speechAct: "ask_price",
+            },
+            intents: ["pricing", "promotion"],
+            treatments: [...item.treatmentKeys],
+          })),
+        },
+        {
+          label: "nlu-unavailable",
+          requestFrame: async () => ({
+            errorCode: "nlu_unavailable",
+            frame: null,
+            latencyMs: 1,
+            model: "fixture-nlu",
+            promptVersion: "fixture-v2",
+            tokensIn: 0,
+            tokensOut: 0,
+          }),
+        },
+      ] as const;
+
+      for (const variant of variants) {
+        const userId = `U-anniversary-${itemIndex}-${variant.label}`;
+        const selected = await routeConversationV2Canary({
+          context: createEmptyConversationContext(userId),
+          eventIdentity: `event-anniversary-${item.campaignId}-${variant.label}`,
+          message: actionText,
+          now: anniversaryNow,
+          sourceType: "user",
+          sourceUserId: userId,
+        }, {
+          factsProvider: anniversaryFacts,
+          getCanarySettings: () => ({
+            allowlistedUserIds: [],
+            mode: "demo_all",
+            lineChannelStage: "demo",
+            responseContractMode: "enforce",
+          }),
+          requestFrame: variant.requestFrame,
+        });
+        assert.equal(selected.kind, "routed");
+        if (selected.kind !== "routed") continue;
+        const primaryQuote = selected.decision.replyPlan?.approvedPriceReply?.quotes.find(
+          (quote) => quote.role === "primary",
+        );
+        const selectedQuickReplies = selected.decision.replyPlan?.quickReplyItems ?? [];
+        const bookingQuickReply = selectedQuickReplies.find(
+          (quickReply) => quickReply.action.label === "預約免費諮詢",
+        );
+        const expectedTreatmentKeys = [...new Set(item.treatmentKeys)].sort();
+        const expectedTreatmentNames = expectedTreatmentKeys
+          .map((key) => anniversarySnapshot.clinic.treatmentList.find((treatment) => treatment.key === key)?.name)
+          .filter((name): name is string => Boolean(name));
+        const hasApprovedIntroduction = expectedTreatmentKeys.length === 1
+          ? anniversarySnapshot.clinic.treatmentList
+              .find((treatment) => treatment.key === expectedTreatmentKeys[0])
+              ?.approvedContent.introReplies
+              .some((intro) => intro.trim().length > 0 && selected.decision.replyText.includes(intro.trim())) === true
+          : selected.decision.replyText.includes("🎉 這項方案包含") &&
+            expectedTreatmentNames.length === expectedTreatmentKeys.length &&
+            expectedTreatmentNames.every((name) => selected.decision.replyText.includes(name));
+        check(
+          selected.policyAction === "answer_price" &&
+            selected.decision.matchedKey === "conversation_v2:price:approved_current" &&
+            primaryQuote?.campaignId === item.campaignId &&
+            selected.decision.replyText.includes(item.customerPriceText) &&
+            !/(?:想確認一下|哪一項療程|資料更新|真人客服確認)/u.test(selected.decision.replyText),
+          `C25: ${variant.label} card ${item.campaignId} must quote its own approved offer (${JSON.stringify({
+            matchedKey: selected.decision.matchedKey,
+            policyAction: selected.policyAction,
+            primaryCampaignId: primaryQuote?.campaignId,
+            replyText: selected.decision.replyText,
+          })})`,
+        );
+        check(
+          hasApprovedIntroduction &&
+            /(?:安排|預約)免費諮詢/u.test(selected.decision.replyText) &&
+            bookingQuickReply?.action.text === "我要預約免費諮詢",
+          `C25: ${variant.label} card ${item.campaignId} must include approved introduction, consultation CTA, and booking quick reply (${JSON.stringify({
+            expectedTreatmentNames,
+            quickReplies: selectedQuickReplies.map((quickReply) => ({
+              label: quickReply.action.label,
+              text: quickReply.action.text,
+            })),
+            replyText: selected.decision.replyText,
+          })})`,
+        );
+
+        if (variant.label === "structured-nlu") {
+          assert(bookingQuickReply, `C25: ${item.campaignId} must expose a booking quick reply before its booking round-trip`);
+          const bookingNow = new Date(anniversaryNow.getTime() + 1_000);
+          const booking = await routeConversationV2Canary({
+            context: selected.decision.nextContext,
+            eventIdentity: `event-anniversary-${item.campaignId}-booking`,
+            message: bookingQuickReply.action.text,
+            now: bookingNow,
+            sourceType: "user",
+            sourceUserId: userId,
+          }, {
+            factsProvider: anniversaryFacts,
+            getCanarySettings: () => ({
+              allowlistedUserIds: [],
+              mode: "demo_all",
+              lineChannelStage: "demo",
+              responseContractMode: "enforce",
+            }),
+            // Deliberately omit treatment entities here. The booking turn must
+            // inherit every selected campaign treatment from canonical state,
+            // rather than being rescued by a model-provided treatment list.
+            requestFrame: async () => nluResult(frame({
+              confidence: 0.99,
+              dialogue: {
+                focus: "none",
+                move: "start",
+                reference: "active_subject",
+                speechAct: "book_consultation",
+              },
+              intents: ["booking"],
+              treatments: [],
+            })),
+          });
+          assert.equal(booking.kind, "routed");
+          if (booking.kind !== "routed") continue;
+          const bookingState = booking.decision.nextContext.conversationV2State?.bookingTask;
+          const bookedTreatmentKeys = [...new Set(bookingState?.draft.treatmentKeys ?? [])].sort();
+          const bookingQuickReplyLabels = (booking.decision.replyPlan?.quickReplyItems ?? [])
+            .map((quickReply) => quickReply.action.label)
+            .sort();
+          check(
+            booking.policyAction === "start_booking" &&
+              booking.decision.decisionType === "booking_intake_reply" &&
+              bookingState?.status === "collecting" &&
+              bookingState.expectedField === "branch" &&
+              JSON.stringify(bookedTreatmentKeys) === JSON.stringify(expectedTreatmentKeys) &&
+              JSON.stringify(bookingQuickReplyLabels) === JSON.stringify([
+                "台中館",
+                "林口館",
+                "桃園館",
+                "高雄館",
+              ].sort()) &&
+              /請問較方便前往哪個館別/u.test(booking.decision.replyText) &&
+              !/(?:您指的是哪一項療程|請先告訴我想預約哪項療程)/u.test(booking.decision.replyText),
+            `C25: structured card ${item.campaignId} booking must preserve every treatment and advance directly to four-branch selection (${JSON.stringify({
+              bookedTreatmentKeys,
+              bookingQuickReplyLabels,
+              expectedTreatmentKeys,
+              expectedField: bookingState?.expectedField,
+              policyAction: booking.policyAction,
+              replyText: booking.decision.replyText,
+              status: bookingState?.status,
+            })})`,
+          );
+        }
+      }
+    }
+  }
+
+  // C26: A content release is only safe to activate when its immutable
+  // snapshot can make it all the way through V2 and the final LINE payload.
+  // This deliberately does not reuse seed campaigns: a release must prove its
+  // own assets, prices, and activity window rather than accidentally passing
+  // because an older compiled/CSV campaign still exists.
+  const runtimeReleaseSnapshot = {
+    entries: [
+      {
+        content_key: "runtime-release-onda-face",
+        content_type: "campaign" as const,
+        end_at: "2026-11-30T15:59:59.999Z",
+        payload_json: {
+          asset_urls: ["https://line-ai-live-demo.vercel.app/demo/promotions/anniversary-2026/onda-face-8999.jpg"],
+          branch_scope: "all",
+          campaign_aliases: ["ONDA", "ONDA PRO"],
+          campaign_name: "周年慶 ONDA 臉部方案",
+          customer_price_text: "周年慶體驗價 8,999 元",
+          price_text: "8,999",
+          treatment_name: "ONDA PRO",
+        },
+        start_at: "2026-09-01T00:00:00.000Z",
+      },
+      {
+        content_key: "runtime-release-botox-zone",
+        content_type: "campaign" as const,
+        end_at: "2026-11-30T15:59:59.999Z",
+        payload_json: {
+          branch_scope: "all",
+          campaign_aliases: ["肉毒", "奇蹟肉毒"],
+          campaign_name: "周年慶肉毒方案",
+          customer_price_text: "周年慶體驗價 999 元",
+          price_text: "999",
+          treatment_name: "肉毒",
+        },
+        start_at: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+    releaseId: "runtime-release-v2-final-payload",
+    rolloutPercentage: 100,
+    schemaVersion: 1 as const,
+  };
+  const runtimeAssetUrl = "https://line-ai-live-demo.vercel.app/demo/promotions/anniversary-2026/onda-face-8999.jpg";
+  const runtimeReleaseUserPrefix = `U-runtime-release-v2-${Date.now()}`;
+  const payloadQuickReplyLabels = (messages: readonly { type: string; quickReply?: { items: Array<{ action: { label: string } }> } }[]) =>
+    messages.find((message) => message.type === "text" && (message.quickReply?.items.length ?? 0) > 0)
+      ?.quickReply?.items.map((item) => item.action.label) ?? [];
+  const webhookPayloadForRuntimeRelease = async (input: {
+    eventId: string;
+    message: string;
+    now: Date;
+  }) => {
+    const overlay = materializeRuntimeContentReleaseSnapshot(runtimeReleaseSnapshot, input.now);
+    const factsProvider = createStaticClinicFactsProvider({
+      pricingCampaigns: overlay.pricingCampaigns,
+      snapshotId: `runtime-release:${overlay.releaseId}:${input.now.toISOString()}`,
+      source: "runtime-release-fixture",
+    });
+    let routed: Awaited<ReturnType<typeof routeConversationV2Canary>> | undefined;
+    const result = await processWebhookRequestBody(JSON.stringify({
+      events: [{
+        message: { id: `runtime-release-${input.eventId}`, text: input.message, type: "text" },
+        replyToken: `runtime-release-reply-${input.eventId}`,
+        source: { type: "user", userId: `${runtimeReleaseUserPrefix}-${input.eventId}` },
+        timestamp: input.now.getTime(),
+        type: "message",
+        webhookEventId: `runtime-release-event-${input.eventId}`,
+      }],
+    }), {
+      includePending: false,
+      routeConversationV2: async (routeInput) => {
+        routed = await routeConversationV2Canary(routeInput, {
+          factsProvider,
+          getCanarySettings: () => ({
+            allowlistedUserIds: [],
+            mode: "demo_all" as const,
+            lineChannelStage: "demo" as const,
+            responseContractMode: "shadow" as const,
+          }),
+          requestFrame: async () => ({
+            errorCode: "nlu_unavailable",
+            frame: null,
+            latencyMs: 1,
+            model: "fixture-nlu",
+            promptVersion: "runtime-release-final-payload",
+            tokensIn: 0,
+            tokensOut: 0,
+          }),
+        });
+        return routed;
+      },
+      routeLegacy: async () => {
+        throw new Error("Runtime release payload regression must not fall back to V1");
+      },
+    });
+    const processed = result.results[0];
+    assert.ok(processed?.replyPayload, `C26: ${input.eventId} must produce a final LINE payload`);
+    assert.equal(processed.routeVersion, "v2", `C26: ${input.eventId} must use V2`);
+    assert.equal(routed?.kind, "routed", `C26: ${input.eventId} must be routed by V2`);
+    return {
+      overlay,
+      payload: processed.replyPayload,
+      resultCount: result.results.length,
+      routed,
+    };
+  };
+  const beforeRelease = await webhookPayloadForRuntimeRelease({
+    eventId: "before-start",
+    message: "周年慶活動",
+    now: new Date("2026-08-31T15:59:59.999Z"),
+  });
+  const beforePayloadJson = JSON.stringify(beforeRelease.payload.messages);
+  check(
+    beforeRelease.overlay.pricingCampaigns.length === 0 &&
+      !beforePayloadJson.includes(runtimeAssetUrl) &&
+      !/8,999|999/u.test(beforePayloadJson),
+    "C26: a future release campaign must not leak text, price, or image before its inclusive start",
+  );
+
+  const atStartRelease = await webhookPayloadForRuntimeRelease({
+    eventId: "at-start",
+    message: "周年慶活動",
+    now: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  const atStartFlex = atStartRelease.payload.messages.filter((message) => message.type === "flex");
+  const atStartPayloadJson = JSON.stringify(atStartRelease.payload.messages);
+  const atStartPlanLabels = atStartRelease.routed?.kind === "routed"
+    ? atStartRelease.routed.decision.replyPlan?.quickReplyItems.map((item) => item.action.label) ?? []
+    : [];
+  check(
+    atStartRelease.overlay.pricingCampaigns.length === 2 &&
+      atStartFlex.length === 1 &&
+      atStartPayloadJson.includes(runtimeAssetUrl) &&
+      /ONDA PRO.*8,999/us.test(atStartPayloadJson) &&
+      /肉毒.*999/us.test(atStartPayloadJson) &&
+      payloadQuickReplyLabels(atStartRelease.payload.messages).join("\n") === atStartPlanLabels.join("\n"),
+    "C26: an active release must preserve catalog prices, image asset, and V2 quick replies in final LINE payload",
+  );
+
+  const atEndRelease = await webhookPayloadForRuntimeRelease({
+    eventId: "at-end",
+    message: "周年慶活動",
+    now: new Date("2026-11-30T15:59:59.999Z"),
+  });
+  check(
+    atEndRelease.overlay.pricingCampaigns.length === 2 &&
+      JSON.stringify(atEndRelease.payload.messages).includes(runtimeAssetUrl),
+    "C26: a release campaign end instant must remain inclusive in final LINE payload",
+  );
+
+  const afterRelease = await webhookPayloadForRuntimeRelease({
+    eventId: "after-end",
+    message: "周年慶活動",
+    now: new Date("2026-11-30T16:00:00.000Z"),
+  });
+  const afterPayloadJson = JSON.stringify(afterRelease.payload.messages);
+  check(
+    afterRelease.overlay.pricingCampaigns.length === 0 &&
+      !afterPayloadJson.includes(runtimeAssetUrl) &&
+      !/8,999|999/u.test(afterPayloadJson),
+    "C26: an expired release campaign must stop exposing text, price, and image immediately after end",
+  );
+
+  const runtimeFactsAtStart = createStaticClinicFactsProvider({
+    pricingCampaigns: atStartRelease.overlay.pricingCampaigns,
+    snapshotId: "runtime-release:selection-at-start",
+    source: "runtime-release-fixture",
+  });
+  const runtimeSnapshotAtStart = await loadClinicFactsSnapshot(runtimeFactsAtStart, {
+    now: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  const runtimeCatalogAtStart = resolveApprovedPromotionCatalog(runtimeSnapshotAtStart);
+  assert.equal(runtimeCatalogAtStart.status, "approved_current");
+  if (runtimeCatalogAtStart.status === "approved_current") {
+    const ondaSelection = runtimeCatalogAtStart.items.find((item) => item.campaignId === "runtime-release-onda-face");
+    assert.ok(ondaSelection, "C26: runtime release catalog must expose the ONDA card selection");
+    const selectedRelease = await webhookPayloadForRuntimeRelease({
+      eventId: "onda-selection",
+      message: approvedPromotionCatalogSelectionText(ondaSelection),
+      now: new Date("2026-09-01T00:00:00.000Z"),
+    });
+    const selectedImage = selectedRelease.payload.messages.find((message) => message.type === "image");
+    const selectedPayloadJson = JSON.stringify(selectedRelease.payload.messages);
+    check(
+      selectedImage?.type === "image" &&
+        selectedImage.originalContentUrl === runtimeAssetUrl &&
+        selectedImage.previewImageUrl === runtimeAssetUrl &&
+        /8,999/u.test(selectedPayloadJson),
+      "C26: selecting an active runtime release card must retain its approved image and price in final LINE payload",
+    );
+  }
+
+  // C27: Booking owns the state transition, but must not swallow an explicit
+  // price/catalog question in the same customer message. These are final LINE
+  // payload assertions (not policy metadata), with the NLU deliberately down.
+  const bookingWithPrice = await webhookPayloadForRuntimeRelease({
+    eventId: "booking-with-onda-price",
+    message: "我要預約 ONDA，也想知道價格",
+    now: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  assert.equal(bookingWithPrice.routed?.kind, "routed");
+  if (bookingWithPrice.routed?.kind === "routed") {
+    const state = bookingWithPrice.routed.decision.nextContext.conversationV2State;
+    const payloadJson = JSON.stringify(bookingWithPrice.payload.messages);
+    const quickReplyLabels = payloadQuickReplyLabels(bookingWithPrice.payload.messages).sort();
+    check(
+      bookingWithPrice.routed.policyAction === "start_booking" &&
+        state?.bookingTask.status === "collecting" &&
+        state.bookingTask.expectedField === "branch" &&
+        payloadJson.includes("8,999") &&
+        /請問較方便前往哪個館別/u.test(payloadJson) &&
+        bookingWithPrice.resultCount === 1 &&
+        bookingWithPrice.payload.messages.length <= 5 &&
+        bookingWithPrice.payload.messages.filter(
+          (message) => message.type === "text" && message.text.includes("8,999"),
+        ).length === 1 &&
+        JSON.stringify(quickReplyLabels) === JSON.stringify([
+          "台中館",
+          "林口館",
+          "桃園館",
+          "高雄館",
+        ].sort()),
+      `C27: booking plus treatment price must answer the approved amount once, start booking, and keep branch quick replies (${JSON.stringify({
+        expectedField: state?.bookingTask.expectedField,
+        messageCount: bookingWithPrice.payload.messages.length,
+        payload: bookingWithPrice.payload.messages,
+        policyAction: bookingWithPrice.routed.policyAction,
+        quickReplyLabels,
+        status: state?.bookingTask.status,
+      })})`,
+    );
+  }
+
+  const bookingWithCatalog = await webhookPayloadForRuntimeRelease({
+    eventId: "booking-with-all-promotions",
+    message: "我要預約，也想看全部活動",
+    now: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  assert.equal(bookingWithCatalog.routed?.kind, "routed");
+  if (bookingWithCatalog.routed?.kind === "routed") {
+    const state = bookingWithCatalog.routed.decision.nextContext.conversationV2State;
+    const payloadJson = JSON.stringify(bookingWithCatalog.payload.messages);
+    check(
+      bookingWithCatalog.routed.policyAction === "start_booking" &&
+        state?.bookingTask.status === "collecting" &&
+        state.bookingTask.expectedField === "treatment" &&
+        /目前有 2 組診所核准活動/u.test(payloadJson) &&
+        /想預約諮詢哪一項療程/u.test(payloadJson) &&
+        bookingWithCatalog.resultCount === 1 &&
+        bookingWithCatalog.payload.messages.some((message) => message.type === "flex") &&
+        bookingWithCatalog.payload.messages.length <= 5 &&
+        payloadQuickReplyLabels(bookingWithCatalog.payload.messages).length === 0,
+      `C27: booking plus all promotions must show the approved catalog once and then ask only the next booking field (${JSON.stringify({
+        expectedField: state?.bookingTask.expectedField,
+        messageCount: bookingWithCatalog.payload.messages.length,
+        payload: bookingWithCatalog.payload.messages,
+        policyAction: bookingWithCatalog.routed.policyAction,
+        status: state?.bookingTask.status,
+      })})`,
+    );
+  }
 
   console.log(`Conversation V2 canary validation passed (${passed} checks).`);
 }

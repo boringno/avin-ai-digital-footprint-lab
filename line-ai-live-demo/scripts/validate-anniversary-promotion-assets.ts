@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildPromotionCarouselMessage, PROMOTION_CARD_ASPECT_RATIO } from "../src/lib/promotion-carousel";
+import {
+  buildPromotionCarouselMessage,
+  buildPromotionCarouselMessages,
+  PROMOTION_CARD_ASPECT_RATIO,
+} from "../src/lib/promotion-carousel";
 import { routeCustomerMessage } from "../src/lib/router";
 import { loadSeedData, type PricingCampaign } from "../src/lib/seed-loader";
 
@@ -147,6 +151,50 @@ async function main() {
   assert.equal(anniversaryHero.aspectRatio, LANDSCAPE_RATIO, "anniversary cards must preserve their landscape ratio");
   assert.equal(legacyHero.aspectRatio, PROMOTION_CARD_ASPECT_RATIO, "legacy portrait cards must retain their existing ratio");
   checks.push("per-card-ratio-preserves-landscape-and-legacy-portrait-artwork");
+
+  const textOnlyFlex = buildPromotionCarouselMessage([{
+    ctaLabel: "了解活動",
+    ctaText: "我想了解粉光瓶活動",
+    priceText: "活動價 11,999 元",
+    subtitle: "細緻穩膚與膚況評估方向",
+    title: "微針超音導賦活粉光瓶",
+  }]);
+  const textOnlyBubble = textOnlyFlex.contents.contents[0]!;
+  assert.equal(textOnlyBubble.hero, undefined, "a text-only campaign must not require a placeholder image");
+  assert.deepEqual(
+    textOnlyBubble.body?.contents.map((item) => item.type === "text" ? item.text : ""),
+    ["微針超音導賦活粉光瓶", "細緻穩膚與膚況評估方向", "活動價 11,999 元"],
+    "a campaign without artwork must still show its approved title, description, and customer price",
+  );
+  assert.equal(textOnlyBubble.footer?.contents[0]?.action.text, "我想了解粉光瓶活動");
+  assert.equal(textOnlyBubble.footer?.contents[0]?.action.label, "了解活動");
+  checks.push("text-only-campaign-still-renders-copy-price-and-cta");
+
+  const pagedCards = Array.from({ length: 23 }, (_, index) => ({
+    ctaLabel: "我想了解",
+    ctaText: `我想了解活動 ${index + 1}`,
+    priceText: `活動價 ${index + 1} 元`,
+    title: `活動 ${index + 1}`,
+  }));
+  const pagedMessages = buildPromotionCarouselMessages(pagedCards);
+  assert.deepEqual(
+    pagedMessages.map((message) => message.contents.contents.length),
+    [10, 10, 3],
+    "campaign catalogs larger than ten cards must be split without dropping any approved campaign",
+  );
+  assert.deepEqual(
+    pagedMessages.map((message) => message.altText),
+    ["目前活動優惠（1/3）", "目前活動優惠（2/3）", "目前活動優惠（3/3）"],
+  );
+  assert.deepEqual(
+    pagedMessages.flatMap((message) => message.contents.contents.map((bubble) =>
+      bubble.footer?.contents[0]?.action.text,
+    )),
+    pagedCards.map((card) => card.ctaText),
+    "every paginated card must preserve the CTA that identifies its campaign",
+  );
+  assert.equal(buildPromotionCarouselMessages([]).length, 0, "an empty catalog must not emit an invalid Flex carousel");
+  checks.push("large-campaign-catalog-is-paginated-with-stable-ctas");
 
   console.log(JSON.stringify({ checks, passed: checks.length, total: checks.length }, null, 2));
 }

@@ -77,14 +77,21 @@ expect(
   "campaign editor serializes price applicability dimensions",
 );
 
-const campaignQuoteSettings = writeCampaignQuoteSettings({ quotePriority: " 100 " });
+const campaignQuoteSettings = writeCampaignQuoteSettings({
+  pricingKind: "campaign",
+  quotePriority: " 100 ",
+});
 expect(
-  JSON.stringify(campaignQuoteSettings) === JSON.stringify({ quote_priority: "100" }),
-  "campaign editor serializes generic quote priority",
+  JSON.stringify(campaignQuoteSettings) === JSON.stringify({ pricing_kind: "campaign", quote_priority: "100" }),
+  "campaign editor serializes lifecycle and generic quote priority",
 );
 expect(
-  JSON.stringify(readCampaignQuoteSettings(campaignQuoteSettings)) === JSON.stringify({ quotePriority: "100" }),
-  "campaign quote priority survives edit and save round trip",
+  JSON.stringify(readCampaignQuoteSettings(campaignQuoteSettings)) === JSON.stringify({ pricingKind: "campaign", quotePriority: "100" }),
+  "campaign lifecycle and quote priority survive edit and save round trip",
+);
+expect(
+  readCampaignQuoteSettings({}).pricingKind === "campaign",
+  "legacy campaign payload defaults to timed campaign",
 );
 expect(
   JSON.stringify(readCampaignApplicabilityFields(campaignApplicabilityFields)) === JSON.stringify({
@@ -117,6 +124,27 @@ const baseCampaign = {
 };
 assertContentDraftInput(baseCampaign);
 passed += 1;
+assertContentDraftInput({
+  ...baseCampaign,
+  endAt: null,
+  payload: {
+    ...baseCampaign.payload,
+    ...writeCampaignQuoteSettings({ pricingKind: "standing", quotePriority: "10" }),
+  },
+  startAt: null,
+});
+passed += 1;
+expectThrows(
+  () => assertContentDraftInput({
+    ...baseCampaign,
+    payload: { ...baseCampaign.payload, pricing_kind: "forever" },
+  }),
+  "unknown price lifecycle is rejected",
+);
+expectThrows(
+  () => assertContentDraftInput({ ...baseCampaign, endAt: null, startAt: null }),
+  "timed campaign still requires a complete activity window",
+);
 expectThrows(
   () => assertContentDraftInput({
     ...baseCampaign,

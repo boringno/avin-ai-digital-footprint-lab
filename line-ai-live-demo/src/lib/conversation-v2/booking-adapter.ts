@@ -270,23 +270,19 @@ function hasFields(fields: Partial<BookingDraft>) {
   );
 }
 
-function singleActiveBookingTreatment(state: ConversationV2State) {
+function activeBookingTreatmentKeys(state: ConversationV2State) {
   if (state.activeTask.kind === "pricing") {
-    return state.pricingSubjectTreatmentKeys.length === 1
-      ? state.pricingSubjectTreatmentKeys[0]
-      : undefined;
+    return unique(state.pricingSubjectTreatmentKeys);
   }
   if (!["learn_treatment", "answer_concern"].includes(state.activeTask.kind)) {
-    return undefined;
+    return [];
   }
   const subjectKey = state.activeTask.subjectKey;
   const subjectTreatmentKeys = subjectKey?.startsWith("treatment:")
     ? subjectKey.slice("treatment:".length).split("+").filter(Boolean)
     : [];
-  if (subjectTreatmentKeys.length === 1) return subjectTreatmentKeys[0];
-  return state.knowledge.treatmentKeys.length === 1
-    ? state.knowledge.treatmentKeys[0]
-    : undefined;
+  if (subjectTreatmentKeys.length > 0) return unique(subjectTreatmentKeys);
+  return unique(state.knowledge.treatmentKeys);
 }
 
 function isConsultationBundleCandidate(message: string, speechAct: string) {
@@ -368,8 +364,8 @@ export function buildConversationV2BookingUnderstanding(input: {
     effectiveExplicitIntent === "create" &&
     !fields.treatmentKeys?.length
   ) {
-    const activeTreatmentKey = singleActiveBookingTreatment(input.state);
-    if (activeTreatmentKey) fields.treatmentKeys = [activeTreatmentKey];
+    const activeTreatmentKeys = activeBookingTreatmentKeys(input.state);
+    if (activeTreatmentKeys.length > 0) fields.treatmentKeys = activeTreatmentKeys;
   }
 
   if (intent === "none") return undefined;

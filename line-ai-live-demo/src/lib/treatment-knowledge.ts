@@ -1,4 +1,5 @@
 import {
+  canonicalTreatmentKey,
   clinicConfig,
   normalizeClinicText,
   type ClinicConfig,
@@ -151,10 +152,14 @@ function getClinicAvailability(treatment: TreatmentConfig, config: ClinicConfig)
   const selectedBranchNames = normalizeStrings(treatment.availableBranchNames);
 
   if (selectedBranchNames.length > 0) {
+    const activeBranchSet = new Set(activeBranchNames);
+    const explicitlyAllActiveBranches =
+      selectedBranchNames.length === activeBranchSet.size &&
+      selectedBranchNames.every((name) => activeBranchSet.has(name));
     return {
       branchNames: selectedBranchNames,
       isAvailable: true,
-      scope: "selected_branches",
+      scope: explicitlyAllActiveBranches ? "all_active_branches" : "selected_branches",
     };
   }
   if (activeBranchNames.length > 0) {
@@ -251,7 +256,7 @@ export function createTreatmentKnowledgeResolver(
         return null;
       }
 
-      return knowledgeItems
+      const matched = knowledgeItems
         .flatMap((knowledge) =>
           [knowledge.name, ...knowledge.aliases, ...knowledge.availableBrands].map((term) => ({
             knowledge,
@@ -262,6 +267,8 @@ export function createTreatmentKnowledgeResolver(
         .filter((candidate) => candidate.termMatches && candidate.termLength > 0)
         .sort((left, right) => right.termLength - left.termLength || right.knowledge.name.length - left.knowledge.name.length)[0]
         ?.knowledge ?? null;
+      if (!matched) return null;
+      return byKey.get(canonicalTreatmentKey(matched.key)) ?? matched;
     },
     resolveForConcern: (concernKey) =>
       knowledgeItems.filter((knowledge) => knowledge.suitableConcerns.includes(concernKey)),

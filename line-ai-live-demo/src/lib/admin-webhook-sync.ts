@@ -299,6 +299,7 @@ async function insertCustomerMessage(
       message_type: normalizeMessageType(result.eventType === "message" ? "text" : result.eventType),
       payload_json: {
         conversation_status: result.conversationStatus,
+        conversation_v2_approved_reply_asset_id: result.conversationV2ApprovedReplyAssetId ?? null,
         conversation_v2_fact_confirmation: result.conversationV2FactConfirmation ?? null,
         conversation_v2_nlu_confidence: result.conversationV2NluTelemetry?.confidence ?? null,
         conversation_v2_nlu_error_code: result.conversationV2NluTelemetry?.errorCode ?? null,
@@ -363,6 +364,7 @@ async function insertAiMessage(conversationId: string, result: ProcessedWebhookR
       message_type: getReplyMessageType(result),
       payload_json: {
         ...toReplyRendererPayloadJson(result.rendererTelemetry),
+        conversation_v2_approved_reply_asset_id: result.conversationV2ApprovedReplyAssetId ?? null,
         conversation_v2_nlu_confidence: result.conversationV2NluTelemetry?.confidence ?? null,
         conversation_v2_nlu_error_code: result.conversationV2NluTelemetry?.errorCode ?? null,
         conversation_v2_nlu_latency_ms: result.conversationV2NluTelemetry?.latencyMs ?? null,

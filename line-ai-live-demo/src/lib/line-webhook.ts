@@ -120,6 +120,7 @@ type ClassifiedDecision = {
   aiTokensIn?: number;
   aiTokensOut?: number;
   conversationState: ConversationState;
+  conversationV2ApprovedReplyAssetId?: string;
   conversationV2DataStatus?: "partial" | "preflight" | "ready" | "unavailable" | "unresolved";
   conversationV2FactConfirmation?: {
     domain: "clinic" | "price" | "treatment";
@@ -391,6 +392,7 @@ export type ProcessedWebhookResult = {
   };
   bookingTreatmentAction?: "add" | "replace" | "use_current";
   conversationStatus: string;
+  conversationV2ApprovedReplyAssetId?: string;
   conversationV2DataStatus?: "partial" | "preflight" | "ready" | "unavailable" | "unresolved";
   conversationV2FactConfirmation?: {
     domain: "clinic" | "price" | "treatment";
@@ -1004,6 +1006,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     aiTokensIn,
     aiTokensOut,
     conversationState: persistedConversationState,
+    conversationV2ApprovedReplyAssetId: conversationV2Route?.approvedReplyAssetId,
     conversationV2DataStatus: conversationV2Route?.dataStatus,
     conversationV2NluTelemetry: conversationV2Route?.nluTelemetry,
     conversationV2PolicyAction: conversationV2Route?.policyAction,
@@ -1078,6 +1081,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       },
       bookingTreatmentAction: decision.nextContext.bookingSession?.action,
       conversationStatus: decision.conversationState.status,
+      conversationV2ApprovedReplyAssetId: decision.conversationV2ApprovedReplyAssetId,
       conversationV2DataStatus: decision.conversationV2DataStatus,
       conversationV2FactConfirmation: decision.conversationV2FactConfirmation,
       conversationV2NluTelemetry: decision.conversationV2NluTelemetry,

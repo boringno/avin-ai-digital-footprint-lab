@@ -3,7 +3,13 @@ import {
   createEmptyConversationContext,
   type ConversationContext,
 } from "../src/lib/conversation-context";
-import { parsePricingQuestionKind, type PricingQuestionKind } from "../src/lib/pricing-subject";
+import {
+  isPriceInquiryWithTypoTolerance,
+  isPurePostTreatmentActivityQuestion,
+  isPromotionBrowseIntent,
+  parsePricingQuestionKind,
+  type PricingQuestionKind,
+} from "../src/lib/pricing-subject";
 import { routeCustomerMessage, type RouterDecision } from "../src/lib/router";
 
 const NOW = new Date("2026-08-06T06:00:00.000Z");
@@ -144,6 +150,18 @@ async function main() {
   for (const message of ["效果差在哪", "要先預約嗎", "活動後可以運動嗎", "這個方案適合我嗎"]) {
     assert(parsePricingQuestionKind(message) === null, `PK-none: ${message} must not be treated as a price question`);
   }
+  assert(
+    !isPriceInquiryWithTypoTolerance("打完肉毒有哪些活動不能做？", true),
+    "PK-aftercare: 日常活動 must not be recovered as a one-character typo of 活動價",
+  );
+  assert(
+    isPromotionBrowseIntent("週年慶多少錢？做完後有哪些活動要避免？"),
+    "PK-mixed: an independent anniversary price clause must survive beside an after-care clause",
+  );
+  assert(
+    !isPurePostTreatmentActivityQuestion("ONDA 適合我嗎？恢復期呢？最近有活動嗎？"),
+    "PK-mixed-browse: a separate campaign question must prevent an after-care-only override",
+  );
   console.log("PASS: pricing question semantic families distinguish regular/post-campaign/alternate/current/browse intents");
 
   const ondaExperience = await getActiveOndaConsultation("pricing-subject-ps1");

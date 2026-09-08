@@ -43,12 +43,58 @@ for (const [message, expectedKey] of [
   ["十蓓電波眼周多少錢", "tenthermage_eye_tip"],
   ["十倍電波眼周多少錢", "tenthermage_eye_tip"],
   ["眼周300發多少錢", "tenthermage_eye_tip"],
+  ["EMFACE", "emface"],
+  ["菲斯波", "emface"],
+  ["熊貓針", "panda_needle"],
+  ["雙美膠原蛋白", "panda_needle"],
+  ["蝴蝶電波", "butterfly_forma_rf"],
+  ["FORMA V", "butterfly_forma_rf"],
+  ["鳳凰眼周", "phoenix_thermage"],
+  ["十蓓眼周", "tenthermage_eye_tip"],
   ["奇蹟肉毒適合打哪裡", "botox"],
+  ["BOTOX 12U多少錢", "botox"],
+  ["BOTOX 12單位多少錢", "botox"],
+  ["VIO除毛適合我嗎", "hair_removal_vio"],
+  ["瑞絲朗適合哪個部位", "restylane_brand"],
+  ["瑞絲朗 Defyne 適合哪裡", "restylane_defyne_brand"],
+  ["Restylane Defyne 適合哪裡", "restylane_defyne_brand"],
+  ["瑞絲朗 Kysse 適合哪裡", "restylane_kysse_brand"],
+  ["Restylane Kysse 適合哪裡", "restylane_kysse_brand"],
+  ["瑞絲朗 Vital Light 適合哪裡", "restylane_vital_light_brand"],
+  ["Restylane Vital Light 適合哪裡", "restylane_vital_light_brand"],
+  ["瑞絲朗 Volyme 適合哪裡", "restylane_volyme_brand"],
+  ["Restylane Volyme 適合哪裡", "restylane_volyme_brand"],
 ] as const) {
   const result = matchClinicOntology(message);
   assert(
     result.treatments[0]?.key === expectedKey,
     `approved direct alias must resolve ${message} to ${expectedKey}`,
+  );
+  assert(result.fastPathEligible, `${message} must resolve to one unambiguous treatment`);
+}
+
+for (const [message, expectedLegacyKey] of [
+  ["EMFEMME", "emfemme"],
+  ["閨蜜電波", "emfemme"],
+] as const) {
+  const result = matchClinicOntology(message);
+  assert(
+    result.treatments.length === 1 && result.treatments[0]?.key === expectedLegacyKey,
+    `${message} must retain one safe legacy owner instead of becoming a launch treatment`,
+  );
+}
+
+const genericEyeRf = matchClinicOntology("想了解眼周電波");
+assert(
+  genericEyeRf.treatments.length === 0,
+  "generic eye RF wording must not guess Phoenix or Tenthermage",
+);
+
+for (const message of ["previous treatment", "Previously asked about treatment"]) {
+  const result = matchClinicOntology(message);
+  assert(
+    result.treatments.every((treatment) => treatment.key !== "hair_removal_vio"),
+    `the VIO alias must not match inside an unrelated English word: ${message}`,
   );
 }
 

@@ -591,7 +591,11 @@ function wasRejectedByExistingGuard(
   generatedText: string,
   constrainedText: string,
   footer: string,
-  options: { groundedByApprovedKnowledge: boolean; medical: boolean },
+  options: {
+    approvedCustomerCopy: readonly string[];
+    groundedByApprovedKnowledge: boolean;
+    medical: boolean;
+  },
 ) {
   if (!generatedText.trim()) return true;
   if (
@@ -647,7 +651,11 @@ function guardFallbackCandidate(
     matchedKey: input.plan.matchedKey,
   });
   const medical = input.medical ?? inferMedicalReply(input.plan, input.dialogueState);
-  const guardOptions = { groundedByApprovedKnowledge: usedGroundedKnowledge, medical };
+  const guardOptions = {
+    approvedCustomerCopy: input.plan.approvedCustomerCopy,
+    groundedByApprovedKnowledge: usedGroundedKnowledge,
+    medical,
+  };
   const guardCandidate = maskApprovedPriceClaims(toned, input.plan.exactPriceFacts);
   const constrained = constrainMedicalAiReply(guardCandidate, input.footer ?? "", guardOptions);
   if (wasRejectedByExistingGuard(toned, constrained, input.footer ?? "", guardOptions)) {
@@ -836,7 +844,11 @@ async function renderReplyPlanUnobserved(
   }
 
   const medical = input.medical ?? inferMedicalReply(input.plan, input.dialogueState);
-  const guardOptions = { groundedByApprovedKnowledge: usedGroundedKnowledge, medical };
+  const guardOptions = {
+    approvedCustomerCopy: input.plan.approvedCustomerCopy,
+    groundedByApprovedKnowledge: usedGroundedKnowledge,
+    medical,
+  };
   const constrained = constrainMedicalAiReply(generatedReply.text, input.footer ?? "", guardOptions);
   if (wasRejectedByExistingGuard(generatedReply.text, constrained, input.footer ?? "", guardOptions)) {
     return renderGuardedFallback(input, "generator_rejected", usedGroundedKnowledge, startedAt, generatedReply);

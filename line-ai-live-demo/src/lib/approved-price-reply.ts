@@ -48,6 +48,7 @@ function validQuote(
   const subjectLabel = normalized(quote.subjectLabel);
   const customerPriceText = normalized(quote.customerPriceText);
   const branchScope = normalized(quote.branchScope);
+  const treatmentAvailability = quote.treatmentAvailability;
   return Boolean(
     (quote.role === "primary" || quote.role === "alternative") &&
     normalized(quote.campaignId) &&
@@ -58,6 +59,13 @@ function validQuote(
       (Array.isArray(quote.assetUrls) && quote.assetUrls.length <= 4 && quote.assetUrls.every(validAssetUrl))) &&
     quote.treatmentKeys.length > 0 &&
     quote.treatmentKeys.every((key) => normalized(key)) &&
+    (!treatmentAvailability || (
+      treatmentAvailability.scope === "selected" &&
+      Array.isArray(treatmentAvailability.branchNames) &&
+      treatmentAvailability.branchNames.length > 0 &&
+      treatmentAvailability.branchNames.length <= 4 &&
+      treatmentAvailability.branchNames.every((branchName) => validCustomerCopy(branchName, 40))
+    )) &&
     (!branchScope || validCustomerCopy(branchScope, 120)),
   );
 }
@@ -175,13 +183,17 @@ export function renderApprovedPriceReplyContract(
   }
   if (primary) {
     lines.push(`🟢 ${normalized(primary.subjectLabel)}目前可參考：${normalized(primary.customerPriceText)}。`);
-    if (normalized(primary.branchScope)) lines.push(`${normalized(primary.branchScope)}。`);
+    if (primary.treatmentAvailability?.scope === "selected") {
+      lines.push(`${normalized(primary.subjectLabel)}目前僅${primary.treatmentAvailability.branchNames.map(normalized).join("、")}提供。`);
+    } else if (normalized(primary.branchScope)) lines.push(`${normalized(primary.branchScope)}。`);
   }
   if (alternative) {
     lines.push(
       `${primary ? "💎 另有" : "💰 目前另有"}${normalized(alternative.subjectLabel)}方案可參考：${normalized(alternative.customerPriceText)}。`,
     );
-    if (normalized(alternative.branchScope)) lines.push(`${normalized(alternative.branchScope)}。`);
+    if (alternative.treatmentAvailability?.scope === "selected") {
+      lines.push(`${normalized(alternative.subjectLabel)}目前僅${alternative.treatmentAvailability.branchNames.map(normalized).join("、")}提供。`);
+    } else if (normalized(alternative.branchScope)) lines.push(`${normalized(alternative.branchScope)}。`);
   }
   if (!primary && unresolvedPrimary) {
     lines.push(`📅 可以先安排免費諮詢；${normalized(unresolvedPrimary.humanSupportHoursSummary)}`);

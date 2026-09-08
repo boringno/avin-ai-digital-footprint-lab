@@ -13,7 +13,7 @@ import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 import { clinicConfig } from "@/lib/clinic-config";
 import {
   projectConversationV2QuickReplies,
-  withConversationV2QuickReplies,
+  withConversationV2QuickReplies as projectQuickReplies,
 } from "@/lib/conversation-v2/quick-replies";
 import {
   buildConversationV2QuickReplySelection,
@@ -33,6 +33,16 @@ import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel
 import type { NluFrame } from "@/lib/nlu-frame";
 
 const NOW = "2026-08-23T12:00:00.000+08:00";
+
+function withConversationV2QuickReplies(
+  ...args: Parameters<typeof projectQuickReplies>
+) {
+  const [replyPlan, state, options = {}] = args;
+  return projectQuickReplies(replyPlan, state, {
+    hasCurrentPromotionCatalog: true,
+    ...options,
+  });
+}
 
 const ONDA_PRICE: PriceCatalogEntry = {
   approval_status: "approved",
@@ -120,11 +130,15 @@ function validateCurrentConcernChoosesQuickReplyOwnerFromHistory() {
       treatmentKeys: ["botox", "onda_pro"],
     }),
     state,
-    { issuedAt: NOW, snapshotId: "snapshot-multi-treatment-owner" },
+    {
+      hasCurrentPromotionCatalog: true,
+      issuedAt: NOW,
+      snapshotId: "snapshot-multi-treatment-owner",
+    },
   );
   assert.deepEqual(
     labels(projected.plan.quickReplyItems),
-    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+    ["脂肪堆積", "下顎線鬆弛", "周年慶活動", "ONDA＋肉毒組合", "預約免費諮詢"],
     "the current ONDA concern must still project its choices when Botox remains in customer history",
   );
   assert.equal(
@@ -138,6 +152,10 @@ function labels(items: ReturnType<typeof withConversationV2QuickReplies>["quickR
   return items.map((item) => item.action.label);
 }
 
+function actionTexts(items: ReturnType<typeof withConversationV2QuickReplies>["quickReplyItems"]) {
+  return items.map((item) => item.action.text);
+}
+
 function validateUndeliveredContractCleanup() {
   const state = createConversationV2State({ episodeId: "undelivered-buttons", now: NOW });
   state.lastProcessedTurnId = "message-offer";
@@ -147,6 +165,7 @@ function validateUndeliveredContractCleanup() {
     state,
     {
       clinic: clinicConfig,
+      hasCurrentPromotionCatalog: true,
       issuedAt: NOW,
       snapshotId: "snapshot-current",
     },
@@ -181,56 +200,147 @@ function validateOndaChoices() {
   const state = createConversationV2State({ episodeId: "onda-buttons", now: NOW });
   state.knowledge.treatmentKeys = ["onda_pro"];
   const opening = withConversationV2QuickReplies(plan({ treatmentKeys: ["onda_pro"] }), state);
-  assert.deepEqual(labels(opening.quickReplyItems), ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"]);
+  assert.deepEqual(labels(opening.quickReplyItems), ["雙下巴／嘴邊肉", "身體局部脂肪", "周年慶活動", "療程特色", "本療程價格"]);
 
   state.knowledge.concernKeys = ["jawline_looseness"];
   const followup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["onda_pro"],
   }), state);
-  assert.deepEqual(labels(followup.quickReplyItems), ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"]);
+  assert.deepEqual(labels(followup.quickReplyItems), ["脂肪堆積", "下顎線鬆弛", "周年慶活動", "ONDA＋肉毒組合", "預約免費諮詢"]);
 
   state.knowledge.concernKeys = ["local_contour"];
   const bodyFollowup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["onda_pro"],
   }), state);
-  assert.deepEqual(labels(bodyFollowup.quickReplyItems), ["手臂", "腹部／腰側", "大腿／臀部", "預約免費諮詢"]);
+  assert.deepEqual(labels(bodyFollowup.quickReplyItems), ["手臂", "腹部／腰側", "周年慶活動", "大腿／臀部", "預約免費諮詢"]);
 }
 
 function validateBotoxChoices() {
   const state = createConversationV2State({ episodeId: "botox-buttons", now: NOW });
   state.knowledge.treatmentKeys = ["botox"];
   const opening = withConversationV2QuickReplies(plan({ treatmentKeys: ["botox"] }), state);
-  assert.deepEqual(labels(opening.quickReplyItems), ["動態紋", "咀嚼肌／小臉", "肩頸／小腿", "腋下／手汗"]);
+  assert.deepEqual(labels(opening.quickReplyItems), ["動態紋", "咀嚼肌／小臉", "周年慶活動", "肩頸／小腿", "腋下／手汗"]);
 
   state.knowledge.concernKeys = ["masseter_contour"];
   const followup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["botox"],
   }), state);
-  assert.deepEqual(labels(followup.quickReplyItems), ["臉型偏寬", "咬肌緊繃", "價格／活動", "預約免費諮詢"]);
+  assert.deepEqual(labels(followup.quickReplyItems), ["臉型偏寬", "咬肌緊繃", "周年慶活動", "本療程價格", "預約免費諮詢"]);
 
   state.knowledge.concernKeys = ["dynamic_wrinkles"];
   const wrinklesFollowup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["botox"],
   }), state);
-  assert.deepEqual(labels(wrinklesFollowup.quickReplyItems), ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"]);
+  assert.deepEqual(labels(wrinklesFollowup.quickReplyItems), ["做表情時明顯", "平時也看得到", "周年慶活動", "本療程價格", "預約免費諮詢"]);
 
   state.knowledge.concernKeys = ["muscle_contour"];
   const muscleFollowup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["botox"],
   }), state);
-  assert.deepEqual(labels(muscleFollowup.quickReplyItems), ["肌肉線條", "緊繃感", "價格／活動", "預約免費諮詢"]);
+  assert.deepEqual(labels(muscleFollowup.quickReplyItems), ["肌肉線條", "緊繃感", "周年慶活動", "本療程價格", "預約免費諮詢"]);
 
   state.knowledge.concernKeys = ["localized_sweating"];
   const sweatingFollowup = withConversationV2QuickReplies(plan({
     dialogueAct: "answer_followup",
     treatmentKeys: ["botox"],
   }), state);
-  assert.deepEqual(labels(sweatingFollowup.quickReplyItems), ["腋下多汗", "手汗", "價格／活動", "預約免費諮詢"]);
+  assert.deepEqual(labels(sweatingFollowup.quickReplyItems), ["腋下多汗", "手汗", "周年慶活動", "本療程價格", "預約免費諮詢"]);
+}
+
+function validatePromotionEntryRequiresCurrentCatalog() {
+  const state = createConversationV2State({ episodeId: "catalog-availability", now: NOW });
+  state.knowledge.treatmentKeys = ["onda_pro"];
+  const withoutCatalog = projectQuickReplies(
+    plan({ treatmentKeys: ["onda_pro"] }),
+    state,
+  );
+  assert.ok(
+    !labels(withoutCatalog.quickReplyItems).includes("周年慶活動"),
+    "an omitted or unavailable catalog must not expose a stale campaign entry",
+  );
+  assert.ok(
+    labels(withoutCatalog.quickReplyItems).includes("本療程價格"),
+    "hiding the catalog must retain the treatment-owned price action",
+  );
+
+  const withCatalog = projectQuickReplies(
+    plan({ treatmentKeys: ["onda_pro"] }),
+    state,
+    { hasCurrentPromotionCatalog: true },
+  );
+  assert.ok(
+    labels(withCatalog.quickReplyItems).includes("周年慶活動"),
+    "a verified current catalog must expose its clinic-wide entry",
+  );
+
+  const clarifyWithoutCatalog = projectQuickReplies(
+    plan({ dialogueAct: "clarify" }),
+    createConversationV2State({ episodeId: "clarify-without-catalog", now: NOW }),
+  );
+  assert.deepEqual(
+    labels(clarifyWithoutCatalog.quickReplyItems),
+    ["依困擾找療程", "預約免費諮詢", "真人客服協助"],
+    "a generic fallback must not expose a campaign button without a verified current catalog",
+  );
+  const clarifyWithCatalog = projectQuickReplies(
+    plan({ dialogueAct: "clarify" }),
+    createConversationV2State({ episodeId: "clarify-with-catalog", now: NOW }),
+    { hasCurrentPromotionCatalog: true },
+  );
+  assert.deepEqual(
+    labels(clarifyWithCatalog.quickReplyItems),
+    ["周年慶活動", "依困擾找療程", "預約免費諮詢", "真人客服協助"],
+    "a generic fallback may expose the campaign button only after catalog verification",
+  );
+
+  const stalePlan = {
+    ...plan({ dialogueAct: "clarify" }),
+    quickReplyItems: [{ type: "action" as const, action: { type: "message" as const, label: "周年慶活動", text: "我想了解現在有哪些活動" } }],
+  };
+  const staleProjection = projectQuickReplies(
+    stalePlan,
+    createConversationV2State({ episodeId: "stale-catalog-button", now: NOW }),
+  );
+  assert.ok(
+    !labels(staleProjection.quickReplyItems).includes("周年慶活動"),
+    "re-projecting a plan must clear an older campaign button when the current catalog is unavailable",
+  );
+}
+
+function validateEveryTreatmentMenuCanOpenThePromotionCatalog() {
+  const configuredTreatments = clinicConfig.treatmentList.filter((treatment) =>
+    treatment.consultationGuide?.customerQuickReplies?.some((choice) => choice.stage === "initial"),
+  );
+  assert.ok(configuredTreatments.length > 2, "the catalog-entry check must cover more than ONDA and Botox");
+  for (const treatment of configuredTreatments) {
+    const state = createConversationV2State({
+      episodeId: `catalog-entry-${treatment.key}`,
+      now: NOW,
+    });
+    state.knowledge.treatmentKeys = [treatment.key];
+    const reply = withConversationV2QuickReplies(
+      plan({ treatmentKeys: [treatment.key] }),
+      state,
+    );
+    const catalogIndex = reply.quickReplyItems.findIndex(
+      (item) => item.action.label === "周年慶活動",
+    );
+    const catalogAction = reply.quickReplyItems[catalogIndex];
+    assert.ok(
+      catalogIndex >= 0 && catalogIndex <= 2,
+      `${treatment.key} must keep the promotion catalog within the first three mobile-visible choices`,
+    );
+    assert.equal(
+      catalogAction?.action.text,
+      "我想了解現在有哪些活動",
+      `${treatment.key} must expose the generic current-promotion catalog instead of only its own price action`,
+    );
+  }
 }
 
 function validateEveryConfiguredSemanticChoiceResolves() {
@@ -271,9 +381,10 @@ function validateEveryConfiguredChoiceHasCustomerDestination() {
         state,
         { nextStage: choice.stage },
       );
+      const visibleLabel = choice.label === "價格／活動" ? "本療程價格" : choice.label;
       assert.ok(
         projected.quickReplyItems.some((item) =>
-          item.action.label === choice.label && item.action.text === choice.text),
+          item.action.label === visibleLabel && item.action.text === choice.text),
         `${treatment.key}/${choice.stage}/${choice.label} must be reachable in a LINE reply`,
       );
 
@@ -318,12 +429,13 @@ function validatePendingQuickReplyContractOwnsHistoricalState() {
     treatmentKeys: ["onda_pro"],
   }), state, {
     clinic: clinicConfig,
+    hasCurrentPromotionCatalog: true,
     issuedAt: NOW,
     snapshotId: "snapshot-approved-buttons",
   });
   assert.deepEqual(
     labels(projected.plan.quickReplyItems),
-    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+    ["脂肪堆積", "下顎線鬆弛", "周年慶活動", "ONDA＋肉毒組合", "預約免費諮詢"],
   );
   assert.equal(projected.pendingQuickReply?.owner.treatmentKey, "onda_pro");
   assert.equal(projected.pendingQuickReply?.choices.length, 3);
@@ -574,11 +686,16 @@ function validatePriceCallToAction() {
   const projection = projectConversationV2QuickReplies(
     plan({ dialogueAct: "quote_approved_price", treatmentKeys: ["onda_pro"] }),
     state,
-    { clinic: clinicConfig, issuedAt: NOW, snapshotId: "price-snapshot" },
+    {
+      clinic: clinicConfig,
+      hasCurrentPromotionCatalog: true,
+      issuedAt: NOW,
+      snapshotId: "price-snapshot",
+    },
   );
   assert.deepEqual(
     labels(projection.plan.quickReplyItems),
-    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
+    ["ONDA＋肉毒組合", "預約免費諮詢", "周年慶活動", "真人客服協助"],
   );
   assert.equal(
     projection.pendingQuickReply?.choices.length,
@@ -635,8 +752,8 @@ async function validateLiveRuntimeAttachesV2Choices() {
   assert.equal(routed.kind, "routed");
   assert.deepEqual(
     labels(routed.decision.replyPlan?.quickReplyItems ?? []),
-    ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
-    "the live V2 route must attach ONDA choices before rendering",
+    ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "本療程價格"],
+    "the live V2 route must not advertise a campaign when the snapshot has no current catalog",
   );
 }
 
@@ -679,14 +796,14 @@ async function validateExplicitBotoxConcernSwitchReplacesOldButtons() {
   const wrinkles = await route("botox-wrinkles", "動態紋");
   assert.deepEqual(
     labels(wrinkles.decision.replyPlan?.quickReplyItems ?? []),
-    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+    ["做表情時明顯", "平時也看得到", "周年慶活動", "本療程價格", "預約免費諮詢"],
   );
 
   const calf = await route("botox-calf", "小腿");
   assert.match(calf.decision.replyText, /小腿.*肌肉線條|肌肉線條.*小腿/us);
   assert.deepEqual(
     labels(calf.decision.replyPlan?.quickReplyItems ?? []),
-    ["肌肉線條", "緊繃感", "價格／活動", "預約免費諮詢"],
+    ["肌肉線條", "緊繃感", "周年慶活動", "本療程價格", "預約免費諮詢"],
     "an explicit calf concern must not inherit dynamic-wrinkle buttons",
   );
 }
@@ -696,7 +813,7 @@ function validateFallbackChoicesRespectConversationOwnership() {
   const fallback = withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state);
   assert.deepEqual(
     labels(fallback.quickReplyItems),
-    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
+    ["周年慶活動", "依困擾找療程", "預約免費諮詢", "真人客服協助"],
     "a genuine generic fallback must provide four deterministic exits",
   );
 
@@ -711,7 +828,7 @@ function validateFallbackChoicesRespectConversationOwnership() {
   };
   assert.deepEqual(
     labels(withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state).quickReplyItems),
-    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
+    ["周年慶活動", "依困擾找療程", "預約免費諮詢", "真人客服協助"],
     "waiting for staff must not remove AI fallback choices",
   );
 
@@ -728,6 +845,48 @@ function validateFallbackChoicesRespectConversationOwnership() {
     labels(withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state).quickReplyItems),
     [],
     "once staff formally takes over, AI must not project fallback choices",
+  );
+}
+
+function validateGenericFallbackChoicesDoNotFeatureSpecificTreatments() {
+  const state = createConversationV2State({ episodeId: "generic-fallback-buttons", now: NOW });
+  const fallback = withConversationV2QuickReplies(plan({ dialogueAct: "clarify" }), state);
+  assert.deepEqual(
+    actionTexts(fallback.quickReplyItems),
+    [
+      "我想了解現在有哪些活動",
+      "我想依困擾找適合療程",
+      "我要預約免費諮詢",
+      "我要找真人客服",
+    ],
+    "generic fallback choices must send stable messages into existing activity, need-discovery, booking, and handoff paths",
+  );
+  assert.doesNotMatch(
+    fallback.quickReplyItems.map((item) => `${item.action.label}:${item.action.text}`).join("\n"),
+    /ONDA|肉毒/iu,
+    "a generic fallback must not promote two hard-coded treatments when the clinic has a broader catalog",
+  );
+
+  state.activeTask = {
+    id: "generic-fallback-buttons:old-onda",
+    kind: "learn_treatment",
+    startedAt: NOW,
+    subjectKey: "treatment:onda_pro",
+  };
+  state.knowledge.treatmentKeys = ["onda_pro"];
+  const globalCatalog = withConversationV2QuickReplies(
+    plan({ dialogueAct: "quote_approved_price", treatmentKeys: [] }),
+    state,
+  );
+  assert.deepEqual(
+    labels(globalCatalog.quickReplyItems),
+    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    "a clinic-wide promotion catalog must keep neutral next steps even when an old treatment subject exists",
+  );
+  assert.doesNotMatch(
+    globalCatalog.quickReplyItems.map((item) => `${item.action.label}:${item.action.text}`).join("\n"),
+    /ONDA|肉毒/iu,
+    "a stale treatment subject must not add ONDA/Botox buttons to the global promotion catalog",
   );
 }
 
@@ -767,8 +926,26 @@ async function validateFallbackChoicesHaveLiveDestinations() {
   assert.equal(fallback.kind, "routed");
   assert.deepEqual(
     labels(fallback.decision.replyPlan?.quickReplyItems ?? []),
-    ["了解 ONDA", "了解肉毒", "預約免費諮詢", "真人客服協助"],
-    "the actual NLU-outage fallback must carry the four LINE choices",
+    ["依困擾找療程", "預約免費諮詢", "真人客服協助"],
+    "an NLU-outage fallback must retain useful exits without advertising an unavailable campaign",
+  );
+
+  const needDiscovery = await route(
+    "U-fallback-buttons",
+    fallback.decision.nextContext,
+    "fallback-buttons-need-discovery",
+    "我想依困擾找適合療程",
+  );
+  assert.equal(needDiscovery.kind, "routed");
+  assert.match(
+    needDiscovery.decision.replyText,
+    /(?:主要)?困擾|(?:在意的)?部位/u,
+    "the need-discovery fallback choice must lead to an existing path that asks for the customer's concern",
+  );
+  assert.doesNotMatch(
+    needDiscovery.decision.replyText,
+    /ONDA|肉毒/iu,
+    "the need-discovery destination must not assume a treatment the customer did not choose",
   );
 
   const bookingContext = fallback.decision.nextContext;
@@ -888,14 +1065,14 @@ async function validateLiveRuntimePersistsAndConsumesVisibleContract() {
   assert.match(botox.decision.replyText, /肉毒.*動態紋/us);
   assert.deepEqual(
     labels(botox.decision.replyPlan?.quickReplyItems ?? []),
-    ["動態紋", "咀嚼肌／小臉", "肩頸／小腿", "腋下／手汗"],
+    ["動態紋", "咀嚼肌／小臉", "周年慶活動", "肩頸／小腿", "腋下／手汗"],
     "pending human review must not hide the initial Botox choices",
   );
   const dynamicWrinkles = await route("pending-contract-dynamic", "我想改善動態紋");
   assert.match(dynamicWrinkles.decision.replyText, /抬頭紋.*皺眉紋.*魚尾紋/us);
   assert.deepEqual(
     labels(dynamicWrinkles.decision.replyPlan?.quickReplyItems ?? []),
-    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+    ["做表情時明顯", "平時也看得到", "周年慶活動", "本療程價格", "預約免費諮詢"],
   );
   const price = await route("pending-contract-price", "肉毒體驗價多少");
   assert.match(price.decision.replyText, /999/u);
@@ -914,6 +1091,16 @@ function quickReplyLabelsFromPayload(messages: readonly LineReplyMessage[]) {
     item.type === "text" && (item.quickReply?.items.length ?? 0) > 0,
   );
   return message?.quickReply?.items.map((item) => item.action.label) ?? [];
+}
+
+function quickReplyTextFromPayload(
+  messages: readonly LineReplyMessage[],
+  label: string,
+) {
+  const message = messages.find((item): item is LineTextMessage =>
+    item.type === "text" && (item.quickReply?.items.length ?? 0) > 0,
+  );
+  return message?.quickReply?.items.find((item) => item.action.label === label)?.action.text;
 }
 
 function visibleTextFromPayload(messages: readonly LineReplyMessage[]) {
@@ -1015,7 +1202,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.match(visibleTextFromPayload(features.messages), /Coolwaves®.*冷卻控溫/us);
   assert.deepEqual(
     quickReplyLabelsFromPayload(features.messages),
-    ["雙下巴／嘴邊肉", "身體局部脂肪", "療程特色", "價格／活動"],
+    ["雙下巴／嘴邊肉", "身體局部脂肪", "周年慶活動", "療程特色", "本療程價格"],
   );
   const jawline = await send({
     expectApprovedDeterministic: true,
@@ -1026,7 +1213,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.match(visibleTextFromPayload(jawline.messages), /雙下巴.*脂肪肉感/us);
   assert.deepEqual(
     quickReplyLabelsFromPayload(jawline.messages),
-    ["脂肪堆積", "下顎線鬆弛", "ONDA＋肉毒組合", "預約免費諮詢"],
+    ["脂肪堆積", "下顎線鬆弛", "周年慶活動", "ONDA＋肉毒組合", "預約免費諮詢"],
   );
 
   const fat = await send({
@@ -1042,7 +1229,7 @@ async function validateSemanticQuickReplyJourneys() {
   );
   assert.deepEqual(
     quickReplyLabelsFromPayload(fat.messages),
-    ["單做 ONDA", "ONDA＋肉毒組合", "價格／活動", "預約免費諮詢"],
+    ["單做 ONDA", "ONDA＋肉毒組合", "周年慶活動", "本療程價格", "預約免費諮詢"],
   );
 
   const single = await send({
@@ -1053,7 +1240,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.match(visibleTextFromPayload(single.messages), /可以先以 ONDA Pro 作為諮詢方向/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(single.messages),
-    ["ONDA價格", "預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["ONDA價格", "預約免費諮詢", "周年慶活動", "真人客服協助", "繼續詢問"],
     "the single-ONDA answer must expose a direct approved-price action",
   );
   assert.equal(lastRouted?.kind, "routed");
@@ -1092,7 +1279,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.doesNotMatch(combinationText, /哪一項療程|剛剛沒有完整理解/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(combination.messages),
-    ["ONDA價格", "預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["ONDA價格", "預約免費諮詢", "周年慶活動", "真人客服協助", "繼續詢問"],
   );
 
   const bodyUserId = `${ondaUserId}-body`;
@@ -1111,7 +1298,7 @@ async function validateSemanticQuickReplyJourneys() {
   assert.match(visibleTextFromPayload(abdomen.messages), /局部脂肪厚度、線條與緊實需求/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(abdomen.messages),
-    ["價格／活動", "預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["本療程價格", "預約免費諮詢", "周年慶活動", "真人客服協助", "繼續詢問"],
   );
 
   const botoxUserId = `U-v2-semantic-botox-${Date.now()}`;
@@ -1133,8 +1320,187 @@ async function validateSemanticQuickReplyJourneys() {
   assert.doesNotMatch(faceWidthText, /哪一項療程|剛剛沒有完整理解/u);
   assert.deepEqual(
     quickReplyLabelsFromPayload(faceWidth.messages),
-    ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+    ["預約免費諮詢", "真人客服協助", "周年慶活動", "繼續詢問"],
   );
+}
+
+async function validateApprovedL1MultiTurnJourneys() {
+  const cases = [
+    {
+      canonicalName: "VIO／私密除毛",
+      introEvidence: [/VIO／私密除毛/u, /毛髮粗細/u, /膚況/u],
+      key: "hair_removal_vio",
+      opening: "VIO除毛",
+      suitabilityEvidence: [/私密部位範圍/u, /毛髮粗細/u, /膚況/u],
+    },
+    {
+      canonicalName: "微針超音導賦活粉光瓶",
+      introEvidence: [/微針超音導賦活粉光瓶/u, /膚質/u, /細紋/u, /穩膚保養/u],
+      key: "powder_glow_bottle",
+      opening: "粉光瓶",
+      suitabilityEvidence: [/膚質/u, /細紋/u, /穩膚保養/u],
+    },
+    {
+      canonicalName: "貝恩希",
+      introEvidence: [/貝恩希/u, /院內可評估的注射產品/u, /在意部位/u],
+      key: "bei_en_xi_brand",
+      opening: "韓妞玻尿酸",
+      suitabilityEvidence: [/部位/u, /輪廓需求/u, /醫師/u],
+    },
+    {
+      canonicalName: "埋線拉提／線雕",
+      introEvidence: [/埋線拉提／線雕/u, /非手術輪廓療程/u, /鬆弛程度/u],
+      key: "thread_lift",
+      opening: "埋線拉提",
+      suitabilityEvidence: [/輪廓鬆弛/u, /拉提需求/u, /程度與部位/u],
+    },
+    {
+      canonicalName: "美白點滴／注射諮詢",
+      introEvidence: [/美白點滴／注射/u, /實際成分/u, /適合度/u, /風險/u],
+      key: "whitening_iv",
+      opening: "美白點滴",
+      suitabilityEvidence: [/個人狀況/u, /實際成分/u, /風險/u, /不自行承諾效果/u],
+    },
+  ] as const;
+  const genericOrFallback = /想再確認一下您的需求|剛剛沒有完整理解|想確認一下，您指的是哪一項療程|目前的療程脈絡我有保留/u;
+
+  for (const treatmentCase of cases) {
+    const userId = `U-v2-l1-${treatmentCase.key}-${Date.now()}`;
+    const route = async (input: Parameters<typeof routeConversationV2Canary>[0]) =>
+      routeConversationV2Canary(input, {
+        factsProvider: createStaticClinicFactsProvider(),
+        getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+        requestFrame: async () => ({
+          errorCode: "nlu_unavailable",
+          frame: null,
+          latencyMs: 1,
+          model: "fixture",
+          promptVersion: "fixture",
+          tokensIn: 0,
+          tokensOut: 0,
+        }),
+      });
+    const send = async (id: string, message: string) => {
+      const result = await processWebhookRequestBody(webhookEvent({ id, message, userId }), {
+        includePending: false,
+        routeConversationV2: route,
+        routeLegacy: async () => {
+          throw new Error(`V1 must not run during the ${treatmentCase.key} L1 journey`);
+        },
+      });
+      const processed = result.results[0];
+      assert.ok(processed, `${treatmentCase.key}: missing processed result for ${message}`);
+      const payload = processed.replyPayload;
+      assert.ok(payload, `${treatmentCase.key}: missing final LINE payload for ${message}`);
+      assert.equal(processed.routeVersion, "v2", `${treatmentCase.key}: V2 did not route ${message}`);
+      return { payload, processed };
+    };
+    const assertApprovedVisibleCopy = (
+      messages: readonly LineReplyMessage[],
+      stage: string,
+      evidenceList: readonly RegExp[],
+    ) => {
+      const visibleText = visibleTextFromPayload(messages);
+      for (const evidence of evidenceList) {
+        assert.match(
+          visibleText,
+          evidence,
+          `${treatmentCase.key}: ${stage} must expose the approved treatment copy in the final LINE payload`,
+        );
+      }
+      assert.doesNotMatch(
+        visibleText,
+        genericOrFallback,
+        `${treatmentCase.key}: ${stage} must not degrade to generic or fallback copy`,
+      );
+    };
+
+    const opening = await send(`l1-${treatmentCase.key}-open`, treatmentCase.opening);
+    assertApprovedVisibleCopy(opening.payload.messages, "opening", treatmentCase.introEvidence);
+    assert.ok(
+      quickReplyLabelsFromPayload(opening.payload.messages).includes("適合方向"),
+      `${treatmentCase.key}: approved opening must expose 適合方向`,
+    );
+
+    const suitabilityText = quickReplyTextFromPayload(opening.payload.messages, "適合方向");
+    assert.ok(suitabilityText, `${treatmentCase.key}: 適合方向 must have a live LINE message action`);
+    const suitability = await send(`l1-${treatmentCase.key}-suitability`, suitabilityText);
+    assert.equal(
+      suitability.processed.conversationV2ApprovedReplyAssetId,
+      `treatment:${treatmentCase.key}:quick:approved_l1_suitability`,
+      `${treatmentCase.key}: the delivered 適合方向 action must resolve approved_l1_suitability`,
+    );
+    assertApprovedVisibleCopy(
+      suitability.payload.messages,
+      "suitability",
+      treatmentCase.suitabilityEvidence,
+    );
+    const configuredTreatment = clinicConfig.treatmentList.find(
+      (treatment) => treatment.key === treatmentCase.key,
+    );
+    const approvedIntro = configuredTreatment?.approvedContent.introReplies[0]?.replace(/\s+/gu, "");
+    assert.ok(approvedIntro, `${treatmentCase.key}: missing approved opening copy`);
+    assert.ok(
+      !visibleTextFromPayload(suitability.payload.messages).replace(/\s+/gu, "").includes(approvedIntro),
+      `${treatmentCase.key}: suitability must not repeat the opening introduction in the final LINE payload`,
+    );
+    assert.deepEqual(
+      quickReplyLabelsFromPayload(suitability.payload.messages).filter((label) =>
+        ["預約免費諮詢", "真人客服協助", "繼續詢問"].includes(label)),
+      ["預約免費諮詢", "真人客服協助", "繼續詢問"],
+      `${treatmentCase.key}: suitability must retain booking, human-help, and continue actions`,
+    );
+
+    const continueText = quickReplyTextFromPayload(suitability.payload.messages, "繼續詢問");
+    assert.ok(continueText, `${treatmentCase.key}: 繼續詢問 must have a live LINE message action`);
+    const continued = await send(`l1-${treatmentCase.key}-continue`, continueText);
+    assert.equal(
+      continued.processed.conversationV2ApprovedReplyAssetId,
+      `treatment:${treatmentCase.key}:quick:approved_l1_continue`,
+      `${treatmentCase.key}: the delivered 繼續詢問 action must resolve approved_l1_continue`,
+    );
+    const continuedText = visibleTextFromPayload(continued.payload.messages);
+    assert.match(
+      continuedText,
+      new RegExp(treatmentCase.canonicalName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      `${treatmentCase.key}: continue reply must retain the approved treatment owner`,
+    );
+    assert.match(continuedText, /適合方向/u);
+    assert.match(continuedText, /價格活動/u);
+    assert.match(continuedText, /免費諮詢/u);
+    assert.doesNotMatch(
+      continuedText,
+      genericOrFallback,
+      `${treatmentCase.key}: continue reply must not degrade to generic or fallback copy`,
+    );
+  }
+}
+
+function validateEveryApprovedL1SuitabilityUsesIndependentCopy() {
+  const l1Treatments = clinicConfig.treatmentList.filter((treatment) =>
+    treatment.consultationGuide?.quickReplies?.some(
+      (quickReply) => quickReply.key === "approved_l1_suitability",
+    ),
+  );
+  assert.ok(l1Treatments.length >= 33, "the independent suitability check must cover the full L1 catalog");
+
+  for (const treatment of l1Treatments) {
+    const suitability = treatment.consultationGuide?.quickReplies?.find(
+      (quickReply) => quickReply.key === "approved_l1_suitability",
+    );
+    assert.ok(suitability, `${treatment.key}: missing approved suitability asset`);
+    assert.ok(suitability.reply.trim(), `${treatment.key}: missing approved suitability copy`);
+    assert.notEqual(
+      suitability.reply.replace(/\s+/gu, ""),
+      treatment.approvedContent.introReplies[0]?.replace(/\s+/gu, ""),
+      `${treatment.key}: suitability copy must not reuse the opening introduction`,
+    );
+    assert.equal(
+      (suitability.followupPrompt.match(/[?？]/gu) ?? []).length,
+      1,
+      `${treatment.key}: suitability must ask exactly one demand-discovery question`,
+    );
+  }
 }
 
 async function validatePriceDeclinePausesSameTreatmentInvitation() {
@@ -1315,7 +1681,7 @@ async function validateFinalWebhookPayload() {
   assert.match(JSON.stringify(pricePayload), /16,888/u, "the final payload must retain the approved ONDA price");
   assert.deepEqual(
     quickReplyLabelsFromPayload(pricePayload.messages),
-    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
+    ["ONDA＋肉毒組合", "預約免費諮詢", "周年慶活動", "真人客服協助"],
     "the approved-price CTA choices must survive V2 route, renderer, and webhook formatting",
   );
 
@@ -1638,7 +2004,7 @@ async function validateFinalWebhookPayload() {
   );
   assert.deepEqual(
     quickReplyLabelsFromPayload(dynamicPayload.messages),
-    ["做表情時明顯", "平時也看得到", "價格／活動", "預約免費諮詢"],
+    ["做表情時明顯", "平時也看得到", "本療程價格", "預約免費諮詢"],
     "an understood Botox concern must receive its own state-driven next-step buttons in the final LINE payload",
   );
 
@@ -1693,7 +2059,7 @@ async function validateFinalWebhookPayload() {
   );
   assert.deepEqual(
     quickReplyLabelsFromPayload(flexPayload.messages),
-    ["ONDA＋肉毒組合", "預約免費諮詢", "真人客服協助"],
+    ["ONDA＋肉毒組合", "預約免費諮詢", "周年慶活動", "真人客服協助"],
     "a V2 Flex reply must retain its CTA quick replies after webhook formatting",
   );
 }
@@ -1833,13 +2199,13 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
     assert.match(decision.replyText, /9,999\s*元／100U/iu, `${message}: explicit Botox 100U wording must quote 9,999`);
   }
 
-  const restoredOnda = await routePrice({
+  const unavailableOndaAfterAnniversary = await routePrice({
     message: "ONDA怎麼收費",
     now: "2026-12-01T10:00:00+08:00",
     treatmentKey: "onda_pro",
   });
-  assert.match(restoredOnda.replyText, /16,888/u, "after the anniversary ends, the still-current ONDA offer must be restored");
-  assert.doesNotMatch(restoredOnda.replyText, /8,999|11,999|12,999/u);
+  assert.match(unavailableOndaAfterAnniversary.matchedKey, /price:unavailable_to_quote:expired/u);
+  assert.doesNotMatch(unavailableOndaAfterAnniversary.replyText, /8,999|11,999|12,999|16,888/u);
 
   const expiredOnda = await routePrice({
     message: "ONDA多少錢",
@@ -1852,8 +2218,11 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
 
 async function main() {
   await validateRealSeedPriceSemanticFamiliesAndTimeBoundaries();
+  validateEveryApprovedL1SuitabilityUsesIndependentCopy();
+  validatePromotionEntryRequiresCurrentCatalog();
   validateOndaChoices();
   validateBotoxChoices();
+  validateEveryTreatmentMenuCanOpenThePromotionCatalog();
   validateUndeliveredContractCleanup();
   validateEveryConfiguredSemanticChoiceResolves();
   validateEveryConfiguredChoiceHasCustomerDestination();
@@ -1862,10 +2231,12 @@ async function main() {
   validateBookingChoicesAndPayload();
   validatePriceCallToAction();
   validateFallbackChoicesRespectConversationOwnership();
+  validateGenericFallbackChoicesDoNotFeatureSpecificTreatments();
   await validateLiveRuntimeAttachesV2Choices();
   await validateExplicitBotoxConcernSwitchReplacesOldButtons();
   await validateLiveRuntimePersistsAndConsumesVisibleContract();
   await validateSemanticQuickReplyJourneys();
+  await validateApprovedL1MultiTurnJourneys();
   await validatePriceDeclinePausesSameTreatmentInvitation();
   await validateHumanRequestStartsGuidedBookingWithoutPausingAi();
   await validateFallbackChoicesHaveLiveDestinations();

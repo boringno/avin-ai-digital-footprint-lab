@@ -1,4 +1,9 @@
-import { normalizeClinicText, type TreatmentAreaKey } from "@/lib/clinic-config";
+import {
+  canonicalTreatmentKey,
+  findNormalizedClinicAliasIndex,
+  normalizeClinicText,
+  type TreatmentAreaKey,
+} from "@/lib/clinic-config";
 import { clinicOntology, type ClinicOntology } from "@/lib/clinic-ontology";
 
 const NEGATION_PATTERNS = [
@@ -46,7 +51,7 @@ function collectTreatmentMatches(
   const candidates = entries.flatMap((entry, entryIndex) =>
     entry.terms.flatMap((term) => {
       const normalizedTerm = normalizeClinicText(term);
-      const start = normalizedMessage.indexOf(normalizedTerm);
+      const start = findNormalizedClinicAliasIndex(normalizedMessage, normalizedTerm);
       return normalizedTerm && start >= 0
         ? [{
             end: start + normalizedTerm.length,
@@ -80,17 +85,25 @@ function collectTreatmentMatches(
         (otherLength === candidateLength && other.entryIndex > candidate.entryIndex);
     }));
 
-  return selected.map((candidate) => ({
-    key: candidate.key,
-    // Preserve every alias from the winning treatment that appears in the
-    // message.  Semantic-anchor residual checks need both "dyspot" and
-    // "肉毒" removed from "dyspot是什麼肉毒"; keeping only the longest alias
-    // made a clearly grounded question look unresolved.
-    matchedTerms: [...new Set(candidates
+  const availableKeys = new Set(entries.map((entry) => entry.key));
+  const matchesByCanonicalKey = new Map<string, OntologyEntityMatch>();
+  for (const candidate of selected) {
+    const mergedKey = canonicalTreatmentKey(candidate.key);
+    const key = availableKeys.has(mergedKey) ? mergedKey : candidate.key;
+    const matchedTerms = candidates
       .filter((item) => item.key === candidate.key)
       .sort((left, right) => (right.end - right.start) - (left.end - left.start))
-      .map((item) => item.matchedTerm))],
-  }));
+      .map((item) => item.matchedTerm);
+    const current = matchesByCanonicalKey.get(key);
+    matchesByCanonicalKey.set(key, {
+      key,
+      // Preserve every matching synonym across legacy rows that converge on
+      // this owner. Residual checks must remove all customer wording while the
+      // state receives only one canonical treatment key.
+      matchedTerms: [...new Set([...(current?.matchedTerms ?? []), ...matchedTerms])],
+    });
+  }
+  return [...matchesByCanonicalKey.values()];
 }
 
 export function matchClinicOntology(

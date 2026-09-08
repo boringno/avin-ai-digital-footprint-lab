@@ -234,12 +234,47 @@ export function isPriceInquiryWithTypoTolerance(
   message: string,
   hasExplicitTreatment: boolean,
 ) {
+  // 「打完肉毒有哪些活動不能做」中的「活動」是日常活動，
+  // 不是少一個「價」字的「活動價」。這道邊界必須在模糊容錯前
+  // 判斷，否則明確療程名稱會讓編輯距離把術後衛教拉成問價。
+  if (isPurePostTreatmentActivityQuestion(message)) {
+    return false;
+  }
   return isPriceInquiry(message) ||
     (hasExplicitTreatment && isLikelyPriceInquiryTypo(message));
 }
 
 export function isPromotionBrowseIntent(message: string) {
-  return includesAnyTerm(message, clinicConfig.pricePolicy.browseTerms);
+  if (!includesAnyTerm(message, clinicConfig.pricePolicy.browseTerms)) {
+    return false;
+  }
+
+  // 「活動」也可能指術後能否運動。只要句子的實際問題是術後限制，
+  // 即使前面提到「週年慶方案」，也應留給療程／術後衛教；真正詢問
+  // 「活動優惠」不含這些限制語意，仍會進入活動目錄。
+  return !isPurePostTreatmentActivityQuestion(message);
+}
+
+/**
+ * Distinguishes physical activity / after-care questions from campaign
+ * browsing.  An explicit commercial question in the same message is retained
+ * so the multi-intent layer can still answer the price obligation as well.
+ */
+export function isPurePostTreatmentActivityQuestion(message: string) {
+  const normalizedMessage = normalizeClinicText(message);
+  const asksAboutAfterCare =
+    /(?:術後|打完|做完|施作後|治療後|療程後|雷射後|恢復期)/u.test(normalizedMessage) &&
+    /(?:活動|運動)/u.test(normalizedMessage) &&
+    /(?:可以|不能|避免|多久|恢復|注意|限制|受限|不建議|受影響|影響|暫停|休息|能否|可否|日常|正常活動)/u.test(normalizedMessage);
+  if (!asksAboutAfterCare) return false;
+
+  const commercialPriceTerm =
+    "(?:價格|價錢|價位|費用|收費|報價|活動價|體驗價|優惠價|現價|原價)";
+  const alsoAsksCommercialPrice = new RegExp(
+    `(?:多少錢|${commercialPriceTerm}(?:是多少|多少|怎麼算|如何算|是什麼|呢|嗎|[?？])|(?:想問|請問|想知道|想了解|了解).{0,8}${commercialPriceTerm}|(?:最近|近期|現在|目前)?有(?:什麼)?(?:活動|優惠|方案)(?:嗎|呢|[?？])|折扣多少|有哪些優惠|有什麼優惠|優惠內容|優惠方案)`,
+    "u",
+  ).test(normalizedMessage);
+  return !alsoAsksCommercialPrice;
 }
 
 export function resolvePricingSubject(

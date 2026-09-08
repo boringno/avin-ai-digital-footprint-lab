@@ -1,9 +1,16 @@
 import { normalizeClinicText } from "@/lib/clinic-config";
-import { highestQuotePriorityCampaigns } from "@/lib/pricing-campaign-priority";
+import {
+  highestQuotePriorityCampaigns,
+  pricingCampaignQuotePriority,
+} from "@/lib/pricing-campaign-priority";
+import { isStandingPrice } from "@/lib/pricing-lifecycle";
 
 import type {
   ClinicFactProvenance,
   ClinicFactsSnapshot,
+  ApprovedPromotionCatalogItem,
+  ApprovedPromotionCatalogSelection,
+  PromotionCatalogResolution,
   PriceApplicabilityDimensions,
   PriceCatalogEntry,
   PriceFactResolution,
@@ -14,6 +21,10 @@ import { resolveTreatmentFact } from "./treatment-resolver";
 
 type CampaignState = "current" | "expired" | "future" | "stale" | "unreviewed";
 type ApplicabilityState = "match" | "branch_required" | "required" | "mismatch";
+
+const LEGACY_PRICING_TREATMENT_KEYS: Readonly<Record<string, string>> = {
+  fisbo: "emface",
+};
 
 function unique(values: readonly string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -34,7 +45,7 @@ function provenance(
 export function sanitizeCustomerPromotionText(text: string) {
   return text
     .replace(
-      /(?:(?:19|20)\d{2}[/.年-]\d{1,2}(?:[/.月-]\d{1,2})?日?|\d{1,2}[/.月]\d{1,2}日?)(?:\s*(?:-|–|—|~|～|至)\s*(?:(?:19|20)\d{2}[/.年-])?\d{1,2}(?:[/.月-]\d{1,2})?日?)?/gu,
+      /(?:(?:19|20)\d{2}[/.年-]\d{1,2}(?:[/.月-]\d{1,2})?日?|\d{1,2}\s*月\s*\d{1,2}\s*(?:日|號)?|\d{1,2}[/.]\d{1,2}\s*(?:-|–|—|~|～|至)\s*(?:(?:19|20)\d{2}[/.])?\d{1,2}[/.]\d{1,2}\s*(?:日|號)?|\d{1,2}[/.]\d{1,2}\s*(?:日|號))(?:(?:\s*(?:-|–|—|~|～|至)\s*)(?:(?:19|20)\d{2}[/.年-])?\d{1,2}(?:[/.月-]\d{1,2})?\s*(?:日|號)?)?/gu,
       "",
     )
     .replace(/即日起(?:\s*(?:至|到|[-~～—])\s*(?:(?:本|這)\s*)?月\s*底)?/gu, "")
@@ -115,7 +126,15 @@ function campaignState(
   const startsAt = normalizeCalendarDate(campaign.start_date);
   const endsAt = normalizeCalendarDate(campaign.end_date);
   const localDate = dateInTimeZone(now, timeZone);
-  if (!startsAt || !endsAt || !localDate) return "stale";
+  if (!localDate) return "stale";
+  if (isStandingPrice(campaign)) {
+    if (campaign.start_date.trim() && !startsAt) return "stale";
+    if (campaign.end_date.trim() && !endsAt) return "stale";
+    if (startsAt && startsAt > localDate) return "future";
+    if (endsAt && endsAt < localDate) return "expired";
+    return "current";
+  }
+  if (!startsAt || !endsAt) return "stale";
   if (startsAt > localDate) return "future";
   if (endsAt < localDate) return "expired";
   return "current";
@@ -159,11 +178,17 @@ function campaignScore(
     snapshot.treatments.filter((treatment) => treatment.key === key));
   const approvedById = knowledge.some((treatment) => treatment.approvedPriceIds.includes(campaign.id));
   if (requestedCampaignId) {
-    const isAuthorizedOffer =
-      campaign.id === requestedCampaignId &&
+    const exactCatalogOwnership =
+      requested.length > 0 &&
+      requested.length === campaignKeys.length &&
+      requested.every((key) => campaignKeys.includes(key));
+    const approvedLegacyOwnership =
       approvedById &&
       requested.length > 0 &&
       requested.every((key) => campaignKeys.includes(key));
+    const isAuthorizedOffer =
+      campaign.id === requestedCampaignId &&
+      (exactCatalogOwnership || approvedLegacyOwnership);
     return isAuthorizedOffer ? 1_000 : 0;
   }
   const ownsAllTreatments =
@@ -357,11 +382,172 @@ function customerAssetUrls(campaign: PriceCatalogEntry) {
   return urls.slice(0, 4);
 }
 
+function promotionCatalogGroupKey(
+  snapshot: ClinicFactsSnapshot,
+  campaign: PriceCatalogEntry,
+) {
+  const treatmentIdentity = campaignTreatmentKeys(snapshot, campaign).sort().join("+") ||
+    normalizeClinicText(campaign.treatment_name);
+  const applicability = recordApplicability(campaign);
+  return JSON.stringify([
+    treatmentIdentity,
+    normalizeClinicText(campaign.branch_scope),
+    normalizeClinicText(applicability.dose ?? ""),
+    normalizeClinicText(applicability.package ?? ""),
+    applicability.sessionCount ?? "",
+    normalizeClinicText(applicability.variant ?? ""),
+  ]);
+}
+
+function customerPromotionDisplayName(campaign: PriceCatalogEntry) {
+  const treatmentNames = unique([
+    campaign.treatment_name,
+    ...splitTerms(campaign.booking_treatments),
+  ].map(sanitizeCustomerPromotionText)).filter((value, index, all) =>
+    all.findIndex((candidate) => normalizeClinicText(candidate) === normalizeClinicText(value)) === index,
+  );
+  const base = treatmentNames.join("＋");
+  if (!base) return "";
+  const applicability = recordApplicability(campaign);
+  const qualifiers = unique([
+    applicability.dose ?? "",
+    applicability.package ?? "",
+    applicability.sessionCount ? `${applicability.sessionCount} 堂` : "",
+    applicability.variant ?? "",
+  ]).filter((value) => !normalizeClinicText(base).includes(normalizeClinicText(value)));
+  return qualifiers.length > 0 ? `${base}（${qualifiers.join("／")}）` : base;
+}
+
+/**
+ * Returns the complete customer-visible catalog of effective, clinic-approved
+ * offers. Internal campaign labels, validity dates, notes and fallback copy
+ * deliberately never leave this resolver.
+ *
+ * If a newer offer declares a quote priority for the same treatment and exact
+ * applicability, it replaces an older generic row. Distinct packages/doses/
+ * variants remain visible so the overview does not silently drop real offers.
+ */
+export function resolveApprovedPromotionCatalog(
+  snapshot: ClinicFactsSnapshot,
+): PromotionCatalogResolution {
+  const catalogProvenance = provenance(snapshot);
+  if (!snapshot.priceSourceAvailable) {
+    return {
+      items: [],
+      provenance: catalogProvenance,
+      reason: "source_unavailable",
+      status: "unavailable",
+    };
+  }
+
+  const campaignsById = new Map<string, PriceCatalogEntry>();
+  for (const campaign of snapshot.pricingCampaigns) {
+    // Runtime records precede the seed baseline. Preserve that ownership just
+    // like resolveApprovedPrice does.
+    if (!campaignsById.has(campaign.id)) campaignsById.set(campaign.id, campaign);
+  }
+
+  const candidates = [...campaignsById.values()].flatMap((campaign, index) => {
+    // The promotion carousel is intentionally narrower than the price
+    // resolver. Standing approved prices remain quoteable when asked, but do
+    // not appear as if they were part of the current anniversary campaign.
+    if (isStandingPrice(campaign)) return [];
+    if (
+      campaignState(
+        campaign,
+        snapshot.asOf,
+        snapshot.clinic.humanSupportHours.timezone,
+      ) !== "current"
+    ) return [];
+    const price = customerPriceText(campaign);
+    const displayName = customerPromotionDisplayName(campaign);
+    if (price.status !== "ok" || !displayName) return [];
+    return [{
+      campaign,
+      displayName,
+      index,
+      priceText: price.text,
+    }];
+  });
+
+  const groups = new Map<string, typeof candidates>();
+  for (const candidate of candidates) {
+    const key = promotionCatalogGroupKey(snapshot, candidate.campaign);
+    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  }
+
+  const selected = [...groups.values()]
+    .flatMap((group) => {
+      const highest = Math.max(...group.map(({ campaign }) => pricingCampaignQuotePriority(campaign)));
+      return highest > 0
+        ? group.filter(({ campaign }) => pricingCampaignQuotePriority(campaign) === highest)
+        : group;
+    })
+    .sort((left, right) => left.index - right.index);
+
+  const items = selected.map(({ campaign, displayName, priceText }) => ({
+    applicability: recordApplicability(campaign),
+    branchScope: customerBranchScope(campaign.branch_scope),
+    campaignId: campaign.id,
+    customerAssetUrls: customerAssetUrls(campaign),
+    customerPriceText: priceText,
+    displayName,
+    provenance: provenance(snapshot, campaign.id),
+    status: "approved_current" as const,
+    treatmentKeys: campaignTreatmentKeys(snapshot, campaign),
+  }));
+
+  return items.length > 0
+    ? { items, provenance: catalogProvenance, status: "approved_current" }
+    : {
+        items: [],
+        provenance: catalogProvenance,
+        reason: "not_provided",
+        status: "unavailable",
+      };
+}
+
+/** Canonical text emitted by a promotion card's LINE message action. */
+export function approvedPromotionCatalogSelectionText(
+  item: Pick<ApprovedPromotionCatalogItem, "customerPriceText" | "displayName">,
+) {
+  return `我想了解 ${item.displayName}，${item.customerPriceText}`;
+}
+
+/**
+ * Re-identifies a card tap against the current pinned approved catalog.  This
+ * avoids asking NLU to guess a campaign from display copy while keeping the
+ * existing LINE message-action transport.  Ambiguous or stale text simply
+ * does not select a campaign and therefore cannot force an unapproved quote.
+ */
+export function resolveApprovedPromotionCatalogSelection(
+  snapshot: ClinicFactsSnapshot,
+  message: string,
+): ApprovedPromotionCatalogSelection | null {
+  const catalog = resolveApprovedPromotionCatalog(snapshot);
+  if (catalog.status !== "approved_current") return null;
+  const normalizedMessage = normalizeClinicText(message);
+  const matches = catalog.items.filter((item) =>
+    normalizeClinicText(approvedPromotionCatalogSelectionText(item)) === normalizedMessage,
+  );
+  if (matches.length !== 1) return null;
+  const selected = matches[0]!;
+  return {
+    applicability: { ...selected.applicability },
+    campaignId: selected.campaignId,
+    treatmentKeys: [...selected.treatmentKeys],
+  };
+}
+
 export function resolveApprovedPrice(
   snapshot: ClinicFactsSnapshot,
   query: PriceQuery,
 ): PriceFactResolution {
-  const treatmentKeys = unique(query.treatmentKeys);
+  // Pricing-only compatibility for persisted pre-convergence subjects. This
+  // local copy must never rewrite conversation or booking state.
+  const treatmentKeys = unique(
+    query.treatmentKeys.map((key) => LEGACY_PRICING_TREATMENT_KEYS[key] ?? key),
+  );
   if (!snapshot.priceSourceAvailable) {
     return unavailable(snapshot, treatmentKeys, "source_unavailable");
   }
@@ -467,6 +653,11 @@ export function resolveApprovedPrice(
   const approvedCustomerPriceText = resolvedCustomerText.text;
   const branchScope = customerBranchScope(campaign.branch_scope);
   const resolvedTreatmentKeys = campaignTreatmentKeys(snapshot, campaign);
+  const treatmentAvailabilityFact = inventoryChecks.length === 1 &&
+      inventoryChecks[0]?.status === "offered" &&
+      inventoryChecks[0].branchAvailability.scope === "selected"
+    ? `${inventoryChecks[0].name}目前僅${inventoryChecks[0].branchAvailability.branchNames.join("、")}提供。`
+    : "";
   return {
     applicability: {
       ...recordApplicability(campaign),
@@ -483,7 +674,7 @@ export function resolveApprovedPrice(
     campaignLabel: null,
     customerFacts: unique([
       `核准價格：${approvedCustomerPriceText}`,
-      branchScope ?? "",
+      treatmentAvailabilityFact || branchScope || "",
     ]),
     customerPriceText: approvedCustomerPriceText,
     provenance: provenance(snapshot, campaign.id),

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import { isPromotionBrowseIntent } from "@/lib/pricing-subject";
+
 import { routeConversationTurnV2 } from "./engine";
 import { evaluateDialoguePolicy } from "./policy";
 import { createConversationV2State, reduceConversationV2State } from "./state";
@@ -276,6 +278,164 @@ function validateBookingFieldAndPricingOwnership() {
   assert.equal(effectState.activeTask.kind, "learn_treatment");
   assert.equal(effectState.activeTask.subjectKey, "treatment:onda_pro");
   assert.deepEqual(effectState.knowledge.treatmentKeys, ["onda_pro"]);
+}
+
+function validatePromotionBrowseOwnershipAndPriority() {
+  const initial = createConversationV2State({ episodeId: "episode-promotion-browse", now: AT });
+
+  const freshBrowse = evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "ask_price",
+      text: "目前有什麼活動？",
+      turnId: "promotion-browse-fresh",
+    }),
+  );
+  const freshBrowseAction = expectAction(freshBrowse, "answer_price");
+  assert.equal(freshBrowseAction.priceKind, "browse");
+  assert.deepEqual(freshBrowseAction.treatmentKeys, []);
+  assert.equal(freshBrowseAction.priceSubjectSource, undefined);
+  assert.equal(freshBrowse.replyPlan.mode, "deterministic");
+  assert.equal(
+    freshBrowse.replyPlan.mode === "deterministic" ? freshBrowse.replyPlan.pricingQuery?.kind : undefined,
+    "browse",
+  );
+
+  const anniversaryBrowse = expectAction(evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "ask_price",
+      text: "我想了解週年慶",
+      turnId: "promotion-browse-anniversary-name",
+    }),
+  ), "answer_price");
+  assert.equal(anniversaryBrowse.priceKind, "browse");
+  assert.deepEqual(anniversaryBrowse.treatmentKeys, []);
+
+  for (const message of [
+    "打完肉毒有哪些活動不能做？",
+    "ONDA 做完有什麼活動要避免？",
+    "雷射後有哪些活動要避免？",
+    "做完療程後有哪些活動會受影響？",
+    "術後有什麼活動限制？",
+    "打完肉毒有哪些活動不建議？",
+    "做完這個方案後有什麼活動要避免？",
+    "週年慶療程做完後有哪些活動要避免？",
+    "打完活動價的雷射後有哪些活動要避免？",
+  ]) {
+    assert.equal(
+      isPromotionBrowseIntent(message),
+      false,
+      `post-treatment activity guidance must not open the commercial catalog: ${message}`,
+    );
+  }
+  for (const message of [
+    "目前有哪些活動？",
+    "週年慶活動",
+    "還有其他優惠嗎？",
+    "術後有什麼活動優惠嗎？",
+    "週年慶多少錢？做完後有哪些活動要避免？",
+  ]) {
+    assert.equal(
+      isPromotionBrowseIntent(message),
+      true,
+      `an explicit commercial campaign request must remain a catalog browse: ${message}`,
+    );
+  }
+
+  const afterOnda = apply(initial, evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "learn_treatment",
+      text: "想了解 ONDA",
+      treatments: [entity("onda_pro")],
+      turnId: "promotion-browse-onda-context",
+    }),
+  ));
+  const allCampaigns = expectAction(evaluateDialoguePolicy(
+    afterOnda,
+    turn({
+      speechAct: "ask_price",
+      text: "全部活動",
+      turnId: "promotion-browse-after-onda",
+    }),
+  ), "answer_price");
+  assert.equal(allCampaigns.priceKind, "browse");
+  assert.deepEqual(
+    allCampaigns.treatmentKeys,
+    [],
+    "a broad browse must not inherit the old ONDA price subject",
+  );
+
+  const afterBotox = apply(initial, evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "learn_treatment",
+      text: "想了解肉毒",
+      treatments: [entity("botox")],
+      turnId: "promotion-browse-botox-context",
+    }),
+  ));
+  const otherCampaigns = expectAction(evaluateDialoguePolicy(
+    afterBotox,
+    turn({
+      speechAct: "ask_price",
+      text: "還有其他活動嗎？",
+      turnId: "promotion-browse-after-botox",
+    }),
+  ), "answer_price");
+  assert.equal(otherCampaigns.priceKind, "browse");
+  assert.deepEqual(
+    otherCampaigns.treatmentKeys,
+    [],
+    "a request for other campaigns must not collapse back to botox",
+  );
+
+  const specificQplus = expectAction(evaluateDialoguePolicy(
+    afterOnda,
+    turn({
+      speechAct: "ask_price",
+      text: "Q+ 音波有什麼活動？",
+      treatments: [entity("qplus")],
+      turnId: "promotion-browse-specific-qplus",
+    }),
+  ), "answer_price");
+  assert.equal(specificQplus.priceKind, "campaign");
+  assert.deepEqual(
+    specificQplus.treatmentKeys,
+    ["qplus"],
+    "a treatment named in the current sentence must keep explicit price ownership",
+  );
+  assert.equal(specificQplus.priceSubjectSource, "explicit_current");
+
+  expectAction(evaluateDialoguePolicy(
+    initial,
+    turn({
+      speechAct: "urgent_safety",
+      text: "我做完後呼吸困難，現在還有什麼活動？",
+      turnId: "promotion-browse-safety-priority",
+    }),
+  ), "answer_safety");
+
+  expectAction(evaluateDialoguePolicy(
+    initial,
+    turn({
+      handoffReason: "customer_requested_human",
+      speechAct: "request_handoff",
+      text: "我要找真人看全部活動",
+      turnId: "promotion-browse-handoff-priority",
+    }),
+  ), "queue_handoff");
+
+  expectAction(evaluateDialoguePolicy(
+    initial,
+    turn({
+      booking: { explicit: true, intent: "create" },
+      speechAct: "book_consultation",
+      text: "我要預約，也想看全部活動",
+      turnId: "promotion-browse-booking-priority",
+    }),
+  ), "start_booking");
 }
 
 function validateBookingIntentContracts() {
@@ -1364,6 +1524,7 @@ validatePendingHandoffDoesNotOwnDialogue();
 validateSafetyHandoffDoesNotStartSalesIntake();
 validateOnlyExplicitBookingStartsCollection();
 validateBookingFieldAndPricingOwnership();
+validatePromotionBrowseOwnershipAndPriority();
 validateBookingIntentContracts();
 validateTreatmentKnowledgeOwnershipAndTaskEpisodes();
 validateUncertainUnderstandingMustClarify();

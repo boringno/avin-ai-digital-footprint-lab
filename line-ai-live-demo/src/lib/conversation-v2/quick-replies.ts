@@ -12,6 +12,7 @@ import { buildConversationV2QuickReplySelection } from "./quick-reply-selection"
 import type {
   ConversationV2State,
   PendingQuickReplyContract,
+  PendingQuickReplySemantic,
 } from "./types";
 import { isConsultationInvitationPaused } from "./consultation-invitation";
 import { isConversationV2AiAssistanceEnabled } from "./state";
@@ -33,9 +34,14 @@ const BRANCH_ACTIONS = ["高雄館", "台中館", "桃園館", "林口館"].map(
 
 const FIRST_VISIT_ACTIONS = ["初診", "複診"].map((value) => ({ label: value, text: value }));
 
+const PROMOTION_CATALOG_ACTION = {
+  label: "周年慶活動",
+  text: "我想了解現在有哪些活動",
+} as const;
+
 const FALLBACK_ACTIONS = [
-  { label: "了解 ONDA", text: "我想了解 ONDA" },
-  { label: "了解肉毒", text: "我想了解肉毒" },
+  PROMOTION_CATALOG_ACTION,
+  { label: "依困擾找療程", text: "我想依困擾找適合療程" },
   { label: "預約免費諮詢", text: "我要預約免費諮詢" },
   { label: "真人客服協助", text: "我要找真人客服" },
 ] as const;
@@ -51,6 +57,8 @@ const TREATMENT_DIALOGUE_ACTS = new Set<ReplyPlan["dialogueAct"]>([
 
 type QuickReplyOptions = {
   clinic?: ClinicConfig;
+  /** Derived from the current snapshot; false/omitted hides time-sensitive campaign entry points. */
+  hasCurrentPromotionCatalog?: boolean;
   issuedAt?: string;
   nextStage?: CustomerQuickReplyStage | "consultation";
   snapshotId?: string;
@@ -59,8 +67,36 @@ type QuickReplyOptions = {
 type ProjectedQuickReplyAction = {
   choice?: CustomerQuickReplyChoice;
   label: string;
+  pendingSemantic?: PendingQuickReplySemantic;
   text: string;
 };
+
+/**
+ * Treatment-specific choices answer the current question, while this extra
+ * clinic-wide entry keeps every current approved campaign reachable.  It is
+ * intentionally a plain message action: the runtime re-resolves the active
+ * promotion snapshot instead of storing a treatment-owned semantic shortcut.
+ */
+function withPromotionCatalogAction(
+  actions: readonly ProjectedQuickReplyAction[],
+  hasCurrentPromotionCatalog: boolean,
+): ProjectedQuickReplyAction[] {
+  const catalogText = normalizeClinicText(PROMOTION_CATALOG_ACTION.text);
+  const customerActions = actions
+    .filter((action) => normalizeClinicText(action.text) !== catalogText)
+    .map((action) => action.label === "價格／活動"
+      ? { ...action, label: "本療程價格" }
+      : action);
+  if (!hasCurrentPromotionCatalog) return customerActions;
+  // Keep the clinic-wide activity entry visible without horizontal scrolling
+  // past every treatment-specific choice on a typical phone screen.
+  const insertAt = Math.min(2, customerActions.length);
+  return [
+    ...customerActions.slice(0, insertAt),
+    PROMOTION_CATALOG_ACTION,
+    ...customerActions.slice(insertAt),
+  ];
+}
 
 function uniqueTreatmentKeys(values: readonly string[], clinic: ClinicConfig) {
   const offered = new Set(clinic.treatmentList.map((item) => item.key));
@@ -78,6 +114,21 @@ function subjectTreatmentKeys(subjectKey: string | undefined) {
 }
 
 /**
+ * Some approved L1 treatments intentionally do not yet carry a bespoke
+ * consultation pack. They still need the same safe, low-pressure exits as
+ * the reviewed launch packs without duplicating a copy of this array into
+ * every treatment record.
+ */
+function sharedLaunchL1Actions(treatmentName: string): ProjectedQuickReplyAction[] {
+  return [
+    { label: "適合方向", text: `我想了解${treatmentName}適合方向` },
+    { label: "價格／活動", text: `我想了解${treatmentName}價格／活動` },
+    { label: "預約免費諮詢", text: "我要預約免費諮詢" },
+    { label: "真人客服協助", text: "我要找真人客服" },
+  ];
+}
+
+/**
  * Quick replies belong to the treatment that owns the current answer, not to
  * every treatment ever mentioned in the episode.  A returning customer may
  * have both Botox and ONDA in canonical history; current concern evidence can
@@ -90,6 +141,13 @@ function quickReplyTreatmentOwner(
 ) {
   const planKeys = uniqueTreatmentKeys(plan.treatmentKeys, clinic);
   if (planKeys.length === 1) return planKeys[0];
+
+  // A promotion catalog deliberately has no single treatment owner. Do not
+  // let an older ONDA/Botox topic leak treatment-specific buttons into the
+  // clinic-wide activity overview.
+  if (plan.dialogueAct === "quote_approved_price" && planKeys.length === 0) {
+    return undefined;
+  }
 
   const activeKeys = uniqueTreatmentKeys(subjectTreatmentKeys(state.activeTask.subjectKey), clinic);
   if (activeKeys.length === 1 && (planKeys.length === 0 || planKeys.includes(activeKeys[0]!))) {
@@ -146,7 +204,9 @@ function conversationV2QuickReplyActions(
     if (awaitingActions.length > 0) {
       return awaitingActions satisfies ProjectedQuickReplyAction[];
     }
-    return [...FALLBACK_ACTIONS] satisfies ProjectedQuickReplyAction[];
+    return FALLBACK_ACTIONS.filter(
+      (action) => action !== PROMOTION_CATALOG_ACTION || options.hasCurrentPromotionCatalog === true,
+    ) satisfies ProjectedQuickReplyAction[];
   }
 
   const treatmentOwner = quickReplyTreatmentOwner(plan, state, clinic);
@@ -164,13 +224,39 @@ function conversationV2QuickReplyActions(
     const consultationActions = isConsultationInvitationPaused(state, treatmentKeys)
       ? PAUSED_CONSULTATION_ACTIONS
       : CONSULTATION_ACTIONS;
-    return [
+    const actions = [
       ...(comparisonChoice
         ? [{ choice: comparisonChoice, label: comparisonChoice.label, text: comparisonChoice.text }]
         : []),
       ...consultationActions.filter((item) => item.text !== "繼續詢問"),
       ...(!comparisonChoice ? consultationActions.filter((item) => item.text === "繼續詢問") : []),
     ].slice(0, 4) satisfies ProjectedQuickReplyAction[];
+    return treatmentOwner
+      ? withPromotionCatalogAction(actions, options.hasCurrentPromotionCatalog === true)
+      : actions;
+  }
+
+  const concernProjection = plan.concernCandidateProjection;
+  if (concernProjection?.kind === "entry") {
+    return [
+      ...clinic.customerConcernGroups.map((group) => ({
+        label: group.label,
+        pendingSemantic: { groupKey: group.key, kind: "launch_concern_group" } as const,
+        text: group.label,
+      })),
+      { label: "不確定，想預約免費諮詢", text: "不確定，想預約免費諮詢" },
+    ] satisfies ProjectedQuickReplyAction[];
+  }
+  if (concernProjection?.kind === "candidates") {
+    return concernProjection.treatmentKeys
+      .map((treatmentKey) => clinic.treatmentList.find((item) => item.key === treatmentKey))
+      .filter((treatment): treatment is NonNullable<typeof treatment> => Boolean(treatment))
+      .slice(0, 6)
+      .map((treatment) => ({
+        label: treatment.name,
+        pendingSemantic: { kind: "treatment", treatmentKey: treatment.key } as const,
+        text: `想了解${treatment.name}`,
+      }));
   }
   if (options.nextStage === "consultation") {
     const guide = treatmentKeys.length === 1
@@ -186,15 +272,22 @@ function conversationV2QuickReplyActions(
     const consultationActions = isConsultationInvitationPaused(state, treatmentKeys)
       ? PAUSED_CONSULTATION_ACTIONS
       : CONSULTATION_ACTIONS;
-    return [
+    return withPromotionCatalogAction([
       ...configuredChoices.map((choice) => ({ choice, label: choice.label, text: choice.text })),
       ...consultationActions,
-    ].slice(0, 4) satisfies ProjectedQuickReplyAction[];
+    ].slice(0, 4) satisfies ProjectedQuickReplyAction[], options.hasCurrentPromotionCatalog === true);
   }
   if (!TREATMENT_DIALOGUE_ACTS.has(plan.dialogueAct)) return [] as ProjectedQuickReplyAction[];
   if (!treatmentOwner) return [] as ProjectedQuickReplyAction[];
 
-  const guide = clinic.treatmentList.find((item) => item.key === treatmentOwner)?.consultationGuide;
+  const treatment = clinic.treatmentList.find((item) => item.key === treatmentOwner);
+  const guide = treatment?.consultationGuide;
+  if (!guide && treatment) {
+    return withPromotionCatalogAction(
+      sharedLaunchL1Actions(treatment.name),
+      options.hasCurrentPromotionCatalog === true,
+    );
+  }
   const customerChoices = guide?.customerQuickReplies ?? [];
   const stage = options.nextStage ?? (
     state.knowledge.concernKeys.length > 0 ? "followup" : "initial"
@@ -206,11 +299,12 @@ function conversationV2QuickReplyActions(
   const concernChoices = stagedChoices.filter((choice) =>
     choice.concernKeys?.some((key) => currentConcernKeys.includes(key)),
   );
-  return (concernChoices.length > 0
+  const actions = (concernChoices.length > 0
     ? concernChoices
     : stagedChoices.filter((choice) => !choice.concernKeys?.length))
     .slice(0, 4)
     .map((choice) => ({ choice, label: choice.label, text: choice.text }));
+  return withPromotionCatalogAction(actions, options.hasCurrentPromotionCatalog === true);
 }
 
 /**
@@ -234,7 +328,42 @@ export function projectConversationV2QuickReplies(
   const clinic = options.clinic ?? clinicConfig;
   const actions = conversationV2QuickReplyActions(plan, state, options);
   const quickReplyItems = lineQuickReplyItems(actions);
-  const projectedPlan = quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
+  const { quickReplyItems: _previousQuickReplyItems, ...planWithoutQuickReplies } = plan;
+  const projectedPlan = quickReplyItems.length > 0
+    ? { ...planWithoutQuickReplies, quickReplyItems }
+    : { ...planWithoutQuickReplies, quickReplyItems: [] };
+  const concernProjection = plan.concernCandidateProjection;
+  if (concernProjection) {
+    const choices = actions.flatMap((action, index) => action.pendingSemantic
+      ? [{
+          choiceId: `launch_concern:${concernProjection.kind}:${index}:${normalizeClinicText(action.text)}`,
+          label: action.label,
+          normalizedMessageText: normalizeClinicText(action.text),
+          messageText: action.text,
+          semantic: action.pendingSemantic,
+        }]
+      : []);
+    const issuedAt = new Date(options.issuedAt);
+    if (choices.length === 0 || !Number.isFinite(issuedAt.getTime())) {
+      return { plan: projectedPlan };
+    }
+    return {
+      pendingQuickReply: {
+        ...(concernProjection.branchName
+          ? { contextBranchName: concernProjection.branchName }
+          : {}),
+        choices,
+        episodeId: state.episodeId,
+        expiresAt: new Date(issuedAt.getTime() + 30 * 60 * 1000).toISOString(),
+        contractId: `${state.episodeId}:${state.lastProcessedTurnId ?? "uncommitted"}:launch-concern`,
+        issuedAt: issuedAt.toISOString(),
+        owner: { kind: "launch_concern", treatmentKey: "" },
+        sourceSnapshotId: options.snapshotId,
+        sourceTurnId: state.lastProcessedTurnId ?? "uncommitted",
+      },
+      plan: projectedPlan,
+    };
+  }
   const treatmentKey = quickReplyTreatmentOwner(plan, state, clinic);
   if (!treatmentKey || quickReplyItems.length === 0) {
     return { plan: projectedPlan };
@@ -293,5 +422,8 @@ export function withConversationV2QuickReplies(
   options: QuickReplyOptions = {},
 ) {
   const quickReplyItems = conversationV2QuickReplyItems(plan, state, options);
-  return quickReplyItems.length > 0 ? { ...plan, quickReplyItems } : plan;
+  const { quickReplyItems: _previousQuickReplyItems, ...planWithoutQuickReplies } = plan;
+  return quickReplyItems.length > 0
+    ? { ...planWithoutQuickReplies, quickReplyItems }
+    : { ...planWithoutQuickReplies, quickReplyItems: [] };
 }

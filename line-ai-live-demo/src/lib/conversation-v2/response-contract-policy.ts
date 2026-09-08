@@ -31,7 +31,7 @@ const ENFORCEABLE_PRICE_SECONDARY_ASPECTS = new Set<ResponseAspect>([
 function priceAspect(
   action: Extract<DialoguePolicyAction, { type: "answer_price" }>,
 ): ResponseAspect {
-  if (action.priceKind === "campaign") return "price_campaign";
+  if (action.priceKind === "campaign" || action.priceKind === "browse") return "price_campaign";
   if (action.priceKind === "regular") return "price_regular";
   return "price_unspecified";
 }

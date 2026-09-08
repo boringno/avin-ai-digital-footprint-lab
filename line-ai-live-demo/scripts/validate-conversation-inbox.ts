@@ -59,6 +59,7 @@ expect(
 );
 
 const decisionTrace = getConversationDecisionTrace({
+  conversation_v2_approved_reply_asset_id: "treatment:onda_pro:quick:approved_l1_suitability",
   conversation_v2_nlu_confidence: 0.84,
   conversation_v2_nlu_status: "success",
   conversation_v2_policy_action: "answer_followup",
@@ -84,6 +85,10 @@ const decisionTrace = getConversationDecisionTrace({
   route_version: "v2",
 });
 expect(decisionTrace?.routeVersion === "v2", "決策路徑應顯示實際 V1/V2 路由");
+expect(
+  decisionTrace?.approvedReplyAssetId === "treatment:onda_pro:quick:approved_l1_suitability",
+  "決策路徑應保留實際採用的核准回覆資產",
+);
 expect(decisionTrace?.policyAction === "answer_followup", "決策路徑應保留 policy action");
 expect(decisionTrace?.nluStatus === "success" && decisionTrace.nluConfidence === 0.84, "決策路徑應保留 NLU 狀態與信心");
 expect(decisionTrace?.fallbackReason === "generator_unavailable", "決策路徑應保留 fallback 原因");
@@ -101,4 +106,4 @@ expect(decisionTrace?.replyDeliveryStatus === "sent" && decisionTrace.replyDeliv
 expect(getConversationDecisionTrace({ official_source_url: "https://internal.example" }) === null, "後台決策路徑不得暴露內部來源網址");
 expect(getConversationDecisionTrace(null) === null, "舊訊息沒有 telemetry 時應維持相容");
 
-console.log("Conversation inbox validation passed: 19 checks");
+console.log("Conversation inbox validation passed: 20 checks");

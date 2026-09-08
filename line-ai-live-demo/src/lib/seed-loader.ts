@@ -51,6 +51,8 @@ export type PricingCampaign = {
   notes: string;
   package_key?: string;
   price_text: string;
+  /** `standing` has no required activity window; legacy rows default to `campaign`. */
+  pricing_kind?: string;
   /** Higher values win generic price questions among otherwise eligible offers. */
   quote_priority?: number | string;
   session_count?: number | string;
@@ -82,12 +84,9 @@ type SeedData = {
 };
 
 function hasRequiredPricingWindow(row: PricingCampaign) {
-  return Boolean(
-    row.treatment_name &&
-      row.campaign_name &&
-      row.start_date &&
-      row.end_date,
-  );
+  if (!row.treatment_name || !row.campaign_name) return false;
+  if (row.pricing_kind?.trim().toLowerCase() === "standing") return true;
+  return Boolean(row.start_date && row.end_date);
 }
 
 function sanitizePricingCampaigns(rows: PricingCampaign[]) {

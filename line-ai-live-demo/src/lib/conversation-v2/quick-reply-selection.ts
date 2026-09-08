@@ -1,5 +1,6 @@
 import { buildTreatmentReplyAssets } from "@/lib/clinic-facts/treatment-reply-assets";
 import {
+  canonicalTreatmentKey,
   normalizeClinicText,
   type ClinicConfig,
   type CustomerQuickReplyChoice,
@@ -7,12 +8,14 @@ import {
 
 import type {
   ConversationV2State,
+  PendingQuickReplyContract,
   PendingQuickReplyChoice,
   TrustedSemanticAnchor,
 } from "./types";
 import { isConversationV2AiAssistanceEnabled } from "./state";
 
 export type ConversationV2QuickReplySelection = {
+  launchConcernGroupKey?: string;
   nextStage?: "approach" | "followup" | "initial" | "consultation";
   semanticAnchor: TrustedSemanticAnchor;
 };
@@ -79,9 +82,48 @@ export function buildConversationV2QuickReplySelection(input: {
 function selectionFromStoredChoice(input: {
   choice: PendingQuickReplyChoice;
   clinic: ClinicConfig;
-  treatmentKey: string;
+  owner: PendingQuickReplyContract["owner"];
 }): ConversationV2QuickReplySelection | undefined {
-  const treatment = input.clinic.treatmentList.find((item) => item.key === input.treatmentKey);
+  if (input.choice.semantic.kind === "launch_concern_group") {
+    if (input.owner.kind !== "launch_concern") return undefined;
+    return {
+      ...(input.choice.nextStage ? { nextStage: input.choice.nextStage } : {}),
+      launchConcernGroupKey: input.choice.semantic.groupKey,
+      semanticAnchor: {
+        areaKeys: [],
+        concernKeys: [],
+        conversationMove: "continue",
+        dialogueReference: "active_subject",
+        questionAspect: "overview",
+        source: "exact_ontology",
+        speechAct: "ask_concern",
+        treatmentKeys: [],
+      },
+    };
+  }
+
+  if (input.choice.semantic.kind === "treatment") {
+    if (input.owner.kind !== "launch_concern") return undefined;
+    const treatmentKey = canonicalTreatmentKey(input.choice.semantic.treatmentKey);
+    const treatment = input.clinic.treatmentList.find((item) => item.key === treatmentKey);
+    if (!treatment) return undefined;
+    return {
+      ...(input.choice.nextStage ? { nextStage: input.choice.nextStage } : {}),
+      semanticAnchor: {
+        areaKeys: [],
+        concernKeys: [],
+        conversationMove: "start",
+        dialogueReference: "explicit",
+        questionAspect: "overview",
+        source: "exact_ontology",
+        speechAct: "learn_treatment",
+        treatmentKeys: [treatmentKey],
+      },
+    };
+  }
+
+  if (input.owner.kind !== "treatment") return undefined;
+  const treatment = input.clinic.treatmentList.find((item) => item.key === input.owner.treatmentKey);
   const guide = treatment?.consultationGuide;
   if (!treatment || !guide) return undefined;
   const semantic = input.choice.semantic;
@@ -99,12 +141,12 @@ function selectionFromStoredChoice(input: {
         questionAspect: "overview",
         source: "exact_ontology",
         speechAct: "ask_concern",
-        treatmentKeys: [input.treatmentKey],
+        treatmentKeys: [input.owner.treatmentKey],
       },
     };
   }
   const asset = buildTreatmentReplyAssets(input.clinic).find((item) =>
-    item.id === semantic.replyAssetId && item.treatmentKey === input.treatmentKey,
+    item.id === semantic.replyAssetId && item.treatmentKey === input.owner.treatmentKey,
   );
   if (!asset || (semantic.concernKey && asset.concernKey !== semantic.concernKey)) return undefined;
   return {
@@ -122,7 +164,7 @@ function selectionFromStoredChoice(input: {
       replyAssetId: semantic.replyAssetId,
       source: "approved_asset",
       speechAct: "ask_treatment_detail",
-      treatmentKeys: [input.treatmentKey],
+      treatmentKeys: [input.owner.treatmentKey],
     },
   };
 }
@@ -173,7 +215,7 @@ export function resolveConversationV2QuickReplySelection(input: {
       // data; resolve its stable asset identity against the current approved
       // clinic config instead of invalidating the customer-visible button.
       clinic: input.clinic,
-      treatmentKey: contract.owner.treatmentKey,
+      owner: contract.owner,
     }))
     .filter((selection): selection is ConversationV2QuickReplySelection => Boolean(selection));
   if (matches.length !== 1) return undefined;

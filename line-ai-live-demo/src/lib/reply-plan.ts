@@ -51,6 +51,10 @@ export type ApprovedPriceQuoteContract = {
   role: "alternative" | "primary";
   snapshotId: string;
   subjectLabel: string;
+  treatmentAvailability?: {
+    branchNames: string[];
+    scope: "selected";
+  };
   treatmentKeys: string[];
 };
 
@@ -83,13 +87,33 @@ export type ApprovedPriceSupplementContract = {
   treatmentKeys: string[];
 };
 
+/**
+ * A deterministic, clinic-approved discovery projection. It contains only
+ * canonical treatment identities selected from the current facts snapshot;
+ * customer copy and LINE quick replies are projected separately.
+ */
+export type ConcernCandidateProjection =
+  | {
+      branchName?: string;
+      kind: "entry";
+    }
+  | {
+      branchName?: string;
+      groupKey: string;
+      kind: "candidates";
+      treatmentKeys: string[];
+    };
+
 export type ReplyPlan = {
   answerFacts: string[];
+  /** Exact, clinic-approved customer copy that may be shown verbatim. */
+  approvedCustomerCopy: string[];
   approvedPriceReply?: ApprovedPriceReplyContract;
   approvedFacts: string[];
   approvedKnowledge: string[];
   bookingTransition?: ReplyPlanBookingTransition;
   concernKeys: string[];
+  concernCandidateProjection?: ConcernCandidateProjection;
   decisionType: string;
   deterministicReply?: string;
   dialogueAct: DialogueAct;
@@ -125,11 +149,13 @@ export type LegacyReplyMetadataInput = {
 
 export type LegacyReplyPlanOptions = {
   answerFacts?: readonly string[];
+  approvedCustomerCopy?: readonly string[];
   approvedPriceReply?: ApprovedPriceReplyContract;
   approvedFacts?: readonly string[];
   approvedKnowledge?: readonly string[];
   bookingTransition?: ReplyPlanBookingTransition;
   concernKeys?: readonly string[];
+  concernCandidateProjection?: ConcernCandidateProjection;
   dialogueAct?: DialogueAct;
   exactPriceFacts?: readonly string[];
   fallbackText?: string;
@@ -283,6 +309,7 @@ export function legacyDecisionToReplyPlan(
 
   return {
     answerFacts: normalizeStrings(options.answerFacts),
+    approvedCustomerCopy: normalizeStrings(options.approvedCustomerCopy),
     approvedPriceReply: options.approvedPriceReply
       ? {
           concernCta: options.approvedPriceReply.concernCta
@@ -309,6 +336,23 @@ export function legacyDecisionToReplyPlan(
     approvedKnowledge: normalizeStrings(options.approvedKnowledge),
     bookingTransition: options.bookingTransition ? { ...options.bookingTransition } : undefined,
     concernKeys: normalizeStrings(options.concernKeys),
+    concernCandidateProjection: options.concernCandidateProjection
+      ? options.concernCandidateProjection.kind === "entry"
+        ? {
+            ...(options.concernCandidateProjection.branchName
+              ? { branchName: options.concernCandidateProjection.branchName }
+              : {}),
+            kind: "entry",
+          }
+        : {
+            ...(options.concernCandidateProjection.branchName
+              ? { branchName: options.concernCandidateProjection.branchName }
+              : {}),
+            groupKey: options.concernCandidateProjection.groupKey,
+            kind: "candidates",
+            treatmentKeys: normalizeStrings(options.concernCandidateProjection.treatmentKeys),
+          }
+      : undefined,
     decisionType: input.decisionType,
     deterministicReply: hardDeterministic ? fallbackText : undefined,
     dialogueAct: options.dialogueAct ?? inferDialogueActFromLegacy(input),

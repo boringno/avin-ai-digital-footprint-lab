@@ -259,9 +259,10 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_intro:emfemme",
+    expectedMatchedKey: "treatment_intro:butterfly_forma_rf",
     message: "蝴蝶電波是什麼",
-    replyExcludes: ["Thermage", "臉部拉提"],
+    replyIncludes: ["蝴蝶電波 FORMA V", "私密電波"],
+    replyExcludes: ["EMFEMME", "Thermage", "臉部拉提"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
@@ -332,23 +333,23 @@ const TEST_CASES: TestCase[] = [
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_intro:fisbo",
+    expectedMatchedKey: "treatment_intro:emface",
     message: "菲斯波是什麼",
     replyIncludes: ["台中館"],
     replyExcludes: ["每一館都有", "亂下定義"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_intro_branch_limit:fisbo",
+    expectedMatchedKey: "treatment_intro_branch_limit:emface",
     message: "高雄館有菲斯波嗎",
     replyIncludes: ["台中館", "整理需求"],
   },
   {
-    expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_brand_comparison:tenthermage_eye_tip:overall",
+    expectedDecisionType: "fallback_reply",
+    expectedMatchedKey: "generic_fallback",
     message: "眼周電波有嗎？什麼牌子",
-    replyIncludes: ["十蓓電波眼周探頭"],
-    replyExcludes: ["Thermage", "美國電波"],
+    replyIncludes: ["療程"],
+    replyExcludes: ["十蓓", "Thermage", "美國電波"],
   },
   {
     expectedDecisionType: "treatment_intro_reply",
@@ -361,7 +362,7 @@ const TEST_CASES: TestCase[] = [
     expectedDecisionType: "treatment_intro_reply",
     expectedMatchedKey: "treatment_brand:tenthermage_eye_tip",
     message: "十蓓電波眼周是什麼探頭？",
-    replyIncludes: ["十蓓電波", "眼周探頭"],
+    replyIncludes: ["十蓓眼周探頭"],
     replyExcludes: ["Thermage"],
   },
   {
@@ -480,10 +481,11 @@ const TEST_CASES: TestCase[] = [
       lastIntent: "booking_intake",
       userId: "validate-booking-detour",
     },
-    expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_brand_comparison:tenthermage_eye_tip:overall",
+    expectedDecisionType: "fallback_reply",
+    expectedMatchedKey: "generic_fallback",
     message: "眼周電波有嗎？什麼牌子",
-    replyIncludes: ["十蓓電波眼周探頭"],
+    replyIncludes: ["療程"],
+    replyExcludes: ["十蓓", "Thermage"],
   },
   {
     conversationContext: {
@@ -1000,13 +1002,13 @@ async function main() {
   });
 
   const currentOfferCases = [
-    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA原價多少", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA怎麼收費", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["16,888", "8,999"], includes: ["11,999"], message: "ONDA延伸方案多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["16,888", "11,999"], includes: ["8,999"], message: "ONDA有活動嗎", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["9,999"], includes: ["999", "一區"], message: "奇蹟肉毒少錢", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["一區"], includes: ["9,999", "100U"], message: "肉毒100U多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["8,999", "11,999"], includes: ["16,888"], message: "ONDA多少錢", now: new Date("2026-12-01T04:00:00.000Z") },
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA原價多少", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA怎麼收費", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "8,999"], includes: ["11,999"], matchedType: "pricing_campaign", message: "ONDA延伸方案多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA有活動嗎", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["9,999"], includes: ["999", "一區"], matchedType: "pricing_campaign", message: "奇蹟肉毒少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["一區"], includes: ["9,999", "100U"], matchedType: "pricing_campaign", message: "肉毒100U多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["8,999", "11,999", "12,999", "16,888"], includes: [], matchedType: "guided_reply", message: "ONDA多少錢", now: new Date("2026-12-01T04:00:00.000Z") },
   ];
   for (const testCase of currentOfferCases) {
     const result = await routeCustomerMessage({
@@ -1017,11 +1019,11 @@ async function main() {
     });
     results.push({
       expectedDecisionType: "pricing_auto_reply",
-      expectedMatchedType: "pricing_campaign",
+      expectedMatchedType: testCase.matchedType,
       message: `current approved offer: ${testCase.message}`,
       passed:
         result.decisionType === "pricing_auto_reply" &&
-        result.matchedType === "pricing_campaign" &&
+        result.matchedType === testCase.matchedType &&
         testCase.includes.every((fragment) => result.replyText.includes(fragment)) &&
         testCase.excludes.every((fragment) => !result.replyText.includes(fragment)),
       result,

@@ -369,6 +369,45 @@ function hasOntologyEntity(message: string, ontology: ClinicOntology) {
   return match.areas.length + match.concerns.length + match.treatments.length > 0;
 }
 
+/**
+ * A treatment name can contain words that are also ontology needs. For
+ * example, `埋線拉提` contains the `拉提` concern and `美白點滴` contains the
+ * `美白` concern. Those nested words describe the named treatment; they are
+ * not independent customer needs and must not make a frame-less first turn
+ * fail treatment compatibility.
+ *
+ * Remove only the matched treatment phrase, then re-match the remaining text.
+ * A real need written outside the treatment name (for example `埋線拉提，想
+ * 改善暗沉`) remains in the residual and still has to pass the ordinary
+ * compatibility guard.
+ */
+function explicitNeedsOutsideTreatmentMention(
+  message: string,
+  ontologyMatch: ReturnType<typeof matchClinicOntology>,
+  ontology: ClinicOntology,
+) {
+  if (ontologyMatch.treatments.length !== 1) {
+    return {
+      areas: ontologyMatch.areas,
+      concerns: ontologyMatch.concerns,
+    };
+  }
+
+  let residual = normalizeClinicText(message);
+  const treatmentTerms = unique(ontologyMatch.treatments[0]!.matchedTerms)
+    .map(normalizeClinicText)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  for (const term of treatmentTerms) {
+    residual = residual.split(term).join("");
+  }
+  const residualMatch = matchClinicOntology(residual, ontology);
+  return {
+    areas: residualMatch.areas,
+    concerns: residualMatch.concerns,
+  };
+}
+
 function normalizeIndependentContentClause(message: string) {
   return normalizeLeadingPositiveContentIntro(message);
 }
@@ -930,8 +969,13 @@ export function resolveTrustedSemanticAnchor(
     return undefined;
   }
   const treatmentKeys = unique(ontologyMatch.treatments.map((item) => item.key));
-  const concernKeys = unique(ontologyMatch.concerns.map((item) => item.key));
-  const areaKeys = unique(ontologyMatch.areas.map((item) => item.key));
+  const explicitNeeds = explicitNeedsOutsideTreatmentMention(
+    scopedMessage,
+    ontologyMatch,
+    input.ontology,
+  );
+  const concernKeys = unique(explicitNeeds.concerns.map((item) => item.key));
+  const areaKeys = unique(explicitNeeds.areas.map((item) => item.key));
   if (treatmentKeys.length > 1 || concernKeys.length > 1 || areaKeys.length > 1) {
     return undefined;
   }
@@ -960,8 +1004,8 @@ export function resolveTrustedSemanticAnchor(
 
   const matchedTerms = [
     ...ontologyMatch.treatments.flatMap((item) => item.matchedTerms),
-    ...ontologyMatch.concerns.flatMap((item) => item.matchedTerms),
-    ...ontologyMatch.areas.flatMap((item) => item.matchedTerms),
+    ...explicitNeeds.concerns.flatMap((item) => item.matchedTerms),
+    ...explicitNeeds.areas.flatMap((item) => item.matchedTerms),
   ];
 
   const highTrustQuestionAspect = inferHighTrustQuestionAspect(

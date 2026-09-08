@@ -284,6 +284,7 @@ function decisionTraceRows(trace: NonNullable<WorkbenchConversationDetail["messa
   addDecisionTraceRow(rows, "Policy action", trace.policyAction);
   addDecisionTraceRow(rows, "Decision", trace.decisionType);
   addDecisionTraceRow(rows, "Matched key", trace.matchedKey);
+  addDecisionTraceRow(rows, "核准回覆資產", trace.approvedReplyAssetId);
   addDecisionTraceRow(rows, "NLU", formatNluTrace(trace.nluStatus, trace.nluConfidence));
   addDecisionTraceRow(rows, "Tool", trace.toolRequestType);
   addDecisionTraceRow(rows, "Renderer", trace.rendererMode);

@@ -2014,6 +2014,118 @@ function validateOrderedQuestionAspectPreservation() {
     ["price_unspecified"],
     "deterministic price recovery must retain only its trusted price obligation when NLU confidence is low",
   );
+
+  const lowConfidenceAnniversaryBrowse = adapt(
+    v3Frame({
+      aspects: ["overview"],
+      focus: "overview",
+      move: "start",
+      reference: "explicit",
+      speechAct: "learn_treatment",
+    }, {
+      confidence: 0.4,
+      intents: ["treatment_consultation"],
+    }),
+    undefined,
+    "我想了解週年慶",
+  );
+  assert.equal(
+    lowConfidenceAnniversaryBrowse.speechAct,
+    "ask_price",
+    "the anniversary campaign name must recover a broad price browse even when model confidence is low",
+  );
+  assert.deepEqual(
+    lowConfidenceAnniversaryBrowse.treatments,
+    [],
+    "a broad anniversary browse must not invent a treatment owner",
+  );
+
+  for (const message of [
+    "打完肉毒有哪些活動不能做？",
+    "做完療程後有哪些活動會受影響？",
+    "術後有什麼活動限制？",
+    "週年慶療程做完後有哪些活動要避免？",
+  ]) {
+    const postTreatmentActivity = adapt(
+      v3Frame({
+        aspects: ["price_campaign"],
+        focus: "price_campaign",
+        move: "start",
+        reference: "explicit",
+        speechAct: "ask_price",
+      }, {
+        confidence: 0.4,
+        intents: ["pricing", "promotion"],
+        treatments: message.includes("肉毒") ? ["botox"] : [],
+      }),
+      undefined,
+      message,
+    );
+    assert.equal(
+      postTreatmentActivity.speechAct,
+      "ask_treatment_detail",
+      `post-treatment activity guidance must be recovered as treatment detail at low confidence: ${message}`,
+    );
+    assert.equal(
+      postTreatmentActivity.questionAspect,
+      "comfort_recovery",
+      `post-treatment activity guidance must retain its after-care aspect: ${message}`,
+    );
+  }
+
+  const highConfidencePostTreatmentActivity = adapt(
+    v3Frame({
+      aspects: ["price_campaign"],
+      focus: "price_campaign",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_price",
+    }, {
+      confidence: 0.95,
+      intents: ["pricing", "promotion"],
+      treatments: ["botox"],
+    }),
+    undefined,
+    "打完肉毒有哪些活動不能做？",
+  );
+  assert.equal(
+    highConfidencePostTreatmentActivity.speechAct,
+    "ask_treatment_detail",
+    "explicit after-care wording must outrank a confidently wrong campaign classification",
+  );
+  assert.equal(highConfidencePostTreatmentActivity.questionAspect, "comfort_recovery");
+
+  const mixedCommercialAndAftercare = adapt(
+    v3Frame({
+      aspects: ["price_campaign", "comfort_recovery"],
+      focus: "price_campaign",
+      move: "start",
+      reference: "explicit",
+      speechAct: "ask_price",
+    }, {
+      confidence: 0.4,
+      intents: ["pricing", "promotion", "treatment_consultation"],
+    }),
+    undefined,
+    "週年慶多少錢？做完後有哪些活動要避免？",
+  );
+  assert.equal(
+    mixedCommercialAndAftercare.speechAct,
+    "ask_price",
+    "an independent commercial clause must preserve the price obligation beside after-care wording",
+  );
+  assert.equal(mixedCommercialAndAftercare.questionAspect, "price_unspecified");
+
+  const postTreatmentCommercialOffer = adapt(
+    frame({ confidence: 0.4, intents: ["pricing", "promotion"] }),
+    undefined,
+    "術後有什麼活動優惠嗎？",
+  );
+  assert.equal(
+    postTreatmentCommercialOffer.speechAct,
+    "ask_price",
+    "an explicit activity-offer question must remain commercial even when it mentions post-treatment context",
+  );
 }
 
 validateTreatmentAndEntityMapping();

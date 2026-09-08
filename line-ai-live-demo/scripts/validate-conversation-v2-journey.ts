@@ -21,6 +21,7 @@ import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provi
 import { containsInternalFieldLabel } from "@/lib/conversation-v2/customer-text-guard";
 import { isExplicitTreatmentOverviewRestart } from "@/lib/conversation-v2/episode-policy";
 import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
+import { createConversationV2State } from "@/lib/conversation-v2/state";
 import {
   createEmptyConversationContext,
   type ConversationContext,
@@ -95,6 +96,51 @@ const botoxCampaign = {
   start_date: "2026-07-09",
   treatment_name: "肉毒除皺",
   variant_key: "",
+};
+
+const phoenixGeneralCampaign = {
+  ...ondaCampaign,
+  campaign_aliases: "鳳凰電波|鳳凰",
+  campaign_name: "鳳凰電波一般方案",
+  customer_price_text: "鳳凰電波一般方案 140,000 元",
+  id: "fixture-phoenix-general",
+  price_text: "鳳凰電波一般方案 140,000 元",
+  treatment_name: "鳳凰電波",
+};
+
+const tenthermageEyeCampaign = {
+  ...ondaCampaign,
+  campaign_aliases: "十蓓眼周|十蓓眼周探頭|眼周300發",
+  campaign_name: "十蓓眼周方案",
+  customer_price_text: "十蓓眼周活動價 18,888 元",
+  id: "fixture-tenthermage-eye",
+  price_text: "十蓓眼周 300 發 18,888 元",
+  treatment_name: "十蓓眼周探頭",
+};
+
+const sunmaxSpecificCampaign = {
+  ...ondaCampaign,
+  campaign_aliases: "雙美膠原蛋白1cc|Sunmax 1cc",
+  campaign_name: "雙美膠原蛋白指定規格",
+  customer_price_text: "雙美膠原蛋白指定規格 99,999 元",
+  id: "fixture-sunmax-specific",
+  price_text: "雙美膠原蛋白 1cc 99,999 元",
+  treatment_name: "雙美膠原蛋白",
+  variant_key: "sunmax_1cc",
+};
+
+const emfaceStandingCampaign = {
+  ...ondaCampaign,
+  branch_scope: "all",
+  campaign_aliases: "EMFACE|菲斯波",
+  campaign_name: "EMFACE 常態核准報價",
+  customer_price_text: "EMFACE 目前院內核准參考為 19,999 元。",
+  end_date: "",
+  id: "standing-emface-19999",
+  price_text: "19,999 元",
+  pricing_kind: "standing",
+  start_date: "",
+  treatment_name: "EMFACE",
 };
 
 function factsProvider() {
@@ -3930,6 +3976,792 @@ async function validateStaleOverviewStartsFreshEpisode() {
   console.log("PASS: J3 stale overview starts a fresh episode");
 }
 
+/**
+ * A reviewed L1 treatment name may contain a word that is also a concern
+ * alias. With no NLU frame, that nested word must remain part of the explicit
+ * treatment owner instead of being treated as an unrelated unsupported need.
+ */
+async function validateNluUnavailableApprovedL1Introduction() {
+  console.log("### Approved L1 introduction during NLU outage");
+  const cases = [
+    {
+      expectedKey: "thread_lift",
+      expectedText: /埋線拉提／線雕是院內可評估/u,
+      message: "想了解埋線拉提",
+    },
+    {
+      expectedKey: "thread_lift",
+      expectedText: /埋線拉提／線雕是院內可評估/u,
+      message: "埋線拉提／線雕",
+    },
+    {
+      expectedKey: "whitening_iv",
+      expectedText: /美白點滴／注射是院內可評估/u,
+      message: "我想了解美白點滴",
+    },
+    {
+      expectedKey: "whitening_iv",
+      expectedText: /美白點滴／注射是院內可評估/u,
+      message: "美白點滴／注射諮詢",
+    },
+  ] as const;
+
+  for (const [offset, testCase] of cases.entries()) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-approved-l1-${offset}`),
+      frame: null,
+      message: testCase.message,
+      turnIndex: 500 + offset,
+    });
+    assert.equal(
+      routed.policyAction,
+      "learn_treatment",
+      `${testCase.message}: an exact approved treatment must survive an NLU outage`,
+    );
+    assert.match(routed.decision.replyText, testCase.expectedText);
+    assert.doesNotMatch(
+      routed.decision.replyText,
+      /想再確認一下您的需求|可以告訴我想了解的療程/u,
+      `${testCase.message}: must not fall back to generic onboarding`,
+    );
+    assert.deepEqual(
+      routed.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+      [testCase.expectedKey],
+      `${testCase.message}: the current explicit treatment must own the new task`,
+    );
+  }
+
+  const independentUnsupportedNeed = await routeTurn({
+    context: createEmptyConversationContext("U-approved-l1-independent-need"),
+    frame: null,
+    message: "想了解埋線拉提，主要困擾是暗沉",
+    turnIndex: 510,
+  });
+  assert.equal(
+    independentUnsupportedNeed.policyAction,
+    "runtime_fallback",
+    "a real need outside the treatment name must still pass compatibility instead of being discarded",
+  );
+  assert.doesNotMatch(
+    independentUnsupportedNeed.decision.replyText,
+    /埋線拉提／線雕是院內可評估/u,
+    "an unsupported independent need must not be hidden by the nested-word fix",
+  );
+
+  console.log("PASS: approved L1 introduction during NLU outage");
+}
+
+async function validateLaunchTreatmentIdentityConvergence() {
+  console.log("### Launch treatment identity convergence");
+  const pairs = [
+    {
+      aliases: ["EMFACE", "菲斯波"],
+      expectedKey: "emface",
+      expectedText: /EMFACE.*臉部肌肉.*輪廓管理/su,
+      forbiddenText: /膚質管理|日常保養/u,
+      ownerText: /EMFACE/u,
+    },
+    {
+      aliases: ["菲斯波", "EMFACE"],
+      expectedKey: "emface",
+      expectedText: /EMFACE.*臉部肌肉.*輪廓管理/su,
+      forbiddenText: /膚質管理|日常保養/u,
+      ownerText: /EMFACE/u,
+    },
+    {
+      aliases: ["熊貓針", "雙美膠原蛋白"],
+      expectedKey: "panda_needle",
+      expectedText: /熊貓針.*眼周/su,
+      forbiddenText: /另一項療程|哪一項療程/u,
+      ownerText: /熊貓針/u,
+    },
+    {
+      aliases: ["蝴蝶電波", "FORMA V"],
+      expectedKey: "butterfly_forma_rf",
+      expectedText: /蝴蝶電波 FORMA V.*私密電波/su,
+      forbiddenText: /EMFEMME/u,
+      ownerText: /蝴蝶電波 FORMA V/u,
+    },
+  ] as const;
+
+  let turnIndex = 5200;
+  for (const testCase of pairs) {
+    const first = await routeTurn({
+      context: createEmptyConversationContext(`U-identity-${testCase.expectedKey}`),
+      frame: null,
+      message: `想了解${testCase.aliases[0]}`,
+      turnIndex: turnIndex++,
+    });
+    assert.match(first.decision.replyText, testCase.expectedText);
+    assert.doesNotMatch(first.decision.replyText, testCase.forbiddenText);
+    const second = await routeTurn({
+      context: first.decision.nextContext,
+      frame: null,
+      message: `那${testCase.aliases[1]}呢`,
+      turnIndex: turnIndex++,
+    });
+    const state = second.decision.nextContext.conversationV2State;
+    assert.ok(state, `${testCase.expectedKey}: second alias must preserve V2 state`);
+    assert.deepEqual(state.knowledge.treatmentKeys, [testCase.expectedKey]);
+    assert.deepEqual(
+      state.knowledge.consultedTreatmentKeys.filter((key) => key === testCase.expectedKey),
+      [testCase.expectedKey],
+      `${testCase.expectedKey}: aliases must not create duplicate consulted subjects`,
+    );
+    assert.equal(state.activeTask.subjectKey, `treatment:${testCase.expectedKey}`);
+    assert.match(second.decision.replyText, testCase.ownerText);
+    assert.doesNotMatch(second.decision.replyText, testCase.forbiddenText);
+  }
+
+  const legacyFisboContext = createEmptyConversationContext("U-legacy-fisbo-state");
+  const legacyFisboState = createConversationV2State({
+    episodeId: "legacy-fisbo-state",
+    now: NOW.toISOString(),
+  });
+  legacyFisboState.activeTask = {
+    id: "legacy-fisbo-state:learn",
+    kind: "learn_treatment",
+    startedAt: NOW.toISOString(),
+    subjectKey: "treatment:fisbo",
+  };
+  legacyFisboState.knowledge.treatmentKeys = ["fisbo"];
+  legacyFisboState.knowledge.consultedTreatmentKeys = ["fisbo"];
+  legacyFisboContext.conversationV2State = legacyFisboState;
+  const continuedLegacyFisbo = await routeTurn({
+    context: legacyFisboContext,
+    frame: frame({
+      dialogue: { focus: "benefits", move: "continue", reference: "active_subject", speechAct: "ask_treatment_detail" },
+      treatments: [],
+    }),
+    message: "適合改善什麼",
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(
+    continuedLegacyFisbo.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+    ["fisbo"],
+    "identity convergence must not erase or rewrite a persisted legacy Fisbo key",
+  );
+  assert.doesNotMatch(
+    continuedLegacyFisbo.decision.replyText,
+    /膚質管理|日常保養/u,
+    "persisted legacy Fisbo state must not retain the conflicting skin-care introduction",
+  );
+
+  for (const [message, expectedKey, expectedText, forbiddenText] of [
+    ["鳳凰眼周", "phoenix_thermage", /鳳凰電波/u, /十蓓/u],
+    ["十蓓眼周", "tenthermage_eye_tip", /十蓓眼周/u, /鳳凰/u],
+  ] as const) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-eye-${expectedKey}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.deepEqual(routed.decision.nextContext.conversationV2State?.knowledge.treatmentKeys, [expectedKey]);
+    assert.match(routed.decision.replyText, expectedText);
+    assert.doesNotMatch(routed.decision.replyText, forbiddenText);
+  }
+
+  const genericEyeRf = await routeTurn({
+    context: createEmptyConversationContext("U-generic-eye-rf"),
+    frame: null,
+    message: "想了解眼周電波",
+    turnIndex: turnIndex++,
+  });
+  assert.ok(
+    !genericEyeRf.decision.nextContext.conversationV2State?.knowledge.treatmentKeys.some(
+      (key) => key === "phoenix_thermage" || key === "tenthermage_eye_tip",
+    ),
+    "generic eye RF must not guess Phoenix or Tenthermage",
+  );
+
+  for (const legacyName of ["EMFEMME", "閨蜜電波"] as const) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-legacy-${legacyName}`),
+      frame: null,
+      message: `想了解${legacyName}`,
+      turnIndex: turnIndex++,
+    });
+    assert.doesNotMatch(
+      routed.decision.replyText,
+      /蝴蝶電波 FORMA V 是院內可評估/u,
+      `${legacyName}: a legacy name must not be introduced as the formal FORMA V treatment`,
+    );
+  }
+
+  const phoenixPrice = await routeTurn({
+    context: createEmptyConversationContext("U-phoenix-eye-price"),
+    factsProvider: createStaticClinicFactsProvider({
+      pricingCampaigns: [phoenixGeneralCampaign, tenthermageEyeCampaign],
+    }),
+    frame: frame({
+      dialogue: { focus: "price_unspecified", move: "start", reference: "explicit", speechAct: "ask_price" },
+      intents: ["pricing"],
+      treatments: ["phoenix_thermage"],
+    }),
+    message: "鳳凰眼周多少錢",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(phoenixPrice.toolRequest?.type, "request_fact_confirmation");
+  assert.equal(
+    phoenixPrice.toolRequest?.type === "request_fact_confirmation"
+      ? phoenixPrice.toolRequest.priceApplicability?.variant
+      : undefined,
+    "phoenix_eye",
+  );
+  assert.doesNotMatch(phoenixPrice.decision.replyText, /140,?000|18,?888/u);
+
+  for (const message of ["熊貓針多少錢", "雙美膠原蛋白多少錢"] as const) {
+    const unresolvedSpecificPrice = await routeTurn({
+      context: createEmptyConversationContext(`U-panda-price-${message}`),
+      factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: [sunmaxSpecificCampaign] }),
+      frame: frame({
+        dialogue: { focus: "price_unspecified", move: "start", reference: "explicit", speechAct: "ask_price" },
+        intents: ["pricing"],
+        treatments: ["panda_needle"],
+      }),
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.doesNotMatch(
+      unresolvedSpecificPrice.decision.replyText,
+      /99,?999/u,
+      `${message}: a shared identity must not erase an unrequested product specification`,
+    );
+  }
+
+  const legacyBooking = createEmptyConversationContext("U-legacy-sunmax-booking");
+  const legacyBookingState = createConversationV2State({
+    episodeId: "legacy-sunmax-booking",
+    now: NOW.toISOString(),
+  });
+  legacyBookingState.activeTask = {
+    id: "legacy-sunmax-booking:booking",
+    kind: "booking",
+    startedAt: NOW.toISOString(),
+  };
+  legacyBookingState.bookingTask = {
+    draft: { timeSlots: [], treatmentKeys: ["sunmax_collagen_brand"] },
+    id: "legacy-sunmax-booking:booking",
+    intent: "create",
+    status: "collecting",
+  };
+  legacyBooking.conversationV2State = legacyBookingState;
+  const suspendedLegacyBooking = await routeTurn({
+    context: legacyBooking,
+    frame: frame({ treatments: ["panda_needle"] }),
+    message: "雙美膠原蛋白適合什麼",
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(
+    suspendedLegacyBooking.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+    ["sunmax_collagen_brand"],
+    "identity convergence must not erase or rewrite a persisted legacy booking key",
+  );
+
+  console.log("PASS: launch treatment identity convergence");
+}
+
+async function validateEmfacePriceContract() {
+  console.log("### EMFACE pricing branch contract");
+  const provider = createStaticClinicFactsProvider({
+    pricingCampaigns: [emfaceStandingCampaign],
+  });
+  let turnIndex = 5300;
+  const priceFrame = (treatments: string[], reference: "active_subject" | "explicit" = "explicit") => frame({
+    dialogue: {
+      focus: "price_unspecified",
+      move: reference === "explicit" ? "start" : "continue",
+      reference,
+      speechAct: "ask_price",
+    },
+    intents: ["pricing"],
+    treatments,
+  });
+  const currentBookingContext = (id: string, branch: string) => {
+    const context = createEmptyConversationContext(id);
+    const state = createConversationV2State({ episodeId: id, now: NOW.toISOString() });
+    state.activeTask = {
+      id: `${id}:booking`,
+      kind: "booking",
+      startedAt: NOW.toISOString(),
+    };
+    state.bookingTask = {
+      draft: { branch, timeSlots: [], treatmentKeys: ["emface"] },
+      expectedField: "branch",
+      id: `${id}:booking`,
+      intent: "create",
+      status: "collecting",
+    };
+    context.conversationV2State = state;
+    return context;
+  };
+
+  for (const [message, treatmentKey] of [
+    ["EMFACE多少錢", "emface"],
+    ["菲斯波多少錢", "emface"],
+  ] as const) {
+    const routed = await routeTurn({
+      context: createEmptyConversationContext(`U-emface-price-${turnIndex}`),
+      factsProvider: provider,
+      frame: priceFrame([treatmentKey]),
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.match(routed.decision.replyText, /19,?999/u, `${message}: public standing price must not require a branch`);
+    assert.match(routed.decision.replyText, /EMFACE目前僅台中館提供/u, `${message}: treatment availability must remain Taichung-only`);
+    assert.doesNotMatch(routed.decision.replyText, /全館適用/u, `${message}: price visibility must not imply all-branch treatment availability`);
+    assert.deepEqual(
+      routed.decision.nextContext.conversationV2State?.pricingSubjectTreatmentKeys,
+      ["emface"],
+      `${message}: both public names must use one canonical price subject`,
+    );
+  }
+
+  for (const [alias, branch] of [
+    ["菲斯波", "台中館"],
+    ["EMFACE", "高雄館"],
+    ["菲斯波", "高雄館"],
+    ["EMFACE", "桃園館"],
+    ["菲斯波", "林口館"],
+  ] as const) {
+    const routed = await routeTurn({
+      context: currentBookingContext(`U-emface-price-${turnIndex}`, branch),
+      factsProvider: provider,
+      frame: priceFrame(["emface"]),
+      message: `我想去${branch}，${alias}多少錢`,
+      turnIndex: turnIndex++,
+    });
+    assert.match(routed.decision.replyText, /19,?999/u, `${branch} ${alias}: public price must stay visible`);
+    assert.match(routed.decision.replyText, /EMFACE目前僅台中館提供/u, `${branch} ${alias}: treatment availability must remain Taichung-only`);
+    assert.doesNotMatch(routed.decision.replyText, /高雄館提供|桃園館提供|林口館提供/u);
+  }
+
+  const historicalKaohsiung = createEmptyConversationContext("U-emface-historical-kaohsiung");
+  historicalKaohsiung.bookingDraft.branch = "高雄館";
+  historicalKaohsiung.bookingSession = {
+    lastActiveAt: "2026-01-01T00:00:00.000Z",
+    status: "stale",
+  };
+  historicalKaohsiung.lastReferencedBranch = "高雄館";
+  historicalKaohsiung.locationPreference = "高雄館";
+  historicalKaohsiung.preferredBranch = "高雄館";
+  const oldCustomerNewQuestion = await routeTurn({
+    context: historicalKaohsiung,
+    factsProvider: provider,
+    frame: priceFrame(["emface"]),
+    message: "菲斯波多少錢",
+    turnIndex: turnIndex++,
+  });
+  assert.match(oldCustomerNewQuestion.decision.replyText, /19,?999/u);
+  assert.match(oldCustomerNewQuestion.decision.replyText, /EMFACE目前僅台中館提供/u);
+  assert.doesNotMatch(oldCustomerNewQuestion.decision.replyText, /高雄館提供/u);
+  assert.equal(oldCustomerNewQuestion.decision.nextContext.bookingDraft.branch, "高雄館");
+
+  const legacyFisboContext = (id: string, branch: string) => {
+    const context = createEmptyConversationContext(id);
+    const state = createConversationV2State({ episodeId: id, now: NOW.toISOString() });
+    state.activeTask = {
+      id: `${id}:learn`,
+      kind: "learn_treatment",
+      startedAt: NOW.toISOString(),
+      subjectKey: "treatment:fisbo",
+    };
+    state.knowledge.treatmentKeys = ["fisbo"];
+    state.knowledge.consultedTreatmentKeys = ["fisbo"];
+    state.bookingTask = {
+      draft: { branch, timeSlots: [], treatmentKeys: ["fisbo"] },
+      id: `${id}:booking`,
+      intent: "create",
+      status: "suspended",
+    };
+    context.conversationV2State = state;
+    return context;
+  };
+
+  for (const branch of ["台中館", "高雄館"] as const) {
+    const routed = await routeTurn({
+      context: legacyFisboContext(`U-legacy-fisbo-price-${branch}`, branch),
+      factsProvider: provider,
+      frame: priceFrame([], "active_subject"),
+      message: `${branch}多少錢`,
+      turnIndex: turnIndex++,
+    });
+    assert.match(routed.decision.replyText, /19,?999/u);
+    assert.match(routed.decision.replyText, /EMFACE目前僅台中館提供/u);
+    assert.deepEqual(
+      routed.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+      ["fisbo"],
+      "pricing read compatibility must not rewrite persisted treatment knowledge",
+    );
+    assert.deepEqual(
+      routed.decision.nextContext.conversationV2State?.pricingSubjectTreatmentKeys,
+      ["fisbo"],
+      "pricing read compatibility must not rewrite the persisted price subject",
+    );
+    assert.deepEqual(
+      routed.decision.nextContext.conversationV2State?.bookingTask.draft.treatmentKeys,
+      ["fisbo"],
+      "pricing read compatibility must not rewrite a legacy booking key",
+    );
+  }
+
+  const firstAlias = await routeTurn({
+    context: currentBookingContext("U-emface-alias-price", "台中館"),
+    factsProvider: provider,
+    frame: null,
+    message: "想了解EMFACE",
+    turnIndex: turnIndex++,
+  });
+  const switchedAliasPrice = await routeTurn({
+    context: firstAlias.decision.nextContext,
+    factsProvider: provider,
+    frame: priceFrame(["emface"]),
+    message: "台中館，那菲斯波多少錢",
+    turnIndex: turnIndex++,
+  });
+  assert.match(switchedAliasPrice.decision.replyText, /19,?999/u);
+  assert.match(switchedAliasPrice.decision.replyText, /EMFACE目前僅台中館提供/u);
+  assert.deepEqual(
+    switchedAliasPrice.decision.nextContext.conversationV2State?.pricingSubjectTreatmentKeys,
+    ["emface"],
+  );
+  assert.deepEqual(
+    switchedAliasPrice.decision.nextContext.conversationV2State?.knowledge.consultedTreatmentKeys.filter(
+      (key) => key === "emface" || key === "fisbo",
+    ),
+    ["emface"],
+    "EMFACE -> Fisbo wording switch must not create a second treatment subject",
+  );
+
+  console.log("PASS: EMFACE pricing branch contract");
+}
+
+async function validateLaunchP0BaselineJourneys() {
+  console.log("### Launch P0 baseline journeys");
+  let turnIndex = 5600;
+
+  const emfaceIntro = await routeTurn({
+    context: createEmptyConversationContext("U-launch-emface-intro"),
+    frame: null,
+    message: "EMFACE 是什麼？",
+    turnIndex: turnIndex++,
+  });
+  assert.match(emfaceIntro.decision.replyText, /EMFACE/u);
+  assert.match(
+    emfaceIntro.decision.replyText,
+    /EMFACE目前僅台中館提供/u,
+    "Launch P0: a restricted treatment must disclose its branch on the first answer",
+  );
+  const emfaceActions = (emfaceIntro.decision.replyPlan?.quickReplyItems ?? []).map(
+    (item) => item.action.text,
+  );
+  assert.ok(
+    emfaceActions.includes("我要預約免費諮詢") && emfaceActions.includes("我要找真人客服"),
+    "Launch P0: the first EMFACE answer must expose free-consultation and human-service exits",
+  );
+
+  const qplusIntro = await routeTurn({
+    context: createEmptyConversationContext("U-launch-qplus-intro"),
+    frame: null,
+    message: "Q+音波是什麼？",
+    turnIndex: turnIndex++,
+  });
+  assert.match(qplusIntro.decision.replyText, /Q\+\s*音波/u);
+  assert.match(
+    qplusIntro.decision.replyText,
+    /Q\+音波目前四館皆有提供/u,
+    "Launch P0: an unrestricted treatment must use the compact four-branch wording",
+  );
+  assert.doesNotMatch(qplusIntro.decision.replyText, /高雄館、台中館、桃園館、林口館/u);
+
+  const kaohsiungFisbo = await routeTurn({
+    context: createEmptyConversationContext("U-launch-kaohsiung-fisbo"),
+    frame: frame({ treatments: ["emface"] }),
+    message: "我人在高雄，想做菲斯波",
+    turnIndex: turnIndex++,
+  });
+  assert.match(kaohsiungFisbo.decision.replyText, /EMFACE目前僅台中館提供/u);
+  assert.doesNotMatch(
+    kaohsiungFisbo.decision.replyText,
+    /EMFACE[^。\n]*(?:高雄館提供|四館皆可)/u,
+    "Launch P0: a customer's preferred branch must not expand treatment availability",
+  );
+  assert.ok(
+    /在意|困擾|部位|適合方向|免費諮詢|真人客服/u.test(kaohsiungFisbo.decision.replyText) ||
+      (kaohsiungFisbo.decision.replyPlan?.quickReplyItems ?? []).some((item) =>
+        /適合|諮詢|真人/u.test(item.action.label),
+      ),
+    "Launch P0: a branch mismatch must keep a safe concern-discovery or human-assistance exit",
+  );
+
+  const concernFollowup = await routeTurn({
+    context: kaohsiungFisbo.decision.nextContext,
+    frame: frame({
+      concerns: [
+        { area: "jawline", key: "submental_fat" },
+        { area: "jawline", key: "jowl_fullness" },
+      ],
+      dialogue: {
+        focus: "suitability",
+        move: "continue",
+        reference: "active_subject",
+        speechAct: "ask_concern",
+      },
+      intents: ["treatment_consultation"],
+      treatments: [],
+    }),
+    message: "我主要是雙下巴＋嘴邊肉",
+    turnIndex: turnIndex++,
+  });
+  assert.doesNotMatch(
+    concernFollowup.decision.replyText,
+    /EMFACE[^。\n]*(?:高雄館提供|四館皆可)/u,
+    "Launch P0: concern follow-up must not invent local availability for EMFACE",
+  );
+  assert.ok(
+    /醫師|真人|評估|諮詢|適合|困擾|部位|需求/u.test(concernFollowup.decision.replyText),
+    "Launch P0: when a safe branch-filtered alternative is not proven, the flow must keep an assessment or human fallback",
+  );
+
+  const femaleDoctor = await routeTurn({
+    context: createEmptyConversationContext("U-launch-female-doctor"),
+    frame: null,
+    message: "我想指定女醫師",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(femaleDoctor.decision.decisionType, "handoff_pending");
+  assert.equal(femaleDoctor.decision.replyPlan?.handoffReason, "personalized_consult");
+  assert.match(femaleDoctor.decision.replyText, /已記下|記錄/u);
+  assert.match(femaleDoctor.decision.replyText, /真人客服.*確認|確認.*排班/u);
+  assert.doesNotMatch(
+    femaleDoctor.decision.replyText,
+    /一定可以安排|(?:可以|能夠)保證|隨時都有/u,
+  );
+
+  const freeConsult = await routeTurn({
+    context: emfaceIntro.decision.nextContext,
+    frame: null,
+    message: "我要預約免費諮詢",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(freeConsult.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.doesNotMatch(
+    freeConsult.decision.replyText,
+    /預約(?:已)?成功|已完成預約/u,
+    "Launch P0: a free-consultation CTA starts intake but must not claim a confirmed booking",
+  );
+
+  for (const [message, forbidden] of [
+    ["ILIB 可以改善失眠嗎？我可以直接停藥嗎？", /可以停藥|改善失眠[^。\n]*保證/u],
+    ["猛健樂要打幾 mg？我可以自己加量嗎？", /你可以自己加量|建議你打\s*\d/u],
+  ] as const) {
+    const safety = await routeTurn({
+      context: createEmptyConversationContext(`U-launch-safety-${turnIndex}`),
+      frame: null,
+      message,
+      turnIndex: turnIndex++,
+    });
+    assert.doesNotMatch(safety.decision.replyText, forbidden);
+    assert.ok(
+      /醫師|真人|評估|諮詢|用藥/u.test(safety.decision.replyText),
+      `Launch P0: ${message} must keep a medical or human safety boundary`,
+    );
+  }
+
+  const unknown = await routeTurn({
+    context: createEmptyConversationContext("U-launch-unknown-treatment"),
+    frame: null,
+    message: "你們有火星光療嗎？",
+    turnIndex: turnIndex++,
+  });
+  assert.doesNotMatch(
+    unknown.decision.replyText,
+    /火星光療(?:目前|是|可|能)[^。\n]*(?:院內|提供|改善)/u,
+    "Launch P0: an unknown treatment must not be presented as an approved clinic offering",
+  );
+  assert.ok(
+    /確認|真人|療程名稱|不確定|了解/u.test(unknown.decision.replyText),
+    "Launch P0: an unknown treatment needs clarification or a human exit",
+  );
+
+  console.log("PASS: Launch P0 baseline journeys");
+}
+
+async function validateLaunchConcernCandidateProjection() {
+  console.log("### Launch concern candidate projection");
+  let turnIndex = 5700;
+  const quickReplyLabels = (result: Awaited<ReturnType<typeof routeTurn>>) =>
+    (result.decision.replyPlan?.quickReplyItems ?? []).map((item) => item.action.label);
+  const quickReplyText = (result: Awaited<ReturnType<typeof routeTurn>>, label: string) => {
+    const item = (result.decision.replyPlan?.quickReplyItems ?? []).find(
+      (candidate) => candidate.action.label === label,
+    );
+    assert.ok(item, `expected quick reply ${label}`);
+    return item.action.text;
+  };
+
+  const entry = await routeTurn({
+    context: createEmptyConversationContext("U-launch-concern-entry"),
+    frame: null,
+    message: "我想依困擾找適合療程",
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(quickReplyLabels(entry), [
+    "雙下巴／嘴邊肉",
+    "細紋／皺紋",
+    "膚質／毛孔／斑點",
+    "臉部鬆弛／下垂",
+    "不確定，想預約免費諮詢",
+  ]);
+
+  const doubleChinUnknownBranch = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(entry, "雙下巴／嘴邊肉"),
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(
+    quickReplyLabels(doubleChinUnknownBranch),
+    ["ONDA PRO", "十蓓電波", "美國音波 2.0", "Q+音波"],
+    "unknown branch must fail closed for Taichung-only EMFACE",
+  );
+
+  const wrinkles = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(entry, "細紋／皺紋"),
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(quickReplyLabels(wrinkles), ["肉毒", "十蓓電波", "玻尿酸", "逆時針"]);
+  assert.match(wrinkles.decision.replyText, /不同改善方向/u);
+
+  const skin = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(entry, "膚質／毛孔／斑點"),
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(quickReplyLabels(skin), ["探索皮秒", "M22 彩衝光", "LUMECCA 三倍光", "水飛梭", "水光針"]);
+  assert.ok(!quickReplyLabels(skin).some((label) => /蜂巢/u.test(label)));
+
+  const loosening = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(entry, "臉部鬆弛／下垂"),
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(
+    quickReplyLabels(loosening),
+    ["十蓓電波", "鳳凰電波", "美國音波 2.0", "Q+音波", "ONDA PRO"],
+  );
+
+  const mismatch = await routeTurn({
+    context: createEmptyConversationContext("U-launch-concern-kaohsiung"),
+    frame: frame({ treatments: ["emface"] }),
+    message: "我在高雄，想做菲斯波",
+    turnIndex: turnIndex++,
+  });
+  assert.match(mismatch.decision.replyText, /EMFACE目前僅台中館提供/u);
+  assert.match(mismatch.decision.replyText, /如果希望在高雄處理/u);
+  assert.deepEqual(quickReplyLabels(mismatch), quickReplyLabels(entry));
+  const doubleChinKaohsiung = await routeTurn({
+    context: mismatch.decision.nextContext,
+    frame: null,
+    message: quickReplyText(mismatch, "雙下巴／嘴邊肉"),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(!quickReplyLabels(doubleChinKaohsiung).includes("EMFACE"));
+
+  const taichungConcernEntry = await routeTurn({
+    context: createEmptyConversationContext("U-launch-concern-taichung-live"),
+    frame: null,
+    message: "我在台中，我想依困擾找適合療程",
+    turnIndex: turnIndex++,
+  });
+  const doubleChinTaichung = await routeTurn({
+    context: taichungConcernEntry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(taichungConcernEntry, "雙下巴／嘴邊肉"),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(quickReplyLabels(doubleChinTaichung).includes("EMFACE"));
+
+  const candidateClick = await routeTurn({
+    context: doubleChinUnknownBranch.decision.nextContext,
+    frame: frame({ treatments: ["onda_pro"] }),
+    message: quickReplyText(doubleChinUnknownBranch, "ONDA PRO"),
+    turnIndex: turnIndex++,
+  });
+  assert.deepEqual(
+    candidateClick.decision.nextContext.conversationV2State?.knowledge.treatmentKeys,
+    ["onda_pro"],
+    "a candidate tap must enter the canonical ONDA subject",
+  );
+
+  const phoenixClick = await routeTurn({
+    context: loosening.decision.nextContext,
+    frame: frame({ treatments: ["phoenix_thermage"] }),
+    message: quickReplyText(loosening, "鳳凰電波"),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(
+    phoenixClick.decision.nextContext.conversationV2State?.knowledge.treatmentKeys.includes("phoenix_thermage"),
+    "the Phoenix choice must not become Tenthermage",
+  );
+  assert.ok(
+    !phoenixClick.decision.nextContext.conversationV2State?.knowledge.treatmentKeys.includes("tenthermage"),
+  );
+
+  const sharedL1 = await routeTurn({
+    context: wrinkles.decision.nextContext,
+    frame: frame({ treatments: ["filler"] }),
+    message: quickReplyText(wrinkles, "玻尿酸"),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(
+    ["適合方向", "預約免費諮詢", "真人客服協助"].every((label) =>
+      quickReplyLabels(sharedL1).includes(label),
+    ),
+    "approved L1 treatments without bespoke packs must receive the shared Batch 2 exits",
+  );
+  assert.ok(
+    quickReplyLabels(sharedL1).some((label) => ["價格／活動", "本療程價格"].includes(label)),
+    "the price entry may be promotion-aware but must stay present",
+  );
+
+  const booking = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: quickReplyText(entry, "不確定，想預約免費諮詢"),
+    turnIndex: turnIndex++,
+  });
+  assert.equal(booking.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+  assert.doesNotMatch(booking.decision.replyText, /預約(?:已)?成功|已完成預約/u);
+
+  const notOffered = await routeTurn({
+    context: entry.decision.nextContext,
+    factsProvider: createStaticClinicFactsProvider({
+      notOfferedTreatmentKeys: ["qplus"],
+      pricingCampaigns: [ondaCampaign, ondaFaceCombinationCampaign, botoxCampaign],
+    }),
+    frame: null,
+    message: quickReplyText(entry, "雙下巴／嘴邊肉"),
+    turnIndex: turnIndex++,
+  });
+  assert.ok(!quickReplyLabels(notOffered).includes("Q+音波"));
+
+  const safety = await routeTurn({
+    context: entry.decision.nextContext,
+    frame: null,
+    message: "我昨天打完很腫",
+    turnIndex: turnIndex++,
+  });
+  assert.equal(safety.decision.decisionType, "handoff_pending");
+  assert.equal(safety.decision.replyPlan?.quickReplyItems.length, 0);
+  console.log("PASS: Launch concern candidate projection");
+}
+
 async function main() {
   await validateSixTurnJourney();
   await validateLowConfidenceSemanticAnchorJourney();
@@ -3940,6 +4772,11 @@ async function main() {
   await validateCurrentTextNegationOwnsPolarity();
   await validatePricingOwnership();
   await validateStaleOverviewStartsFreshEpisode();
+  await validateNluUnavailableApprovedL1Introduction();
+  await validateLaunchTreatmentIdentityConvergence();
+  await validateEmfacePriceContract();
+  await validateLaunchP0BaselineJourneys();
+  await validateLaunchConcernCandidateProjection();
   await validateExplicitRestartForAcceptanceTreatments();
   await validateThirtyMinuteEpisodeBoundary();
   await validateBotoxAcceptanceJourney();

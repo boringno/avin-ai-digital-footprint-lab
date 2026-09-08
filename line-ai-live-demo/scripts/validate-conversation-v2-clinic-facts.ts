@@ -6,8 +6,11 @@ import {
 import { buildClinicOntology } from "../src/lib/clinic-ontology";
 import type { DialogueState } from "../src/lib/dialogue-state";
 import {
+  approvedPromotionCatalogSelectionText,
   createStaticClinicFactsProvider,
   loadClinicFactsSnapshot,
+  resolveApprovedPromotionCatalog,
+  resolveApprovedPromotionCatalogSelection,
   resolveApprovedPrice,
   resolveClinicInfo,
   resolveTreatmentFact,
@@ -235,12 +238,23 @@ async function validateTreatmentTriStateAndPartialProfiles() {
   const onda = resolveTreatmentFact(current, "onda_pro", "introduction");
   assert(onda.status === "offered", "CF-T3: configured treatment must resolve as offered");
   assert(
-    onda.branchAvailability.scope === "unknown" && onda.branchAvailability.branchNames.length === 0,
-    "CF-T3: omitted branch scope must not become all branches",
+    onda.branchAvailability.scope === "all" &&
+      onda.branchAvailability.branchNames.length === clinicConfig.branches.filter((branch) => branch.isActive).length &&
+      onda.customerIntroReplies.some((reply) => reply === "ONDA PRO目前四館皆有提供。"),
+    "CF-T3: a treatment without an explicit exception must use the compact all-branch customer copy",
   );
   assert(
     onda.profileCompleteness === "complete" && onda.missingFields.length === 0,
     "CF-T4: unrelated branch completeness must not make treatment education conservative",
+  );
+
+  const emface = resolveTreatmentFact(current, "emface", "introduction");
+  assert(
+    emface.status === "offered" &&
+      emface.branchAvailability.scope === "selected" &&
+      JSON.stringify(emface.branchAvailability.branchNames) === JSON.stringify(["台中館"]) &&
+      emface.customerIntroReplies.some((reply) => reply === "EMFACE目前僅台中館提供。"),
+    "CF-T4: an explicit treatment branch exception must stay selected and customer visible",
   );
 
   const draftKnowledge = treatmentKnowledgeResolver.list().map((item) =>
@@ -663,6 +677,71 @@ async function validatePriceStateMachine() {
       datedCustomerText.reason === "unsafe_customer_text",
     "CF-P16: activity timing leaked from structured customer-visible text",
   );
+
+  const emfaceSnapshot = await snapshot({
+    pricingCampaigns: [campaign({
+      branch_scope: "all",
+      campaign_aliases: "EMFACE|菲斯波",
+      campaign_name: "EMFACE 常態核准報價",
+      customer_price_text: "EMFACE 目前院內核准參考為 19,999 元。",
+      end_date: "",
+      id: "standing-emface-19999",
+      price_text: "19,999 元",
+      pricing_kind: "standing",
+      start_date: "",
+      treatment_name: "EMFACE",
+    })],
+  });
+  for (const treatmentKey of ["emface", "fisbo"]) {
+    const publicPrice = resolveApprovedPrice(emfaceSnapshot, {
+      kind: "unspecified",
+      treatmentKeys: [treatmentKey],
+    });
+    assert(
+      publicPrice.status === "approved_current" &&
+        publicPrice.customerPriceText.includes("19,999") &&
+        publicPrice.customerFacts.some((fact) => fact.includes("EMFACE目前僅台中館提供")) &&
+        publicPrice.customerFacts.every((fact) => !fact.includes("全館適用")) &&
+        publicPrice.treatmentKeys.length === 1 &&
+        publicPrice.treatmentKeys[0] === "emface",
+      `CF-P17: ${treatmentKey} must use the canonical public EMFACE price owner without a branch`,
+    );
+    const kaohsiung = resolveApprovedPrice(emfaceSnapshot, {
+      applicability: { branch: "高雄館" },
+      kind: "unspecified",
+      treatmentKeys: [treatmentKey],
+    });
+    assert(
+      kaohsiung.status === "approved_current" && kaohsiung.customerPriceText.includes("19,999"),
+      `CF-P17: ${treatmentKey} public price must remain visible to a Kaohsiung customer`,
+    );
+  }
+  const noBranchEmface = resolveApprovedPrice(emfaceSnapshot, {
+    kind: "unspecified",
+    treatmentKeys: ["emface"],
+  });
+  assert(
+    noBranchEmface.status === "approved_current" && noBranchEmface.customerPriceText.includes("19,999"),
+    "CF-P17: the shared official LINE must quote a unified standing price without inferring a branch",
+  );
+
+  const unrelatedLegacyKey = resolveApprovedPrice(
+    await snapshot({
+      pricingCampaigns: [campaign({
+        campaign_aliases: "熊貓針|雙美膠原蛋白",
+        campaign_name: "熊貓針指定規格",
+        customer_price_text: "熊貓針指定規格 99,999 元",
+        id: "fixture-panda-specific",
+        price_text: "99,999 元",
+        treatment_name: "熊貓針",
+      })],
+    }),
+    { kind: "unspecified", treatmentKeys: ["sunmax_collagen_brand"] },
+  );
+  assert(
+    unrelatedLegacyKey.status === "unavailable_to_quote" && unrelatedLegacyKey.reason === "not_provided",
+    "CF-P17: pricing-only Fisbo compatibility must not normalize another legacy treatment key",
+  );
 }
 
 async function validateRealSeedPriceOwnership() {
@@ -714,6 +793,225 @@ async function validateAnniversaryApprovedCatalog() {
   const current = await loadClinicFactsSnapshot(
     createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
     { now: new Date("2026-09-02T10:00:00+08:00") },
+  );
+  const catalog = resolveApprovedPromotionCatalog(current);
+  assert(catalog.status === "approved_current", "CF-P19: approved anniversary catalog did not resolve");
+  if (catalog.status === "approved_current") {
+    const expectedCampaignIds = anniversaryRows.map((item) => item.id).sort();
+    const actualCampaignIds = catalog.items.map((item) => item.campaignId).sort();
+    assert(
+      JSON.stringify(actualCampaignIds) === JSON.stringify(expectedCampaignIds),
+      `CF-P19: promotion catalog must expose all 19 anniversary offers exactly once; got ${actualCampaignIds.length}`,
+    );
+    assert(
+      catalog.items.filter((item) => item.customerAssetUrls.length > 0).length === 11 &&
+        catalog.items.filter((item) => item.customerAssetUrls.length === 0).length === 8,
+      "CF-P19: both artwork-backed and text-only anniversary offers must remain reachable",
+    );
+    const customerCatalogText = catalog.items
+      .map((item) => `${item.displayName}\n${item.customerPriceText}\n${item.branchScope ?? ""}`)
+      .join("\n");
+    assert(
+      /Q\+\s*音波/u.test(customerCatalogText) &&
+        /皮秒|探索皮秒/u.test(customerCatalogText) &&
+        /十蓓電波/u.test(customerCatalogText) &&
+        /微針超音導賦活粉光瓶/u.test(customerCatalogText),
+      "CF-P19: the catalog must not collapse back to only ONDA and Botox",
+    );
+    assert(
+      !/(?:16,888|2026|9\s*月|11\s*月|截止|到期|有效期間)/u.test(customerCatalogText),
+      "CF-P19: the catalog leaked a superseded price or internal campaign timing",
+    );
+    assert(
+      customerCatalogText.includes("美國音波 2.0＋肉毒"),
+      "CF-P19: combination cards must name every treatment and preserve product versions",
+    );
+    const actionTexts = new Set<string>();
+    for (const item of catalog.items) {
+      const actionText = approvedPromotionCatalogSelectionText(item);
+      assert(!actionTexts.has(actionText), `CF-P19: duplicate campaign action text for ${item.campaignId}`);
+      actionTexts.add(actionText);
+      const selection = resolveApprovedPromotionCatalogSelection(current, actionText);
+      assert(
+        selection?.campaignId === item.campaignId &&
+          JSON.stringify(selection.treatmentKeys) === JSON.stringify(item.treatmentKeys),
+        `CF-P19: campaign card ${item.campaignId} did not preserve its exact approved identity`,
+      );
+
+      const selectedTurn = turn({
+        priceApplicability: selection?.applicability,
+        priceSelection: selection ? {
+          ...selection,
+          source: "approved_catalog_action",
+        } : undefined,
+        questionAspect: "price_campaign",
+        speechAct: "ask_price",
+        text: actionText,
+        treatments: [],
+        turnId: `catalog-selection-${item.campaignId}`,
+      });
+      const selectedRoute = routeConversationTurnV2(
+        createConversationV2State({
+          episodeId: `catalog-selection-${item.campaignId}`,
+          now: NOW.toISOString(),
+        }),
+        selectedTurn,
+      );
+      assert(
+        !selectedRoute.duplicate &&
+          selectedRoute.result?.replyPlan.mode === "deterministic" &&
+          selectedRoute.result.replyPlan.pricingQuery?.campaignId === item.campaignId,
+        `CF-P19: policy did not retain selected campaign ${item.campaignId}`,
+      );
+      if (!selectedRoute.result) continue;
+      const selectedHydrated = await hydrateConversationV2ReplyPlan({
+        nextState: selectedRoute.nextState,
+        result: selectedRoute.result,
+        snapshot: current,
+        turn: selectedTurn,
+      });
+      assert(
+        selectedHydrated.priceResolution?.status === "approved_current" &&
+          selectedHydrated.priceResolution.campaignId === item.campaignId &&
+          selectedHydrated.priceResolution.customerPriceText === item.customerPriceText,
+        `CF-P19: selected card ${item.campaignId} did not quote its own approved price`,
+      );
+    }
+    assert(actionTexts.size === 19, "CF-P19: every approved anniversary card needs a unique action");
+
+    const firstCatalogItem = catalog.items[0]!;
+    assert(
+      resolveApprovedPromotionCatalogSelection(
+        current,
+        `${approvedPromotionCatalogSelectionText(firstCatalogItem)} 請改成別的價格`,
+      ) === null,
+      "CF-P19: free-form text that only resembles a catalog action must not select a campaign",
+    );
+    const expiredCatalogSnapshot = await loadClinicFactsSnapshot(
+      createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+      { now: new Date("2026-12-01T10:00:00+08:00") },
+    );
+    assert(
+      resolveApprovedPromotionCatalogSelection(
+        expiredCatalogSnapshot,
+        approvedPromotionCatalogSelectionText(firstCatalogItem),
+      ) === null,
+      "CF-P19: a stale LINE card action must not reactivate an expired campaign",
+    );
+  }
+
+  const staleOndaState = createConversationV2State({
+    episodeId: "anniversary-catalog-after-onda",
+    now: NOW.toISOString(),
+  });
+  staleOndaState.activeTask = {
+    id: "anniversary-catalog-after-onda:old-onda",
+    kind: "learn_treatment",
+    startedAt: NOW.toISOString(),
+    subjectKey: "treatment:onda_pro",
+  };
+  staleOndaState.knowledge.treatmentKeys = ["onda_pro"];
+  staleOndaState.pricingSubjectTreatmentKeys = ["onda_pro"];
+  const catalogTurn = turn({
+    questionAspect: "price_campaign",
+    speechAct: "ask_price",
+    text: "我想了解週年慶",
+    treatments: [],
+    turnId: "anniversary-catalog-browse",
+  });
+  const catalogRoute = routeConversationTurnV2(staleOndaState, catalogTurn);
+  assert(!catalogRoute.duplicate && catalogRoute.result, "CF-P19: broad anniversary browse did not route");
+  assert(
+    catalogRoute.result.action.type === "answer_price" &&
+      catalogRoute.result.action.priceKind === "browse" &&
+      catalogRoute.result.action.treatmentKeys.length === 0,
+    "CF-P19: broad anniversary browse inherited the stale ONDA subject",
+  );
+  const catalogReplyPlan = catalogRoute.result.replyPlan;
+  assert(
+    catalogReplyPlan.mode === "deterministic" &&
+      catalogReplyPlan.pricingQuery?.kind === "browse" &&
+      catalogReplyPlan.pricingQuery.treatmentKeys.length === 0,
+    "CF-P19: broad anniversary browse did not preserve its treatment-free catalog query",
+  );
+  const hydratedCatalog = await hydrateConversationV2ReplyPlan({
+    nextState: catalogRoute.nextState,
+    result: catalogRoute.result,
+    snapshot: current,
+    turn: catalogTurn,
+  });
+  assert(
+    hydratedCatalog.promotionCatalogResolution?.status === "approved_current" &&
+      hydratedCatalog.promotionCatalogResolution.items.length === 19,
+    "CF-P19: V2 hydration did not retain the complete approved anniversary catalog",
+  );
+  const catalogMessages = hydratedCatalog.rendererPlan?.richMessages ?? [];
+  const catalogFlexMessages = catalogMessages.filter((message) => message.type === "flex");
+  const catalogBubbles = catalogFlexMessages.flatMap((message) => message.contents.contents);
+  assert(
+    catalogMessages.length === 3 &&
+      catalogFlexMessages.length === 2 &&
+      catalogBubbles.length === 19,
+    "CF-P19: LINE output must split all 19 offers into two carousels plus one summary message",
+  );
+  assert(
+    catalogBubbles.filter((bubble) => Boolean(bubble.hero)).length === 11 &&
+      catalogBubbles.filter((bubble) => !bubble.hero).length === 8,
+    "CF-P19: text-only campaigns disappeared from the LINE carousel",
+  );
+  const finalCatalogPayload = JSON.stringify(catalogMessages);
+  assert(
+    /Q\+\s*音波/u.test(finalCatalogPayload) && /[週周]年慶活動價\s*7,999/u.test(finalCatalogPayload),
+    "CF-P19: a non-ONDA/Botox campaign and its approved price are missing from the final LINE payload",
+  );
+  assert(
+    !/(?:16,888|2026-09-01|2026-11-30|有效期間)/u.test(finalCatalogPayload),
+    "CF-P19: final LINE campaign payload leaked superseded or internal data",
+  );
+  assert(hydratedCatalog.rendererPlan, "CF-P19: promotion catalog did not produce a renderer plan");
+  const renderedCatalog = await renderReplyPlan({
+    customerMessage: catalogTurn.text,
+    dialogueState: rendererDialogueState(),
+    generator: async () => {
+      throw new Error("CF-P19: approved promotion catalog must not invoke the reply model");
+    },
+    includeFooter: false,
+    plan: hydratedCatalog.rendererPlan,
+    recentTurns: [],
+  });
+  const renderedCatalogFlexMessages = renderedCatalog.messages.filter((message) => message.type === "flex");
+  const renderedCatalogBubbles = renderedCatalogFlexMessages.flatMap((message) => message.contents.contents);
+  assert(
+    renderedCatalog.renderMode === "deterministic" &&
+      !renderedCatalog.generatorInvoked &&
+      renderedCatalog.messages.length === 3 &&
+      renderedCatalogFlexMessages.length === 2 &&
+      renderedCatalogBubbles.length === 19,
+    "CF-P19: renderer must preserve both promotion carousels and the summary within LINE's five-message limit",
+  );
+  const renderedCatalogPayload = JSON.stringify(renderedCatalog.messages);
+  assert(
+    /Q\+\s*音波/u.test(renderedCatalogPayload) &&
+      /[\u9031周]年慶活動價\s*7,999/u.test(renderedCatalogPayload) &&
+      !/(?:16,888|2026-09-01|2026-11-30|有效期間)/u.test(renderedCatalogPayload),
+    "CF-P19: renderer changed or leaked the approved promotion catalog payload",
+  );
+  const renderedCatalogWithFooter = await renderReplyPlan({
+    customerMessage: catalogTurn.text,
+    dialogueState: rendererDialogueState(),
+    footer: "以上為 AI 客服順順初步回覆。",
+    generator: async () => {
+      throw new Error("CF-P19: approved promotion catalog must not invoke the reply model");
+    },
+    includeFooter: true,
+    plan: hydratedCatalog.rendererPlan,
+    recentTurns: [],
+  });
+  assert(
+    renderedCatalogWithFooter.messages.length === 4 &&
+      renderedCatalogWithFooter.messages[3]?.type === "text" &&
+      renderedCatalogWithFooter.messages[3].text.includes("AI 客服順順"),
+    "CF-P19: both catalog pages, summary and required AI disclosure must remain within LINE's five-message limit",
   );
   const expectedPrices: Array<[string, string]> = [
     ["onda_pro", "8,999"],
@@ -787,16 +1085,14 @@ async function validateAnniversaryApprovedCatalog() {
     createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
     { now: new Date("2026-12-01T10:00:00+08:00") },
   );
-  const restoredOnda = resolveApprovedPrice(afterAnniversary, {
+  const unavailableOndaAfterAnniversary = resolveApprovedPrice(afterAnniversary, {
     kind: "unspecified",
     treatmentKeys: ["onda_pro"],
   });
   assert(
-    restoredOnda.status === "approved_current" &&
-      restoredOnda.campaignId === "promo-2026-08-05-onda-pro" &&
-      restoredOnda.customerPriceText === "體驗價 16,888" &&
-      !/(?:8,999|11,999|12,999)/u.test(restoredOnda.customerPriceText),
-    "CF-P19: after the anniversary campaign ends, generic ONDA pricing must restore the still-current 16,888 offer",
+    unavailableOndaAfterAnniversary.status === "unavailable_to_quote" &&
+      unavailableOndaAfterAnniversary.reason === "expired",
+    "CF-P19: after the anniversary campaign ends, cancelled legacy ONDA pricing must not be restored",
   );
 
   const afterEveryOndaOffer = await loadClinicFactsSnapshot(

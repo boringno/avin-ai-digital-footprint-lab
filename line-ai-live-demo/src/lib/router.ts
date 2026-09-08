@@ -46,6 +46,7 @@ import {
   highestQuotePriorityCampaigns,
   isSpecificPricingCampaign,
 } from "@/lib/pricing-campaign-priority";
+import { isStandingPrice } from "@/lib/pricing-lifecycle";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -642,9 +643,14 @@ function campaignIsActive(campaign: PricingCampaign, today: Date) {
   const startDate = parseOptionalDate(campaign.start_date);
   const endDate = parseOptionalDate(campaign.end_date, true);
 
-  if (!startDate || !endDate) {
-    return false;
+  if (isStandingPrice(campaign)) {
+    if (campaign.start_date.trim() && !startDate) return false;
+    if (campaign.end_date.trim() && !endDate) return false;
+    return (!startDate || startDate.getTime() <= today.getTime()) &&
+      (!endDate || today.getTime() <= endDate.getTime());
   }
+
+  if (!startDate || !endDate) return false;
 
   return startDate.getTime() <= today.getTime() && today.getTime() <= endDate.getTime();
 }
@@ -3141,6 +3147,7 @@ function getPricingReply(
   }
 
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
+  const activePromotions = activeCampaigns.filter((campaign) => !isStandingPrice(campaign));
   const subject = resolvePricingSubject(message, context, {
     bookingIntentActive,
     contextualMaxAgeMs: TREATMENT_CONSULTATION_SESSION_MS,
@@ -3154,9 +3161,9 @@ function getPricingReply(
   const applicableActiveCampaigns = activeCampaigns.filter((campaign) =>
     pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name));
 
-  if (subject.kind === "browse" && activeCampaigns.length > 0) {
-    const replyText = buildPromotionOverviewReply(activeCampaigns);
-    const carouselCards = buildPromotionCarouselCards(activeCampaigns);
+  if (subject.kind === "browse" && activePromotions.length > 0) {
+    const replyText = buildPromotionOverviewReply(activePromotions);
+    const carouselCards = buildPromotionCarouselCards(activePromotions);
     return {
       decisionType: "pricing_auto_reply",
       matchedKey: "promotion_overview",

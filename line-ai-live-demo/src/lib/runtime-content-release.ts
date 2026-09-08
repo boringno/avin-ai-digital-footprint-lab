@@ -273,7 +273,7 @@ function toFaqEntry(entry: ReleaseEntryRow): FaqEntry {
 export function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
   return {
     approval_status: "approved",
-    asset_urls: "",
+    asset_urls: listText(entry.payload_json, "asset_urls"),
     branch_scope: text(entry.payload_json, "branch_scope"),
     booking_treatments: listText(entry.payload_json, "booking_treatments"),
     campaign_aliases: aliases(entry.payload_json),
@@ -288,6 +288,7 @@ export function toPricingCampaign(entry: ReleaseEntryRow): PricingCampaign {
     notes: `runtime_release:${entry.content_key}`,
     package_key: text(entry.payload_json, "package_key"),
     price_text: text(entry.payload_json, "price_text"),
+    pricing_kind: text(entry.payload_json, "pricing_kind"),
     quote_priority: numberOrText(entry.payload_json, "quote_priority"),
     session_count: numberOrText(entry.payload_json, "session_count"),
     start_date: entry.start_at?.slice(0, 10) ?? "",
