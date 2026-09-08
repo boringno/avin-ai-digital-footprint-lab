@@ -199,6 +199,7 @@ It lists Markdown documents plus preserved HTML/text entrypoints in this reposit
 - [Runtime 回覆發布與回退](line-ai-live-demo/docs/runtime-release-operations.md)
 - [門診班表月版作業](line-ai-live-demo/docs/schedule-month-operations.md)
 - [Sentry 設定說明](line-ai-live-demo/docs/sentry-setup.md)
+- [常態核准報價匯入 SOP](line-ai-live-demo/docs/standing-price-import-sop.md)
 - [LINE AI Live Demo - Vercel Deploy Checklist](line-ai-live-demo/docs/vercel-deploy-checklist-2026-06-24.md)
 
 ## open-source-vault
