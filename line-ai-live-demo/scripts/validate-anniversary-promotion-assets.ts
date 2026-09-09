@@ -9,6 +9,7 @@ import {
 } from "../src/lib/promotion-carousel";
 import { routeCustomerMessage } from "../src/lib/router";
 import { loadSeedData, type PricingCampaign } from "../src/lib/seed-loader";
+import { isCustomerVisiblePriceOffer } from "../src/lib/pricing-lifecycle";
 
 const ASSET_BASE_URL = "https://line-ai-live-demo.vercel.app/demo/promotions/anniversary-2026/";
 const ASSET_DIRECTORY = path.join(process.cwd(), "public", "demo", "promotions", "anniversary-2026");
@@ -30,7 +31,7 @@ const mappedAssets: Record<string, string> = {
   "promo-2026-anniv-powder-glow": "powder-glow-11999.jpg",
 };
 
-const unmappedCampaignIds = [
+const nonPublicCampaignIds = [
   "promo-2026-anniv-botox-100u",
   "promo-2026-anniv-tenthermage-900-teosyal1",
   "promo-2026-anniv-ultherapy-500-botox100",
@@ -96,12 +97,12 @@ async function main() {
   }
   checks.push("mapped-anniversary-artwork-is-line-safe-and-landscape");
 
-  for (const campaignId of unmappedCampaignIds) {
+  for (const campaignId of nonPublicCampaignIds) {
     const campaign = campaignsById.get(campaignId);
-    assert(campaign, `missing unmapped anniversary campaign: ${campaignId}`);
-    assert.equal(campaign.asset_urls, "", `${campaignId} must remain text-only without a specific campaign graphic`);
+    assert(campaign, `missing non-public anniversary campaign: ${campaignId}`);
+    assert(!isCustomerVisiblePriceOffer(campaign), `${campaignId} must not enter the customer-visible anniversary set`);
   }
-  checks.push("campaigns-without-specific-artwork-stay-unmapped");
+  checks.push("non-public-anniversary-campaigns-stay-outside-customer-asset-set");
 
   const mappedCampaign = campaignsById.get("promo-2026-anniv-onda-face-online")!;
   const unmappedCampaign = campaignsById.get("promo-2026-anniv-onda-face-extension")!;
@@ -124,14 +125,18 @@ async function main() {
     "the actual router carousel must preserve anniversary landscape artwork",
   );
 
-  const textOnlyDecision = await routeCustomerMessage({
+  const nonPublicDecision = await routeCustomerMessage({
     includePending: true,
     message: "目前活動有哪些",
     now,
     runtimeContentOverlay: runtimeOverlay([unmappedCampaign]),
   });
-  assert.equal(textOnlyDecision.replyMessages, undefined, "an unmapped campaign must remain text-only");
-  checks.push("router-emits-carousel-only-when-specific-artwork-exists");
+  assert.equal(nonPublicDecision.replyMessages, undefined, "a non-public campaign must not emit customer-facing artwork");
+  assert(
+    !/11,999/u.test(nonPublicDecision.replyText),
+    "a non-public campaign must not emit its internal anniversary price in text",
+  );
+  checks.push("router-emits-customer-artwork-only-for-public-anniversary-offers");
 
   const anniversaryFlex = buildPromotionCarouselMessage([{
     aspectRatio: LANDSCAPE_RATIO,

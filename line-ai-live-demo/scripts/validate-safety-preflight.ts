@@ -6,6 +6,19 @@ const NOW = new Date("2026-08-12T08:00:00.000Z");
 const route = (message: string, skipCustomerAccountLookup = false) =>
   runImmediateSafetyPreflight({ message, now: NOW, skipCustomerAccountLookup });
 
+for (const message of [
+  "我做完後腫得很嚴重", "我做完後腫得很嚴重，我要真人", "昨天做完現在很腫",
+  "做完後一直紅腫", "昨天做完，已經腫兩天了", "做完後我現在痛得很厲害",
+  "做完後紅腫很嚴重", "做完後腫得很嚴重怎麼辦？",
+]) assert.equal(route(message)?.matchedKey, "post_procedure_issue", message);
+for (const message of [
+  "做完會腫得很嚴重嗎？", "做完會不會很痛？", "做完可能會紅腫嗎？",
+  "做完有可能痛得很嚴重嗎？", "做完會腫得很厲害嗎", "療程有什麼副作用？", "xyzzy",
+  "已經腫兩天了", "我現在痛得很厲害",
+]) assert.equal(route(message), null, message);
+assert.equal(route("做完後呼吸困難，我要真人")?.matchedKey, "post_procedure_emergency");
+assert.equal(route("做完後胸悶很嚴重")?.matchedKey, "post_procedure_emergency");
+
 const boundaries = [
   ["我剛打完肉毒，現在呼吸困難", "post_procedure_emergency"],
   ["ONDA做了之後發炎", "post_procedure_issue"],

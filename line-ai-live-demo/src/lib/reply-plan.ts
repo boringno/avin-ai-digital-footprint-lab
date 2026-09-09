@@ -131,6 +131,8 @@ export type ReplyPlan = {
   renderMode: ReplyRenderMode;
   responseContract: ResponseContractAttachment;
   requiresHuman: boolean;
+  /** Approved safety owner copy that rendering must not discard. Not state. */
+  requiredSafetyContent?: readonly string[];
   richMessages: LineReplyMessage[];
   secondaryFallbackText?: string;
   strategyInstructions?: string[];
@@ -169,6 +171,7 @@ export type LegacyReplyPlanOptions = {
   renderMode?: ReplyRenderMode;
   responseContract?: ResponseContractAttachment;
   requiresHuman?: boolean;
+  requiredSafetyContent?: readonly string[];
   secondaryFallbackText?: string;
   strategyInstructions?: readonly string[];
   treatmentKeys?: readonly string[];
@@ -372,6 +375,8 @@ export function legacyDecisionToReplyPlan(
       options.responseContract ?? createOffResponseContract(),
     ),
     requiresHuman,
+    ...(options.requiredSafetyContent?.length
+      ? { requiredSafetyContent: normalizeStrings(options.requiredSafetyContent) } : {}),
     richMessages,
     secondaryFallbackText: options.secondaryFallbackText?.trim() || undefined,
     strategyInstructions: normalizeStrings(options.strategyInstructions),

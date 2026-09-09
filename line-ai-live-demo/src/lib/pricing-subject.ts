@@ -8,6 +8,15 @@ import type { ConversationContext } from "@/lib/conversation-context";
 
 export const PRICE_ASK_TERMS = ["價格", "價錢", "價位", "費用", "收費", "方案", "活動", "優惠", "多少錢", "報價", "體驗價", "折扣"];
 
+/** Only an anaphoric amount follow-up can borrow a verified pricing exchange.
+ * Quantity, frequency, duration and newly named subjects must supply their own evidence.
+ */
+export function isContextualPriceFollowup(message: string) {
+  return /^(?:那|這)(?:個|個方案|個療程)?(?:是|要)?多少(?:呢|啊|呀|嗎)?$/u.test(
+    normalizeClinicText(message).replace(/[？?！!。.,，\s]/gu, ""),
+  );
+}
+
 const FUZZY_PRICE_INQUIRY_TERMS = [
   "多少錢",
   "怎麼收費",
@@ -120,6 +129,7 @@ const ALTERNATE_PRICE_PATTERNS = [
 ];
 
 const CURRENT_OFFER_PATTERNS = [
+  /多少(?:元|塊)/u,
   /(?:體驗價|活動價|優惠價|現價|目前價格|現在價格|現行價格|這個價格|方案價格)/u,
   /(?:價格|價錢|價位|費用|收費|多少錢|報價|折扣)/u,
   /(?:目前|現在|近期|最近)(?:活動|優惠|方案)/u,

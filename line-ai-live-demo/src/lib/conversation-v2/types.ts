@@ -286,6 +286,8 @@ export type TreatmentResponseContext = {
 
 /** Structured output expected from deterministic preflight plus NLU. */
 export type TurnUnderstanding = {
+  /** Ephemeral pricing context from current customer text or verified immediate price follow-up. */
+  priceCampaignContextText?: string;
   areas: EntityMention[];
   booking?: BookingUnderstanding;
   clarification?: ClarificationNeed;

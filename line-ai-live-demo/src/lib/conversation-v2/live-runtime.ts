@@ -4,6 +4,7 @@ import {
   loadClinicFactsSnapshot,
   resolveApprovedPromotionCatalog,
   resolveApprovedPromotionCatalogSelection,
+  findNonPublicPromotionMention,
   resolveTreatmentFact,
   runtimeClinicFactsProvider,
   type ClinicFactsProvider,
@@ -35,6 +36,7 @@ import { reportOperationalError } from "@/lib/monitoring";
 import { requestNluFrame } from "@/lib/nlu-shadow";
 import {
   isHedgedTreatmentReference,
+  isContextualPriceFollowup,
   isPriceInquiry,
   isPriceInquiryWithTypoTolerance,
   isPromotionBrowseIntent,
@@ -43,7 +45,7 @@ import { isSpecificPricingCampaign } from "@/lib/pricing-campaign-priority";
 import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
 import type { ResponseContractRuntimeMode } from "@/lib/response-contract";
 import type { RouterDecision } from "@/lib/router";
-import { runImmediateSafetyPreflight } from "@/lib/safety-preflight";
+import { composeV2SafetyPreflight, runImmediateSafetyPreflight } from "@/lib/safety-preflight";
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 
 import { buildConversationV2BookingUnderstanding } from "./booking-adapter";
@@ -90,7 +92,7 @@ import type {
   ConversationV2State,
   TurnUnderstanding,
 } from "./types";
-import type { ConversationV2ToolRequest } from "./data-gap-policy";
+import { AMBIGUOUS_HISTORICAL_PRICE_REPLY, type ConversationV2ToolRequest } from "./data-gap-policy";
 
 const DEFAULT_TENANT_ID = "tenant_001";
 
@@ -311,21 +313,61 @@ function resolveBookingEpisodeBoundary(input: {
   };
 }
 
+function hasDeterministicPricingContext(
+  state: ConversationV2State,
+  snapshot: ClinicFactsSnapshot,
+  message: string,
+  recentTurns?: readonly RecentConversationTurn[],
+) {
+  if (!isContextualPriceFollowup(message) || state.activeTask.kind !== "pricing" ||
+    state.pricingSubjectTreatmentKeys.length !== 1) return false;
+  // Inspect only the most recent CUSTOMER turn. An earlier NLU label or an
+  // assistant amount is never evidence, and intervening vague turns break it.
+  const previous = [...(recentTurns ?? [])].reverse().find((item) => item.role === "user")?.text;
+  return Boolean(previous && (
+    isPriceInquiryWithTypoTolerance(previous, matchClinicOntology(previous, snapshot.ontology).treatments.length > 0) ||
+    resolveApprovedPromotionCatalogSelection(snapshot, previous)
+  ));
+}
+
 function attachDeterministicPriceApplicability(
   turn: TurnUnderstanding,
   state: ConversationV2State,
   snapshot: ClinicFactsSnapshot,
   message: string,
+  referencedOffer?: { id: string; treatmentKeys: readonly string[] },
+  recentTurns?: readonly RecentConversationTurn[],
 ): TurnUnderstanding {
-  const catalogSelection = resolveApprovedPromotionCatalogSelection(snapshot, message);
-  if (catalogSelection) {
+  const previousCustomerText = [...(recentTurns ?? [])].reverse().find((item) => item.role === "user")?.text;
+  const contextualPrice = hasDeterministicPricingContext(state, snapshot, message, recentTurns);
+  const branch = resolveCurrentConcernBranch({ message, state });
+  const branchApplicability = branch ? { branch } : {};
+  // Context constrains the resolver's candidate set, not the treatment owner.
+  // Only a complete exact card/reference may replace the current price subject.
+  turn = { ...turn, priceCampaignContextText: contextualPrice && previousCustomerText ? previousCustomerText : message };
+  const selected = referencedOffer ??
+    findNonPublicPromotionMention(snapshot, message) ??
+    (contextualPrice && previousCustomerText ?
+      findNonPublicPromotionMention(snapshot, previousCustomerText) : undefined);
+  if (selected && selected.treatmentKeys.length > 0 && selected.treatmentKeys.every((key) =>
+    snapshot.treatments.some((treatment) => treatment.key === key))) {
+    return {
+      ...turn, confidence: 1, speechAct: "ask_price", questionAspect: "price_campaign",
+      questionAspects: ["price_campaign"],
+      priceSelection: { campaignId: selected.id, applicability: branchApplicability, source: "approved_catalog_action", treatmentKeys: [...selected.treatmentKeys] },
+    };
+  }
+  const catalogSelection = resolveApprovedPromotionCatalogSelection(snapshot, message) ??
+    (contextualPrice && previousCustomerText ? resolveApprovedPromotionCatalogSelection(snapshot, previousCustomerText) : undefined);
+  if (catalogSelection && catalogSelection.treatmentKeys.length > 0 && catalogSelection.treatmentKeys.every((key) =>
+    snapshot.treatments.some((treatment) => treatment.key === key))) {
     return {
       ...turn,
       confidence: 1,
       dialogueReference: "explicit",
-      priceApplicability: { ...catalogSelection.applicability },
+      priceApplicability: { ...catalogSelection.applicability, ...branchApplicability },
       priceSelection: {
-        applicability: { ...catalogSelection.applicability },
+        applicability: { ...catalogSelection.applicability, ...branchApplicability },
         campaignId: catalogSelection.campaignId,
         source: "approved_catalog_action",
         treatmentKeys: [...catalogSelection.treatmentKeys],
@@ -334,6 +376,25 @@ function attachDeterministicPriceApplicability(
       questionAspects: ["price_campaign"],
       speechAct: "ask_price",
     };
+  }
+  const authorized = contextualPrice || isPriceInquiryWithTypoTolerance(
+    message, matchClinicOntology(message, snapshot.ontology).treatments.length > 0,
+  );
+  if (!authorized) {
+    // A model proposal cannot authorize either the primary or supplemental quote.
+    // Keep booking/safety/control owners intact; remove only untrusted price intent.
+    return {
+      ...turn,
+      ...(turn.speechAct === "ask_price" ? { speechAct: "unknown", confidence: 0, clarification: undefined } : {}),
+      questionAspect: turn.questionAspect.startsWith("price_") ? "none" : turn.questionAspect,
+      questionAspects: turn.questionAspects?.filter((aspect) => !aspect.startsWith("price_")),
+      priceApplicability: undefined,
+      priceSelection: undefined,
+    };
+  }
+  if (contextualPrice && (turn.speechAct === "unknown" || turn.speechAct === "ask_price")) {
+    turn = { ...turn, speechAct: "ask_price", confidence: 1, questionAspect: "price_unspecified",
+      questionAspects: ["price_unspecified"], dialogueReference: "active_subject" };
   }
   if (turn.speechAct !== "ask_price") return turn;
   const treatmentKeys = turn.treatments
@@ -431,6 +492,7 @@ function attachDeterministicPriceApplicability(
     : undefined;
   const priceApplicability = {
     ...(turn.priceApplicability ?? {}),
+    ...branchApplicability,
     ...(deterministicSpecificApplicability ?? {}),
     ...(brand && !brand.genericPriceEligible ? { variant: brand.key } : {}),
     ...(requestedDose && !genericDoseEligible ? { dose: requestedDose } : {}),
@@ -1075,7 +1137,7 @@ function preflightRoute(input: {
     message: input.bookingMessage ?? input.message,
     state: input.state,
   });
-  const preflight = runImmediateSafetyPreflight({
+  const immediatePreflight = runImmediateSafetyPreflight({
     message: input.message,
     now: input.now,
     // Name/phone supplied as booking fields are not an account lookup. Merely
@@ -1088,7 +1150,19 @@ function preflightRoute(input: {
         state: input.state,
       }),
   });
-  if (!preflight) return null;
+  const composed = composeV2SafetyPreflight(input.message, input.now, immediatePreflight);
+  if (!composed) return null;
+  if (["human_active", "ai_paused", "closed"].includes(input.state.control.mode)) {
+    return {
+      state: input.state,
+      decision: {
+        decisionType: "fallback_reply", matchedKey: "conversation_v2:safety:ai_suppressed",
+        matchedType: "guided_reply", replyText: "", suppressAiFooter: true,
+        nextContext: input.context,
+      } satisfies RouterDecision,
+    };
+  }
+  const preflight = composed.decision;
 
   let state = cloneConversationV2State(input.state);
   let effectiveHandoffReason = preflight.matchedKey;
@@ -1127,7 +1201,7 @@ function preflightRoute(input: {
     );
   }
 
-  const bookingPrompt = preflight.matchedKey === "human_request" &&
+  const bookingPrompt = !composed.hasMedicalMessaging && preflight.matchedKey === "human_request" &&
     state.bookingTask.status === "collecting" &&
     state.bookingTask.expectedField
       ? `\n\n在真人客服正式接手前，我可以先幫您整理預約資料。\n${BOOKING_PROMPTS[state.bookingTask.expectedField]}`
@@ -1139,8 +1213,11 @@ function preflightRoute(input: {
     handoffReason: preflight.decisionType === "handoff_pending" ? effectiveHandoffReason : undefined,
     renderMode: "deterministic",
     requiresHuman: preflight.decisionType === "handoff_pending",
+    requiredSafetyContent: composed.requiredSafetyContent,
   });
-  const replyPlan = withConversationV2QuickReplies(baseReplyPlan, state);
+  // A medical preflight owns this reply; an existing booking draft must not
+  // project collection buttons into it. The booking task itself is preserved.
+  const replyPlan = composed.hasMedicalMessaging ? baseReplyPlan : withConversationV2QuickReplies(baseReplyPlan, state);
   return {
     decision: {
       ...preflight,
@@ -1201,6 +1278,13 @@ export async function routeConversationV2Canary(
       gate,
       kind: "routed",
     };
+  }
+  // The same speech-permission contract as Policy must cover runtime early
+  // returns too. Do not record a receipt, mutate booking, or restore AI here.
+  if (!isConversationV2AiAssistanceEnabled(state.control.mode)) {
+    return { kind: "routed", gate, dataStatus: "ready", policyAction: "do_not_reply",
+      decision: { decisionType: "fallback_reply", matchedKey: "conversation_v2:control:ai_suppressed",
+        matchedType: "guided_reply", nextContext: input.context, replyText: "", suppressAiFooter: true } };
   }
   const connectorSuffix = input.pendingHandoffReason === "post_procedure_issue"
     ? extractPendingHandoffTopicSuffix(input.message)
@@ -1330,6 +1414,49 @@ export async function routeConversationV2Canary(
         tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
       },
     );
+    // History supplies identity evidence only. Every quote is re-resolved
+    // against the current snapshot; a bare amount is never an offer key.
+    // Never skip the latest reference because its identity is unresolved.
+    const latestHistory = [...(episodeRecentTurns ?? [])].slice(-1);
+    const recallsPriceOffer = (
+      /(?:剛才|剛剛|之前|上一輪|那個)/u.test(routingMessage) &&
+      (isPriceInquiry(routingMessage) || /多少|\d|(?:再|重).{0,4}(?:說|講|看).{0,10}方案|那個(?:呢|是什麼)[?？]*$/u.test(routingMessage)) ||
+      /^(?:再|重)(?:說|講)一次[。?？!！]*$/u.test(routingMessage.trim()) && latestHistory.some((item) => /\d/u.test(item.text))
+    ) && !isPromotionBrowseIntent(routingMessage) && findAllTreatmentsByMessage(routingMessage).length === 0;
+    const catalog = recallsPriceOffer ? resolveApprovedPromotionCatalog(snapshot) : undefined;
+    const historyReference = recallsPriceOffer ? latestHistory.map((historicalTurn) => {
+      const offline = findNonPublicPromotionMention(snapshot, historicalTurn.text);
+      const offlineOwnerTerms = new Set(snapshot.treatments
+        .filter((treatment) => offline?.treatmentKeys.includes(treatment.key))
+        .flatMap((treatment) => [treatment.name, ...treatment.aliases]).map(normalizeClinicText));
+      return { offline,
+      publicOffers: catalog?.status === "approved_current" ? catalog.items.filter((item) => {
+          const row = snapshot.pricingCampaigns.find((entry) => entry.id === item.campaignId);
+          const identityTerms = [item.displayName, ...(row?.campaign_aliases ?? "").split(/[|,，、\n]/u)]
+            .map(normalizeClinicText).filter((term) => term.length >= 2 && !/^[\d,.]+$/u.test(term) && !offlineOwnerTerms.has(term));
+          return identityTerms.some((term) => normalizeClinicText(historicalTurn.text).includes(term));
+        }) : [],
+    }; }).at(0) : undefined;
+    const publicOffer = !historyReference?.offline && historyReference?.publicOffers.length === 1
+      ? historyReference.publicOffers[0] : undefined;
+    const referencedOffer = (historyReference?.publicOffers.length === 0 ? historyReference.offline : undefined) ?? (publicOffer
+      ? { id: publicOffer.campaignId, treatmentKeys: publicOffer.treatmentKeys }
+      : undefined);
+    if (recallsPriceOffer && !referencedOffer) {
+      const matchedKey = "conversation_v2:price:historical_identity_unconfirmed";
+      const plan = legacyDecisionToReplyPlan({ decisionType: "pricing_auto_reply", matchedKey,
+        matchedType: "guided_reply", replyText: AMBIGUOUS_HISTORICAL_PRICE_REPLY }, {
+        dialogueAct: "clarify", renderMode: "deterministic", requiresHuman: false,
+      });
+      const projection = projectQuickRepliesIntoState({ now: input.now, plan, snapshot,
+        state: recordConversationV2TurnReceipt(state, turnId, input.now.toISOString()) });
+      return { kind: "routed", gate, dataStatus: "unresolved", nluTelemetry,
+        snapshotId: snapshot.snapshotId, policyAction: "historical_price_clarification",
+        decision: { decisionType: "pricing_auto_reply", matchedKey, matchedType: "guided_reply",
+          replyText: AMBIGUOUS_HISTORICAL_PRICE_REPLY, replyPlan: projection.plan,
+          nextContext: projectStateToContext({ context: input.context, matchedKey, snapshot, state: projection.state }) },
+      };
+    }
     const bookingEpisodeBoundary = resolveBookingEpisodeBoundary({
       message: routingMessage,
       now: input.now,
@@ -1539,6 +1666,8 @@ export async function routeConversationV2Canary(
         routingMessage,
       );
       const deterministicPriceInquiry =
+        hasDeterministicPricingContext(state, snapshot, routingMessage, episodeRecentTurns) ||
+        Boolean(referencedOffer) ||
         Boolean(exactCatalogSelection) ||
         isPromotionBrowseIntent(routingMessage) || (
         isPriceInquiryWithTypoTolerance(
@@ -1594,7 +1723,7 @@ export async function routeConversationV2Canary(
         },
         text: routingMessage,
         turnId,
-      }), state, snapshot, routingMessage), snapshot);
+      }), state, snapshot, routingMessage, referencedOffer, episodeRecentTurns), snapshot);
       const deterministicRouted = routeConversationTurnV2(state, deterministicTurn, {
         responseContractMode,
       });
@@ -1793,7 +1922,7 @@ export async function routeConversationV2Canary(
         : {}),
       text: routingMessage,
       turnId,
-    }), state, snapshot, routingMessage), snapshot);
+    }), state, snapshot, routingMessage, referencedOffer, episodeRecentTurns), snapshot);
     const routed = routeConversationTurnV2(state, turn, { responseContractMode });
     if (routed.duplicate || !routed.result) {
       const replyText = "";

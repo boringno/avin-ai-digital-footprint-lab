@@ -4,7 +4,11 @@ import {
   loadClinicFactsSnapshot,
   resolveApprovedPromotionCatalog,
   resolveApprovedPrice,
+  detectPriceConfigurationConflicts,
 } from "../src/lib/clinic-facts";
+import { loadSeedData } from "../src/lib/seed-loader";
+import { isCustomerVisiblePriceOffer } from "../src/lib/pricing-lifecycle";
+import { createRuntimeClinicFactsProvider } from "../src/lib/clinic-facts/runtime-provider";
 import {
   isReleaseAudienceIncluded,
   materializeRuntimeContentReleaseSnapshot,
@@ -36,6 +40,104 @@ async function main() {
   cases.push({ name: "zero-percent-excludes", passed: !isReleaseAudienceIncluded("line-user-a", 0) });
   cases.push({ name: "full-percent-includes", passed: isReleaseAudienceIncluded("line-user-a", 100) });
   cases.push({ name: "stable-canary-bucket", passed: isReleaseAudienceIncluded("line-user-a", 10) === isReleaseAudienceIncluded("line-user-a", 10) });
+
+  const seed = await loadSeedData();
+  const publicFixture = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-qplus-200");
+  if (!publicFixture) throw new Error("Missing public item fixture");
+  for (const sameAmount of [false, true]) {
+    const first = { ...publicFixture, id: "a63-public-a", campaign_name: "測試甲活動", quote_priority: 1 };
+    const second = { ...first, id: "a63-public-b", campaign_name: "測試乙活動", branch_scope: "全館",
+      customer_price_text: sameAmount ? first.customer_price_text : "測試活動價 12,345 元" };
+    const facts = await loadClinicFactsSnapshot(createRuntimeClinicFactsProvider({ loadSeedData: async () => seed,
+      loadRuntimeContentOverlay: async () => ({ ...overlay, pricingCampaigns: [first, second] }) }),
+      { now: new Date("2026-09-09T04:00:00Z") });
+    const conflicts = detectPriceConfigurationConflicts(facts);
+    const quote = resolveApprovedPrice(facts, { kind: "campaign", treatmentKeys: ["qplus"], applicability: { branch: "台中" } });
+    const catalog = resolveApprovedPromotionCatalog(facts);
+    cases.push({ name: `PRICE_CONFIG_CONFLICT:distinct-offers:same-amount=${sameAmount}`, passed:
+      conflicts.length > 0 && conflicts.every((item) => item.code === "PRICE_CONFIG_CONFLICT") &&
+      quote.status === "unavailable_to_quote" && quote.configurationIssue === "PRICE_CONFIG_CONFLICT" &&
+      (catalog.status !== "approved_current" || !catalog.items.some((item) => [first.id, second.id].includes(item.campaignId))) });
+    const ranked = { ...facts, pricingCampaigns: [first, { ...second, quote_priority: 10 }] };
+    const rankedQuote = resolveApprovedPrice(ranked, { kind: "campaign", treatmentKeys: ["qplus"] });
+    cases.push({ name: `unique-priority-resolves-config:same-amount=${sameAmount}`, passed:
+      detectPriceConfigurationConflicts(ranked).length === 0 && rankedQuote.status === "approved_current" && rankedQuote.campaignId === second.id });
+    const disjoint = { ...facts, pricingCampaigns: [{ ...first, branch_scope: "台中" }, { ...second, branch_scope: "高雄" }] };
+    cases.push({ name: `different-branches-not-config-conflict:same-amount=${sameAmount}`, passed: detectPriceConfigurationConflicts(disjoint).length === 0 });
+    const expired = { ...facts, pricingCampaigns: [first, { ...second, end_date: "2026-09-08" }] };
+    cases.push({ name: `nonoverlapping-effective-time-not-conflict:same-amount=${sameAmount}`, passed: detectPriceConfigurationConflicts(expired).length === 0 });
+  }
+  const anniversarySeed = seed.pricingCampaigns.filter((campaign) => campaign.id.startsWith("promo-2026-anniv-"));
+  const offline = anniversarySeed.find((row) => row.id === "promo-2026-anniv-onda-face-extension");
+  if (!offline) throw new Error("Missing ONDA extension fixture");
+  for (const [name, visible] of [
+    ["21週年慶｜ONDA臉部延伸方案", false], ["21周年慶｜ONDA臉部延伸方案", false],
+    ["２１ 週 年 庆｜ONDA臉部延伸方案", false], ["115周年慶｜ONDA臉部延伸方案", false],
+    ["秋季限定活動｜ONDA臉部延伸方案", true], ["2027年22週年慶｜ONDA臉部延伸方案", true],
+  ] as const) {
+    const row = { ...offline, id: "runtime-family-review", campaign_name: name };
+    const provider = createRuntimeClinicFactsProvider({ loadSeedData: async () => seed,
+      loadRuntimeContentOverlay: async () => ({ ...overlay, pricingCampaigns: [row] }) });
+    const facts = await loadClinicFactsSnapshot(provider, { now: new Date("2026-09-09T04:00:00Z") });
+    const catalog = resolveApprovedPromotionCatalog(facts);
+    const quote = resolveApprovedPrice(facts, { kind: "campaign", treatmentKeys: ["onda_pro"], campaignId: row.id,
+      applicability: { variant: row.variant_key, dose: row.dose, package: row.package_key } });
+    cases.push({ name: `runtime-family:${name}`, passed:
+      (catalog.status === "approved_current" && catalog.items.some((item) => item.campaignId === row.id)) === visible &&
+      (visible || quote.status === "unavailable_to_quote") });
+  }
+  const selectedAnniversaryRuntime: RuntimeContentOverlay = {
+    faqEntries: [],
+    pricingCampaigns: anniversarySeed,
+    releaseId: "anniversary-selected-runtime",
+    sourceStatus: "available",
+    suppressedPricingCampaignIds: [],
+  };
+  const selectedAnniversaryFacts = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({
+      pricingCampaigns: mergeRuntimePricingCampaigns(seed.pricingCampaigns, selectedAnniversaryRuntime),
+    }),
+    { now: new Date("2026-09-02T04:00:00.000Z") },
+  );
+  const selectedAnniversaryCatalog = resolveApprovedPromotionCatalog(selectedAnniversaryFacts);
+  cases.push({
+    name: "selected-runtime-applies-anniversary-public-eligibility",
+    passed:
+      selectedAnniversaryCatalog.status === "approved_current" &&
+      selectedAnniversaryCatalog.items.length === 11 &&
+      selectedAnniversaryCatalog.items.every((item) => isCustomerVisiblePriceOffer({ id: item.campaignId })),
+  });
+  const selectedRuntimeWithoutOnda = {
+    ...selectedAnniversaryRuntime,
+    pricingCampaigns: anniversarySeed.filter((campaign) => campaign.id !== "promo-2026-anniv-onda-face-online"),
+  };
+  const missingOndaFacts = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({
+      pricingCampaigns: mergeRuntimePricingCampaigns(seed.pricingCampaigns, selectedRuntimeWithoutOnda),
+    }),
+    { now: new Date("2026-09-02T04:00:00.000Z") },
+  );
+  const missingOnda = resolveApprovedPrice(missingOndaFacts, { kind: "campaign", treatmentKeys: ["onda_pro"] });
+  cases.push({
+    name: "selected-runtime-omission-does-not-revive-seed-anniversary-offer",
+    passed:
+      missingOnda.status === "unavailable_to_quote" &&
+      !("customerPriceText" in missingOnda) &&
+      missingOnda.provenance.source === "clinic_config_and_runtime_content",
+  });
+  const unknownRuntimeAnniversary = {
+    ...anniversarySeed.find((campaign) => campaign.id === "promo-2026-anniv-onda-face-online")!,
+    campaign_name: "周年慶未知方案",
+    id: "runtime-anniversary-unknown",
+  };
+  const unknownRuntimeFacts = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: [unknownRuntimeAnniversary] }),
+    { now: new Date("2026-09-02T04:00:00.000Z") },
+  );
+  cases.push({
+    name: "unknown-runtime-anniversary-offer-fails-public-closed",
+    passed: resolveApprovedPromotionCatalog(unknownRuntimeFacts).status === "unavailable",
+  });
 
   const faqDecision = await routeCustomerMessage({ includePending: true, message: "測試專屬問題", now, runtimeContentOverlay: overlay });
   cases.push({ name: "runtime-faq-overlay", passed: faqDecision.decisionType === "faq_auto_reply" && faqDecision.replyText === "這是已測試的 runtime FAQ 回覆。" });
@@ -242,7 +344,7 @@ async function main() {
         start_at: null,
       },
       {
-        content_key: "anniversary-botox",
+        content_key: "promo-2026-anniv-botox-10u",
         content_type: "campaign",
         end_at: "2026-11-30T15:59:59.999Z",
         payload_json: {
@@ -274,7 +376,7 @@ async function main() {
         start_at: "2026-08-01T00:00:00.000Z",
       },
       {
-        content_key: "anniversary-onda-8999",
+        content_key: "promo-2026-anniv-onda-face-online",
         content_type: "campaign",
         end_at: "2026-11-30T15:59:59.999Z",
         payload_json: {
@@ -298,7 +400,7 @@ async function main() {
     name: "runtime-snapshot-keeps-standing-and-current-anniversary-prices",
     passed:
       mixedPricingSnapshot.pricingCampaigns.some((entry) => entry.id === "standing-hydrafacial" && entry.pricing_kind === "standing") &&
-      mixedPricingSnapshot.pricingCampaigns.some((entry) => entry.id === "anniversary-onda-8999") &&
+      mixedPricingSnapshot.pricingCampaigns.some((entry) => entry.id === "promo-2026-anniv-onda-face-online") &&
       !mixedPricingSnapshot.pricingCampaigns.some((entry) => entry.id === "cancelled-onda-16888"),
   });
 
@@ -342,8 +444,8 @@ async function main() {
     name: "promotion-catalog-excludes-standing-price-list",
     passed:
       promotionCatalog.status === "approved_current" &&
-      promotionCatalog.items.some((item) => item.campaignId === "anniversary-botox") &&
-      promotionCatalog.items.some((item) => item.campaignId === "anniversary-onda-8999") &&
+      promotionCatalog.items.some((item) => item.campaignId === "promo-2026-anniv-botox-10u") &&
+      promotionCatalog.items.some((item) => item.campaignId === "promo-2026-anniv-onda-face-online") &&
       !promotionCatalog.items.some((item) => item.campaignId.startsWith("standing-")),
   });
 

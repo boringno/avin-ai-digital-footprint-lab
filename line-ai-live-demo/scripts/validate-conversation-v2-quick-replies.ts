@@ -6,8 +6,9 @@ import {
   reconcileRenderedQuickReplyContract,
   reconcileUndeliveredQuickReplyContract,
 } from "@/lib/line-webhook";
-import type { PriceCatalogEntry } from "@/lib/clinic-facts";
+import { loadClinicFactsSnapshot, resolveApprovedPrice, resolveApprovedPromotionCatalog, resolveExplicitCampaignContext, approvedPromotionCatalogSelectionText, type PriceCatalogEntry } from "@/lib/clinic-facts";
 import { createStaticClinicFactsProvider } from "@/lib/clinic-facts/static-provider";
+import { createRuntimeClinicFactsProvider } from "@/lib/clinic-facts/runtime-provider";
 import { buildTreatmentReplyAssets } from "@/lib/clinic-facts/treatment-reply-assets";
 import { classifyBookingSpeechAct } from "@/lib/booking-speech-act";
 import { clinicConfig } from "@/lib/clinic-config";
@@ -19,7 +20,7 @@ import {
   buildConversationV2QuickReplySelection,
   resolveConversationV2QuickReplySelection,
 } from "@/lib/conversation-v2/quick-reply-selection";
-import { routeConversationV2Canary } from "@/lib/conversation-v2/live-runtime";
+import { routeConversationV2Canary, type ConversationV2LiveDependencies } from "@/lib/conversation-v2/live-runtime";
 import {
   createConversationV2State,
   parsePersistedConversationV2State,
@@ -31,6 +32,10 @@ import { legacyDecisionToReplyPlan } from "@/lib/reply-plan";
 import { loadSeedData } from "@/lib/seed-loader";
 import type { LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import type { NluFrame } from "@/lib/nlu-frame";
+import { routeCustomerMessage } from "@/lib/router";
+import { renderReplyPlan } from "@/lib/reply-renderer";
+import { hydrateDialogueState } from "@/lib/dialogue-state";
+import { createEmptyConversationState } from "@/lib/conversation-state";
 
 const NOW = "2026-08-23T12:00:00.000+08:00";
 
@@ -2064,7 +2069,7 @@ async function validateFinalWebhookPayload() {
   );
 }
 
-function realSeedPriceFrame(treatmentKey: "botox" | "onda_pro"): NluFrame {
+function realSeedPriceFrame(treatmentKey: string): NluFrame {
   return {
     areas: [],
     confidence: 0.99,
@@ -2161,11 +2166,11 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
       now: "2026-09-02T10:00:00+08:00",
       treatmentKey: "onda_pro",
     });
-    assert.match(decision.replyText, /11,999/u, `${message}: explicit ONDA extension wording must quote 11,999`);
+    assert.match(decision.replyText, /真人客服協助確認/u, `${message}: explicit ONDA extension wording must hand off`);
     assert.doesNotMatch(
       decision.replyText,
-      /8,999|12,999|16,888/u,
-      `${message}: the extension offer must not be replaced by a generic or legacy ONDA price`,
+      /8,999|11,999|12,999|16,888/u,
+      `${message}: the extension offer must not be quoted or replaced by another ONDA price`,
     );
   }
 
@@ -2175,7 +2180,7 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
     "肉毒原價",
     "奇蹟肉毒少錢",
     "Neuronox價錢",
-    "優力柔多少",
+    "優力柔多少錢",
   ]) {
     const decision = await routePrice({
       message,
@@ -2196,7 +2201,8 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
       now: "2026-09-02T10:00:00+08:00",
       treatmentKey: "botox",
     });
-    assert.match(decision.replyText, /9,999\s*元／100U/iu, `${message}: explicit Botox 100U wording must quote 9,999`);
+    assert.match(decision.replyText, /真人客服協助確認/u, `${message}: explicit Botox 100U wording must hand off`);
+    assert.doesNotMatch(decision.replyText, /(?:^|[^\d,])999(?:[^\d]|$)|9,999|100U/iu, `${message}: explicit Botox 100U wording must not borrow a public dose or repeat its offline price`);
   }
 
   const unavailableOndaAfterAnniversary = await routePrice({
@@ -2216,7 +2222,148 @@ async function validateRealSeedPriceSemanticFamiliesAndTimeBoundaries() {
   assert.doesNotMatch(expiredOnda.replyText, /8,999|11,999|12,999|16,888/u);
 }
 
+async function validateOfflineOfferOptionalNavigation() {
+  const seed = await loadSeedData();
+  const factsProvider = createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns });
+  let sequence = 0;
+  for (const [message, treatmentKey] of [
+    ["肉毒100U周年慶多少錢", "botox"],
+    ["ONDA延伸方案多少錢", "onda_pro"],
+    ["緹奧希1號周年慶多少錢", "teosyal"],
+    ["緹奧希2-4號周年慶多少錢", "teosyal4"],
+    ["十蓓900發加緹奧希1號周年慶多少錢", "tenthermage"],
+    ["美國音波500條肉毒100U周年慶多少錢", "ultherapy"],
+    ["美國音波二代1000條加肉毒200U加ONDA周年慶多少錢", "ultherapy"],
+    ["艾莉薇周年慶多少錢", "ailewei"],
+  ]) {
+    const userId = `offline-optional-${sequence++}`;
+    let context = createEmptyConversationContext(userId);
+    const route = async (text: string) => {
+      const routed = await routeConversationV2Canary({
+        context, eventIdentity: `${userId}-${sequence++}`, message: text,
+        recentTurns: context.recentTurns,
+        now: new Date("2026-09-09T12:00:00+08:00"), sourceType: "user", sourceUserId: userId,
+      }, {
+        factsProvider,
+        getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+        requestFrame: async () => ({ errorCode: null, frame: realSeedPriceFrame(treatmentKey!), latencyMs: 1,
+          model: "fixture", promptVersion: "fixture", tokensIn: 1, tokensOut: 1 }),
+      });
+      assert.equal(routed.kind, "routed");
+      context = routed.decision.nextContext;
+      return routed.decision;
+    };
+    const decision = await route(message!);
+    assert.deepEqual(labels(decision.replyPlan?.quickReplyItems ?? []), ["查看線上周年慶方案", "真人客服協助"], `${message}: ${decision.matchedKey}: ${decision.replyText}`);
+    assert.equal(decision.replyPlan?.requiresHuman, false, message);
+    assert.notEqual(context.conversationV2State?.control.mode, "handoff_pending", message);
+    assert.doesNotMatch(decision.replyText, /\d|已.*轉交|先.*轉交/u, message);
+    const beforeBrowse = context;
+    for (const followup of ["你剛剛不是說那個價格？", "剛才那個多少？", "再講一次剛才的方案"]) {
+      context = { ...beforeBrowse, recentTurns: [
+        { role: "user", text: message! },
+        { role: "assistant", text: `${message}，先前活動價 11,999 元` },
+      ] };
+      const historyBefore = JSON.stringify(context.recentTurns);
+      const recalled = await route(followup);
+      assert.deepEqual(labels(recalled.replyPlan?.quickReplyItems ?? []), ["查看線上周年慶方案", "真人客服協助"], followup);
+      assert.doesNotMatch(recalled.replyText, /\d/u, followup);
+      assert.notEqual(context.conversationV2State?.control.mode, "handoff_pending");
+      assert.equal(JSON.stringify(context.recentTurns), historyBefore, "history must not be rewritten");
+    }
+    context = beforeBrowse;
+    const browse = await route(decision.replyPlan!.quickReplyItems[0]!.action.text);
+    assert.match(browse.replyText, /11/u, "navigation must resolve the current eleven public offers");
+    assert.doesNotMatch(JSON.stringify(browse.replyPlan?.richMessages), /延伸|100U|900發|艾莉薇|艾麗薇/u);
+    context = beforeBrowse;
+    const handoff = await route(decision.replyPlan!.quickReplyItems[1]!.action.text);
+    assert.equal(handoff.nextContext.conversationV2State?.control.mode, "handoff_pending");
+    context = beforeBrowse;
+    const typedHandoff = await route("我要真人");
+    assert.equal(typedHandoff.nextContext.conversationV2State?.control.mode, "handoff_pending");
+  }
+}
+
+async function validateGuaranteesAndHistoricalPriceIdentity() {
+  const seed = await loadSeedData();
+  const now = new Date("2026-09-09T12:00:00+08:00");
+  const factsProvider = createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns });
+  let sequence = 0;
+  const route = async (message: string, history: string[] = []) => {
+    const userId = `guarantee-history-${sequence++}`;
+    return routeConversationV2Canary({ context: createEmptyConversationContext(userId),
+      message, now, sourceType: "user", sourceUserId: userId, eventIdentity: userId,
+      recentTurns: history.map((text) => ({ role: "assistant" as const, text })),
+    }, { factsProvider,
+      getCanarySettings: () => ({ allowlistedUserIds: [userId], mode: "canary" as const }),
+      requestFrame: async () => ({ errorCode: "nlu_unavailable", frame: null, latencyMs: 1,
+        model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+    });
+  };
+  for (const message of ["十蓓電波可以保證有效嗎？", "十蓓電波一定有效嗎？", "皮秒一定有效嗎？",
+    "是不是百分之百有效？", "做了就一定有感嗎？"]) {
+    const v1 = await routeCustomerMessage({ message, now, includePending: false,
+      runtimeContentOverlay: { sourceStatus: "not_configured", releaseId: null, faqEntries: [], pricingCampaigns: [], suppressedPricingCampaignIds: [] } });
+    const v2 = await route(message);
+    assert.equal(v2.kind, "routed");
+    for (const decision of [v1, v2.decision]) {
+      assert.match(decision.replyText, /不能保證個人效果/u, message);
+      assert.match(decision.replyText, /個人條件.*醫師評估/u, message);
+      assert.doesNotMatch(decision.replyText, /預約|價格|優惠/u, message);
+      assert.equal(decision.replyPlan?.renderMode, "deterministic");
+    }
+  }
+  const intro = await routeCustomerMessage({ message: "十蓓電波是什麼？", now, includePending: false,
+    runtimeContentOverlay: { sourceStatus: "not_configured", releaseId: null, faqEntries: [], pricingCampaigns: [], suppressedPricingCampaignIds: [] } });
+  assert.doesNotMatch(intro.replyText, /不能保證/u);
+  assert.match(intro.replyText, /諮詢/u);
+  const pregnancy = await route("我懷孕，做皮秒一定有效嗎？");
+  assert.equal(pregnancy.kind, "routed");
+  assert.notEqual(pregnancy.decision.matchedKey, "individual_effect_guarantee");
+  assert.match(pregnancy.decision.replyText, /懷孕|孕期|醫師/u);
+  const latestPublic = await route("剛剛那個11,999呢？", ["ONDA延伸方案 11,999", "粉光瓶周年慶方案 11,999"]);
+  assert.equal(latestPublic.kind, "routed");
+  assert.match(latestPublic.decision.replyText, /11,999/u);
+  assert.doesNotMatch(latestPublic.decision.replyText, /ONDA/u);
+  for (const [older, latest, message] of [
+    ["粉光瓶周年慶方案 11,999", "7777", "剛才那個多少？"],
+    ["ONDA延伸方案 11,999", "不明價格文字", "剛才那個呢？"],
+    ["粉光瓶周年慶方案 11,999", "11,999", "剛才那個多少？"],
+  ]) {
+    const result = await route(message!, [older!, latest!]);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, "conversation_v2:price:historical_identity_unconfirmed");
+    assert.doesNotMatch(result.decision.replyText, /11,999|7777|粉光瓶|ONDA/u);
+  }
+  for (const [history, message, expected] of [
+    ["11,999", "剛剛那個11,999是什麼？", "ambiguous"],
+    ["粉光瓶周年慶方案 11,999", "剛剛那個11,999呢？", "public"],
+    ["ONDA延伸方案 11,999", "剛剛那個11,999呢？", "offline"],
+    ["7777", "剛才那個多少？", "ambiguous"],
+  ]) {
+    const result = await route(message!, [history!]);
+    assert.equal(result.kind, "routed");
+    if (expected === "public") {
+      assert.match(result.decision.replyText, /11,999/u);
+      assert.doesNotMatch(result.decision.replyText, /ONDA|不提供.*報價/u);
+    } else {
+      assert.doesNotMatch(result.decision.replyText, /11,999|7777|粉光瓶|ONDA/u);
+      if (expected === "offline") assert.match(result.decision.replyText, /不提供該方案的線上報價/u);
+      assert.deepEqual(labels(result.decision.replyPlan?.quickReplyItems ?? []), ["查看線上周年慶方案", "真人客服協助"]);
+      assert.equal(result.decision.nextContext.conversationV2State?.control.mode, "ai_active");
+    }
+  }
+}
+
 async function main() {
+  await validateCampaignOwnerPreservation();
+  await validateMoneyIntentBoundary();
+  await validatePricePrecedenceAndControl();
+  await validateRequiredSafetyFinalOutput();
+  await validateStandingAliasIsolation();
+  await validateDeterministicPregnancyCoverage();
+  await validateGuaranteesAndHistoricalPriceIdentity();
+  await validateOfflineOfferOptionalNavigation();
   await validateRealSeedPriceSemanticFamiliesAndTimeBoundaries();
   validateEveryApprovedL1SuitabilityUsesIndependentCopy();
   validatePromotionEntryRequiresCurrentCatalog();
@@ -2242,6 +2389,505 @@ async function main() {
   await validateFallbackChoicesHaveLiveDestinations();
   await validateFinalWebhookPayload();
   console.log("Conversation V2 quick reply validation passed");
+}
+
+async function validateStandingAliasIsolation() {
+  const seed = await loadSeedData();
+  const offline = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-teosyal1");
+  assert.ok(offline);
+  const standing = { ...offline, id: "review-standing-teosyal", pricing_kind: "standing", campaign_name: "緹奧希1號常態價",
+    campaign_aliases: "緹奧希1號", start_date: "", end_date: "", customer_price_text: "測試常態價 15,000 元", price_text: "測試常態價 15,000 元" };
+  const pricingCampaigns = [...seed.pricingCampaigns, standing];
+  for (const factsProvider of [createStaticClinicFactsProvider({ pricingCampaigns }),
+    createRuntimeClinicFactsProvider({ loadSeedData: async () => seed,
+      loadRuntimeContentOverlay: async () => ({ sourceStatus: "available", releaseId: "standing-review",
+        pricingCampaigns, faqEntries: [], suppressedPricingCampaignIds: [] }) })]) {
+  for (const phrase of ["", "常態", "常態價格", "原價", "平常價格", "非活動價格", "周年慶", "週年慶"]) {
+    const message = `緹奧希1號${phrase}多少錢`;
+    const result = await routeConversationV2Canary({ context: createEmptyConversationContext("standing-review"),
+      message, now: new Date("2026-09-09T04:00:00Z"), sourceType: "user", sourceUserId: "standing-review", eventIdentity: message },
+      { factsProvider, getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: ["standing-review"] }),
+        requestFrame: async () => ({ frame: null, errorCode: "nlu_unavailable", latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }) });
+    assert.equal(result.kind, "routed");
+    if (phrase.includes("年慶")) {
+      assert.doesNotMatch(result.decision.replyText, /15,000|9,999/u);
+      assert.equal(result.decision.matchedKey, "conversation_v2:price:unavailable_to_quote:not_customer_visible");
+    } else {
+      assert.match(result.decision.replyText, /15,000/u, message);
+      assert.match(result.decision.replyPlan?.exactPriceFacts.join("\n") ?? "", /15,000/u);
+    }
+  }
+  }
+}
+
+async function validatePricePrecedenceAndControl() {
+  // Synthetic amounts are test-only, never clinic-approved content.
+  const seed = await loadSeedData();
+  const offline = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-teosyal1");
+  assert.ok(offline);
+  const standing: PriceCatalogEntry = { ...offline, id: "a6-standing", pricing_kind: "standing",
+    campaign_name: "測試常態方案", campaign_aliases: "緹奧希1號", start_date: "", end_date: "",
+    quote_priority: 999, customer_price_text: "緹奧希1號測試常態價 15,000 元" };
+  const promo: PriceCatalogEntry = { ...standing, id: "a6-public-promo", pricing_kind: "campaign",
+    campaign_name: "測試公開方案", quote_priority: 1, start_date: "2026-09-01", end_date: "2026-11-30",
+    customer_price_text: "緹奧希1號測試活動價 12,345 元" };
+  const now = new Date("2026-09-09T04:00:00Z");
+  for (const runtime of [false, true]) {
+    const provider = (rows: PriceCatalogEntry[], suppressed: string[] = []) => runtime
+      ? createRuntimeClinicFactsProvider({ loadSeedData: async () => ({ ...seed, pricingCampaigns: [offline, standing, promo] }),
+        loadRuntimeContentOverlay: async () => ({ sourceStatus: "available", releaseId: "a6-fixture",
+          // Materialized selected snapshots omit withdrawn entries; the legacy
+          // suppressed-ID list describes seed ownership, not an active-row veto.
+          pricingCampaigns: rows.filter((row) => !suppressed.includes(row.id)), faqEntries: [], suppressedPricingCampaignIds: suppressed }) })
+      : createStaticClinicFactsProvider({ pricingCampaigns: rows.filter((row) => !suppressed.includes(row.id)) });
+    for (const nluAvailable of [false, true]) {
+      const route = async (message: string, rows: PriceCatalogEntry[], at = now, suppressed: string[] = []) => {
+        const context = createEmptyConversationContext("a6-pricing");
+        const result = await routeConversationV2Canary({ context, message, now: at, eventIdentity: message,
+          sourceType: "user", sourceUserId: context.userId }, {
+          factsProvider: provider(rows, suppressed),
+          getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+          requestFrame: async () => ({ frame: nluAvailable ? realSeedPriceFrame("teosyal_1_3_brand") : null,
+            errorCode: nluAvailable ? null : "nlu_unavailable", latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+        });
+        assert.equal(result.kind, "routed");
+        assert.doesNotMatch(result.decision.replyText, /活動價還是常態價|9,999/u);
+        return result.decision;
+      };
+      for (const message of ["緹奧希1號多少錢？", "緹奧希1號價格？", "緹奧希1號費用多少？", "緹奧希1號常態多少錢？", "緹奧希1號平常多少錢？", "緹奧希1號原價多少？"]) {
+        const active = await route(message, [offline, standing, promo]);
+        assert.match(active.replyText, /12,345/u, `${runtime}/${nluAvailable}: ${message}`);
+        assert.doesNotMatch(active.replyText, /15,000/u);
+      }
+      const variants: Array<[string, Partial<PriceCatalogEntry>, Date, string[]]> = [
+        ["before", {}, new Date("2026-08-31T04:00:00Z"), []],
+        ["expired", {}, new Date("2026-12-01T04:00:00Z"), []],
+        ["inactive", { is_active: "false" }, now, []],
+        ["disabled", { is_active: "disabled" }, now, []],
+        ["unapproved", { approval_status: "pending" }, now, []],
+        ["copy-unapproved", { customer_price_approval_status: "pending" }, now, []],
+        ["withdrawn", {}, now, [promo.id]],
+      ];
+      for (const [label, override, at, suppressed] of variants) {
+        const decision = await route("緹奧希1號多少錢？", [offline, standing, { ...promo, ...override }], at, suppressed);
+        assert.match(decision.replyText, /15,000/u, `${runtime}/${nluAvailable}: ${label}`);
+        assert.doesNotMatch(decision.replyText, /12,345/u, label);
+      }
+      const onlyOffline = await route("緹奧希1號多少錢？", [offline, standing], now, [promo.id]);
+      assert.match(onlyOffline.replyText, /15,000/u);
+      const autumn: PriceCatalogEntry = { ...promo, id: "a62-autumn",
+        campaign_name: "秋季限定緹奧希1號", campaign_aliases: "秋季限定緹奧希1號|緹奧希1號" };
+      const other: PriceCatalogEntry = { ...promo, id: "a62-other", campaign_name: "冬季緹奧希1號",
+        campaign_aliases: "冬季緹奧希1號|緹奧希1號", customer_price_text: "緹奧希1號測試活動價 13,456 元" };
+      for (const text of ["秋季限定緹奧希1號多少錢？", "秋季限定緹奧希1號活動價多少錢？", "秋季限定緹奧希1號優惠價？",
+        "緹奧希1號秋季限定活動價多少錢？", "秋季限定活動的緹奧希1號多少錢？", "秋季限定的緹奧希1號價格？"]) {
+        const selected = await route(text, [offline, standing, autumn, { ...other, quote_priority: 10 }]);
+        assert.match(selected.replyText, /12,345/u, text);
+        assert.doesNotMatch(selected.replyText, /13,456|15,000|不提供該方案/u, text);
+        const expired = await route(text, [offline, standing, { ...autumn, end_date: "2026-09-08" }, { ...other, quote_priority: 10 }]);
+        assert.doesNotMatch(expired.replyText, /12,345|13,456|15,000/u, "explicit expired campaign must not borrow standing or winter");
+      }
+      const onePublic = await route("緹奧希1號活動價多少？", [offline, standing, autumn]);
+      assert.match(onePublic.replyText, /12,345/u);
+      const multiplePublic = await route("緹奧希1號活動價多少？", [offline, standing, autumn, other]);
+      assert.match(multiplePublic.matchedKey, /ambiguous/u);
+      assert.doesNotMatch(multiplePublic.replyText, /12,345|13,456|15,000/u);
+      const equalAmount = await route("緹奧希1號活動價多少？", [offline, standing, autumn,
+        { ...other, customer_price_text: autumn.customer_price_text }]);
+      assert.match(equalAmount.matchedKey, /ambiguous/u, "equal amounts do not make distinct campaigns one identity");
+      assert.equal(equalAmount.replyPlan?.exactPriceFacts.length ?? 0, 0);
+      const ranked = await route("緹奧希1號活動價多少？", [offline, standing, autumn, { ...other, quote_priority: 10 }]);
+      assert.match(ranked.replyText, /13,456/u, "a unique approved rank may choose the single online offer");
+      const noPublic = await route("緹奧希1號活動價多少？", [offline, standing]);
+      assert.match(noPublic.replyText, /15,000/u);
+      const exactOffline = await route("緹奧希1號周年慶多少？", [offline, standing, promo]);
+      assert.match(exactOffline.replyText, /不提供該方案的線上報價/u);
+      assert.doesNotMatch(exactOffline.replyText, /15,000|12,345/u);
+      assert.deepEqual(labels(exactOffline.replyPlan?.quickReplyItems ?? []), ["查看線上周年慶方案", "真人客服協助"]);
+      for (const family of ["周年慶", "週年慶", "週 年慶", "週　年慶", "週年庆", "115年周年慶", "21周年慶", "２１　週　年　庆"]) {
+        const decision = await route(`緹奧希1號${family}多少錢？`, [offline, standing, promo]);
+        assert.match(decision.replyText, /不提供該方案的線上報價/u, family);
+        assert.doesNotMatch(decision.replyText, /15,000|12,345/u, family);
+      }
+      const unknownAnniversary = await route("緹奧希1號多少錢？", [offline, standing,
+        { ...promo, id: "a6-unknown-anniversary", campaign_name: "２１ 週 年 庆測試方案" }]);
+      assert.match(unknownAnniversary.replyText, /15,000/u);
+      assert.doesNotMatch(unknownAnniversary.replyText, /12,345/u);
+      const ambiguous = await route("緹奧希1號多少錢？", [
+        { ...standing, dose: "1cc", customer_price_text: "緹奧希1號1cc測試常態價 15,000 元" },
+        { ...promo, dose: "2cc", customer_price_text: "緹奧希1號2cc測試活動價 12,345 元" },
+      ]);
+      assert.doesNotMatch(ambiguous.replyText, /15,000|12,345/u, "ambiguous spec cannot be chosen by priority");
+      assert.match(ambiguous.replyText, /規格|方案|確認/u);
+      const noStanding = await route("緹奧希1號多少錢？", [offline, { ...promo, is_active: "false" }], now, [standing.id]);
+      assert.doesNotMatch(noStanding.replyText, /15,000|12,345/u);
+      for (const [scope, branch, expected] of [
+        ["全館", "", "promo"], ["全館", "台中", "promo"],
+        ["台中館", "台中", "promo"], ["台中館", "高雄", "standing"],
+        ["台中館", "", "branch_required"],
+      ] as const) {
+        const branchMessage = `${branch ? `我在${branch}，` : ""}緹奧希1號多少錢？`;
+        const decision = await route(branchMessage, [offline, standing, { ...promo, branch_scope: scope }]);
+        if (expected === "branch_required") {
+          assert.match(decision.replyText, /館別/u, branchMessage);
+          assert.doesNotMatch(decision.replyText, /15,000|12,345/u);
+        } else {
+          assert.match(decision.replyText, expected === "promo" ? /12,345/u : /15,000/u, branchMessage);
+        }
+      }
+    }
+  }
+  for (const mode of ["human_active", "ai_paused", "closed", "ai_active"] as const) {
+    for (const history of ["7777", "粉光瓶周年慶方案 11,999", "ONDA延伸方案 11,999"]) {
+      const context = createEmptyConversationContext("a6-control");
+      context.conversationV2State = createConversationV2State({ episodeId: "a6-control", now: now.toISOString() });
+      context.conversationV2State.control.mode = mode;
+      const before = JSON.stringify(context);
+      const result = await routeConversationV2Canary({ context, message: "剛才那個多少？", now,
+        eventIdentity: `${mode}:${history}`, sourceType: "user", sourceUserId: context.userId,
+        recentTurns: [{ role: "assistant", text: "粉光瓶周年慶方案 11,999" }, { role: "assistant", text: history }] }, {
+        factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+        getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+        requestFrame: async () => ({ frame: null, errorCode: "nlu_unavailable", latencyMs: 0,
+          model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+      });
+      assert.equal(result.kind, "routed");
+      assert.equal(JSON.stringify(context), before);
+      if (mode !== "ai_active") {
+        assert.equal(result.decision.replyText, "", `${mode}:${history}`);
+        assert.equal(result.decision.replyPlan, undefined);
+        assert.deepEqual(result.decision.nextContext, context);
+      } else if (history === "7777") {
+        assert.equal(result.decision.matchedKey, "conversation_v2:price:historical_identity_unconfirmed");
+        assert.doesNotMatch(result.decision.replyText, /7777|11,999/u);
+      } else if (history.startsWith("ONDA")) {
+        assert.match(result.decision.replyText, /不提供該方案的線上報價/u);
+      } else {
+        assert.match(result.decision.replyText, /11,999/u);
+      }
+    }
+  }
+  // Exact dimensions cannot borrow a sibling/parent offer, even with a higher rank.
+  const seedSnapshot = await loadClinicFactsSnapshot(createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }), { now });
+  for (const [treatmentKeys, applicability] of [
+    [["botox"], { dose: "100U" }],
+    [["tenthermage"], { dose: "900發" }],
+    [["ultherapy", "botox"], { dose: "500條＋100U" }],
+    [["ultherapy", "botox", "onda_pro"], { dose: "1000條＋200U＋ONDA" }],
+  ] as const) {
+    const result = resolveApprovedPrice(seedSnapshot, { kind: "campaign", treatmentKeys, applicability });
+    assert.equal(result.status, "unavailable_to_quote", `no sibling/parent borrowing: ${treatmentKeys.join("+")}`);
+  }
+  const ondaOffline = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-onda-face-extension");
+  const powder = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-powder-glow");
+  assert.ok(ondaOffline && powder);
+  const ondaStanding: PriceCatalogEntry = { ...ondaOffline, id: "a6-onda-standing", pricing_kind: "standing",
+    campaign_name: "測試常態", start_date: "", end_date: "", customer_price_text: "延伸方案測試常態價 16,000 元" };
+  for (const runtime of [false, true]) {
+    const rows = [ondaOffline, ondaStanding, powder];
+    const factsProvider = runtime ? createRuntimeClinicFactsProvider({ loadSeedData: async () => seed,
+      loadRuntimeContentOverlay: async () => ({ sourceStatus: "available", releaseId: "a6-collision", pricingCampaigns: rows,
+        faqEntries: [], suppressedPricingCampaignIds: [] }) }) : createStaticClinicFactsProvider({ pricingCampaigns: rows });
+    const snapshot = await loadClinicFactsSnapshot(factsProvider, { now });
+    const itemQuery = { kind: "campaign" as const, treatmentKeys: ["onda_pro"], applicability: { variant: ondaOffline.variant_key } };
+    const item = resolveApprovedPrice(snapshot, itemQuery);
+    assert.equal(item.status, "approved_current");
+    if (item.status === "approved_current") assert.equal(item.campaignId, ondaStanding.id);
+    const exact = resolveApprovedPrice(snapshot, { ...itemQuery, campaignId: ondaOffline.id });
+    assert.equal(exact.status, "unavailable_to_quote");
+    if (exact.status === "unavailable_to_quote") assert.equal(exact.reason, "not_customer_visible");
+    const powderResult = resolveApprovedPrice(snapshot, { kind: "campaign", treatmentKeys: ["powder_glow_bottle"], campaignId: powder.id });
+    assert.equal(powderResult.status, "approved_current");
+    if (powderResult.status === "approved_current") assert.match(powderResult.customerPriceText, /11,999/u);
+  }
+  console.log("PASS: A6 synthetic price precedence/lifecycle and historical control");
+}
+
+async function validateCampaignOwnerPreservation() {
+  const seed = await loadSeedData();
+  const now = new Date("2026-09-09T04:00:00Z");
+  const botox = seed.pricingCampaigns.find((row) => row.id === "promo-2026-anniv-botox-10u");
+  assert.ok(botox);
+  // Existing approvedPriceIds ownership works even when a legacy display name
+  // cannot itself resolve to a treatment. Campaign context must not erase it.
+  const legacy: PriceCatalogEntry = { ...botox, treatment_name: "肉毒除皺", dose: "", variant_key: "",
+    campaign_name: "2026 盛夏光采肉毒除皺", campaign_aliases: "肉毒|肉毒除皺|優力柔",
+    customer_price_text: "肉毒體驗價 999 元" };
+  const provider = createStaticClinicFactsProvider({ pricingCampaigns: [legacy] });
+  const snapshot = await loadClinicFactsSnapshot(provider, { now });
+  for (const text of ["肉毒", "肉毒多少錢", "優力柔多少錢"]) {
+    assert.equal(resolveExplicitCampaignContext(snapshot, text), undefined, "generic aliases are not campaign identities");
+  }
+  const publicIds = ["promo-2026-anniv-onda-face-online", "promo-2026-anniv-pico-honeycomb", "promo-2026-anniv-qplus-200"];
+  const multiProvider = createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns.filter((row) => publicIds.includes(row.id)) });
+  for (const nluAvailable of [false, true]) {
+    for (const [message, key, amount, factsProvider] of [
+      ["肉毒多少錢", "botox", "999", provider], ["優力柔多少錢", "botox", "999", provider],
+      ["肉毒周年慶多少錢", "botox", "999", provider],
+      ["ONDA多少錢", "onda_pro", "8,999", multiProvider],
+      ["皮秒多少錢", "pico", "3,999", multiProvider],
+      ["Q+音波多少錢", "qplus", "7,999", multiProvider],
+    ] as const) {
+      const result = await routeConversationV2Canary({ context: createEmptyConversationContext("a63-owner"),
+        message, now, sourceType: "user", sourceUserId: "a63-owner", eventIdentity: message }, {
+        factsProvider, getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: ["a63-owner"] }),
+        requestFrame: async () => ({ frame: nluAvailable ? realSeedPriceFrame(key) : null, errorCode: null,
+          latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+      });
+      assert.equal(result.kind, "routed");
+      assert.match(result.decision.replyText, new RegExp(amount), `${nluAvailable}: ${message}`);
+      assert.ok(result.decision.nextContext.conversationV2State?.pricingSubjectTreatmentKeys.length, "partial owner must not clear subject");
+    }
+  }
+  console.log("PASS: A6.3 generic/legacy owners preserved; different treatments may promote concurrently");
+}
+
+async function validateMoneyIntentBoundary() {
+  const seed = await loadSeedData();
+  for (const nluAvailable of [false, true]) {
+  for (const [message, key] of [
+    ["肉毒一次要打多少？", "botox"], ["肉毒要打多少U？", "botox"],
+    ["十蓓要打多少發？", "tenthermage"], ["美國音波多少條？", "ultherapy"],
+    ["皮秒恢復期多少？", "pico"], ["恢復期多少天？", "pico"],
+    ["緹奧希1號多少？", "teosyal_1_3_brand"],
+    ["優力柔多少", "botox"],
+    ["多久做一次？", "pico"], ["這個多少？", "pico"],
+  ]) {
+    const result = await routeConversationV2Canary({ context: createEmptyConversationContext("a61-money"),
+      message, now: new Date("2026-09-09T04:00:00Z"), sourceType: "user", sourceUserId: "a61-money", eventIdentity: message }, {
+      factsProvider: createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+      getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: ["a61-money"] }),
+      requestFrame: async () => ({ frame: nluAvailable ? realSeedPriceFrame(key!) : null, errorCode: "nlu_unavailable", latencyMs: 0,
+        model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+    });
+    assert.equal(result.kind, "routed", key);
+    assert.doesNotMatch(result.decision.matchedKey, /:price:/u, message);
+    assert.equal(result.decision.replyPlan?.exactPriceFacts.length ?? 0, 0, message);
+    assert.doesNotMatch(result.decision.replyText, /999|3,999|9,999|活動價|常態價/u, message);
+  }
+  }
+  const now = new Date("2026-09-09T04:00:00Z");
+  const factsProvider = createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns });
+  const snapshot = await loadClinicFactsSnapshot(factsProvider, { now, tenantId: "tenant_001" });
+  const catalog = resolveApprovedPromotionCatalog(snapshot);
+  assert.equal(catalog.status, "approved_current");
+  const card = catalog.items.find((item) => item.campaignId === "promo-2026-anniv-powder-glow");
+  assert.ok(card);
+  const action = approvedPromotionCatalogSelectionText(card);
+  for (const nluAvailable of [false, true]) {
+    const route = async (message: string, context = createEmptyConversationContext("a62-context")) => {
+      const result = await routeConversationV2Canary({ context, message, now, recentTurns: context.recentTurns, sourceType: "user",
+        sourceUserId: context.userId, eventIdentity: `${message}-${context.conversationV2State?.revision ?? 0}` }, {
+        factsProvider, getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+        requestFrame: async () => ({ frame: nluAvailable ? realSeedPriceFrame("powder_glow_bottle") : null,
+          errorCode: null, latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }),
+      });
+      assert.equal(result.kind, "routed");
+      return result.decision;
+    };
+    const first = await route(action);
+    assert.match(first.replyText, /11,999/u);
+    const context = { ...first.nextContext, recentTurns: [
+      { role: "user" as const, text: action }, { role: "assistant" as const, text: first.replyText },
+    ] };
+    for (const followup of ["這個多少？", "那多少？"]) {
+      const next = await route(followup, context);
+      assert.match(next.replyText, /11,999/u, `${nluAvailable}: exact action -> ${followup}`);
+    }
+    for (const previous of ["我想了解療程", "皮秒恢復期多少？"]) {
+      const vague = await route("這個多少？", { ...context, recentTurns: [
+        { role: "user", text: previous }, { role: "assistant", text: first.replyText },
+      ] });
+      assert.equal(vague.replyPlan?.exactPriceFacts.length ?? 0, 0, "state/model price label alone cannot authorize");
+    }
+    const quantity = await route("要打多少？", context);
+    assert.equal(quantity.replyPlan?.exactPriceFacts.length ?? 0, 0, "quantity cannot borrow price context");
+  }
+  console.log("PASS: A6.2 NLU cannot authorize pricing; exact customer action supports narrow follow-up");
+}
+
+async function validateDeterministicPregnancyCoverage() {
+  const now = new Date("2026-09-09T12:00:00+08:00");
+  const context = createEmptyConversationContext("pregnancy-coverage");
+  let nluCalls = 0;
+  const route = (message: string, current = context, eventIdentity = message) => routeConversationV2Canary({
+    context: current, message, now, eventIdentity, sourceType: "user", sourceUserId: context.userId,
+  }, {
+    getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+    factsProvider: createStaticClinicFactsProvider(),
+    requestFrame: async () => { nluCalls += 1; return { frame: null, errorCode: "nlu_unavailable",
+      latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 }; },
+  });
+  for (const message of ["我懷孕，做皮秒一定有效嗎？", "我懷孕，可以做皮秒嗎？", "我現在懷孕", "我正在哺乳，可以做嗎？", "我在備孕，可以做皮秒嗎？",
+    "我目前正在哺乳，可以做皮秒嗎？", "我沒有懷孕但我正在哺乳，可以做嗎？",
+    "我沒有懷孕但正在哺乳，可以做嗎？", "我目前正在懷孕，可以做嗎？",
+    "我目前正在備孕，可以做嗎？", "我現在正在懷孕", "我還在哺乳", "我目前在備孕",
+    "我剛懷孕，可以做嗎？", "我正在餵母乳，可以做嗎？"]) {
+    const result = await route(message);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, "pregnancy_nursing_risk", message);
+    assert.equal(result.decision.nextContext.conversationV2State?.control.mode, "handoff_pending");
+    assert.match(result.decision.replyText, /醫師評估/u);
+    if (message.includes("一定")) assert.match(result.decision.replyText, /不能保證個人效果/u);
+    const duplicate = await route(message, result.decision.nextContext);
+    assert.equal(duplicate.kind, "routed");
+    assert.equal(duplicate.decision.replyText, "");
+    assert.deepEqual(duplicate.decision.nextContext, result.decision.nextContext);
+  }
+  for (const message of ["孕婦可以做皮秒嗎？", "懷孕的人可以做雷射嗎？", "哺乳中的人可以做嗎？", "我沒有懷孕，可以做皮秒嗎？",
+    "我沒有哺乳", "我沒有懷孕，我只是問孕婦可以嗎？", "我沒有在哺乳，我只是想問孕婦能不能做",
+    "我懷孕的朋友可以做皮秒嗎？", "我朋友懷孕，可以做嗎？", "我老婆懷孕，可以做嗎？",
+    "我女友懷孕，可以做嗎？", "我姐姐懷孕，可以做嗎？",
+    "我懷孕的閨蜜可以做皮秒嗎？", "我懷孕的室友可以做嗎？", "我正在哺乳的鄰居可以做嗎？",
+    "我沒有餵母乳", "可能懷孕，可以做嗎？"]) {
+    const result = await route(message);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, "pregnancy_general_information");
+    assert.equal(result.decision.nextContext.conversationV2State?.control.mode, "ai_active");
+    assert.equal(result.decision.nextContext.pregnancyRiskFlag, undefined);
+  }
+  for (const [message, key] of [["我懷孕而且現在呼吸困難", "post_procedure_emergency"], ["我昨天打完現在腫得很嚴重", "post_procedure_issue"], ["皮秒一定有效嗎？", "individual_effect_guarantee"]]) {
+    const result = await route(message!);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, key);
+  }
+  for (const mode of ["human_active", "ai_paused"] as const) {
+    const state = createConversationV2State({ episodeId: mode, now: now.toISOString() });
+    state.control.mode = mode;
+    const current = { ...context, conversationV2State: state };
+    const result = await route("我懷孕", current);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.replyText, "");
+    assert.deepEqual(result.decision.nextContext, current);
+  }
+  assert.equal(nluCalls, 0, "pregnancy and existing safety must route before any NLU call, including missing or wrong model flags");
+  const collecting = createConversationV2State({ episodeId: "pregnancy-booking", now: now.toISOString() });
+  collecting.bookingTask = { draft: { timeSlots: [], treatmentKeys: ["pico"] },
+    expectedField: "branch", id: "pregnancy-booking", intent: "create", status: "collecting" };
+  const collectedBefore = structuredClone(collecting.bookingTask.draft);
+  const bookingRisk = await route("對了我現在懷孕", { ...context, conversationV2State: collecting });
+  assert.equal(bookingRisk.kind, "routed");
+  assert.equal(bookingRisk.decision.nextContext.conversationV2State?.control.mode, "handoff_pending");
+  assert.deepEqual(bookingRisk.decision.nextContext.conversationV2State?.bookingTask.draft, collectedBefore);
+  assert.deepEqual(collecting.bookingTask.draft, collectedBefore, "input state must not be mutated");
+  for (const [message, key, pregnancy, guarantee, emergency] of [
+    ["我懷孕，皮秒可以保證有效嗎？我要真人", "pregnancy_nursing_risk", true, true, false],
+    ["我正在哺乳，可以保證有效嗎？", "pregnancy_nursing_risk", true, true, false],
+    ["我懷孕，我要真人", "pregnancy_nursing_risk", true, false, false],
+    ["皮秒一定有效嗎？我要真人", "human_request", false, true, false],
+    ["我懷孕而且呼吸困難，我要真人", "post_procedure_emergency", true, false, true],
+    ["我做完後腫得很嚴重，我要真人", "post_procedure_issue", false, false, false],
+  ] as const) {
+    const current = { ...context, conversationV2State: structuredClone(collecting) };
+    const result = await route(message, current);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, key, message);
+    assert.equal(result.decision.nextContext.conversationV2State?.control.mode, "handoff_pending", message);
+    assert.deepEqual(result.decision.nextContext.conversationV2State?.bookingTask.draft, collectedBefore);
+    if (pregnancy) assert.match(result.decision.replyText, /懷孕、哺乳或備孕期間/u, message);
+    if (guarantee) assert.match(result.decision.replyText, /不能保證個人效果/u, message);
+    if (emergency) assert.match(result.decision.replyText, /^若有呼吸困難.*119/u, message);
+    assert.doesNotMatch(result.decision.replyText, /預約資料|預約時段|請問.*館|電話號碼|預約免費諮詢/u, message);
+    assert.doesNotMatch(JSON.stringify(result.decision.replyPlan?.quickReplyItems ?? []), /預約免費諮詢|高雄館|台中館|桃園館|林口館/u, message);
+    const duplicate = await route(message, result.decision.nextContext);
+    assert.equal(duplicate.kind, "routed");
+    assert.equal(duplicate.decision.replyText, "");
+    assert.deepEqual(duplicate.decision.nextContext, result.decision.nextContext);
+    for (const mode of ["human_active", "ai_paused"] as const) {
+      const locked = { ...current, conversationV2State: { ...structuredClone(collecting), control: { mode } } };
+      const suppressed = await route(message, locked);
+      assert.equal(suppressed.kind, "routed");
+      assert.equal(suppressed.decision.replyText, "", `${mode}: ${message}`);
+      assert.deepEqual(suppressed.decision.nextContext, locked);
+    }
+  }
+  const unknown = await route("xyzzy");
+  assert.equal(unknown.kind, "routed");
+  assert.equal(unknown.policyAction, "runtime_fallback");
+  for (const message of ["我做完後腫得很嚴重", "昨天做完現在很腫", "昨天做完，已經腫兩天了", "做完後我現在痛得很厲害"]) {
+    const result = await route(message);
+    assert.equal(result.kind, "routed");
+    assert.equal(result.decision.matchedKey, "post_procedure_issue", message);
+    assert.match(result.decision.replyText, /術後反應.*真人確認/u);
+  }
+  for (const message of ["做完會腫得很嚴重嗎？", "做完會不會很痛？", "做完可能會紅腫嗎？", "療程有什麼副作用？"]) {
+    const result = await route(message);
+    assert.equal(result.kind, "routed");
+    assert.notEqual(result.decision.matchedKey, "post_procedure_issue", message);
+    assert.notEqual(result.decision.nextContext.conversationV2State?.control.mode, "handoff_pending", message);
+  }
+
+  const normalFrame: NluFrame = { areas: [], confidence: 0.99, concerns: [],
+    dialogue: { focus: "overview", move: "start", reference: "explicit", speechAct: "learn_treatment" },
+    intents: ["treatment"], negated: [], schemaVersion: 2, treatments: ["pico"],
+    safety: { complaint: false, humanRequest: false, postTreatmentRisk: false, pregnancyNursing: true } };
+  for (const mode of ["normal", "null", "unavailable", "missing_safety_flag"] as const) {
+    let calls = 0;
+    const requestFrame: NonNullable<ConversationV2LiveDependencies["requestFrame"]> = async () => {
+      calls += 1;
+      return { frame: mode === "normal" ? normalFrame : mode === "missing_safety_flag"
+        ? { ...normalFrame, safety: { ...normalFrame.safety, pregnancyNursing: false } } : null,
+      errorCode: mode === "unavailable" ? "nlu_unavailable" : null,
+      latencyMs: 0, model: "fixture", promptVersion: "fixture", tokensIn: 0, tokensOut: 0 };
+    };
+    for (const [message, personal] of [
+      ["我目前正在哺乳，可以做皮秒嗎？", true], ["我沒有懷孕但正在哺乳，可以做嗎？", true],
+      ["我目前正在備孕，可以做嗎？", true], ["我懷孕，可以做嗎？", true],
+      ["我懷孕的朋友可以做皮秒嗎？", false], ["孕婦可以做嗎？", false],
+    ] as const) {
+      const result = await routeConversationV2Canary({ context, message, now, eventIdentity: `${mode}:${message}`,
+        sourceType: "user", sourceUserId: context.userId }, {
+        getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+        factsProvider: createStaticClinicFactsProvider(), requestFrame,
+      });
+      assert.equal(result.kind, "routed");
+      assert.equal(result.decision.matchedKey, personal ? "pregnancy_nursing_risk" : "pregnancy_general_information", `${mode}: ${message}`);
+      assert.equal(result.decision.nextContext.conversationV2State?.control.mode, personal ? "handoff_pending" : "ai_active");
+    }
+    assert.equal(calls, 0, `${mode}: deterministic safety must precede NLU`);
+  }
+}
+
+async function validateRequiredSafetyFinalOutput() {
+  const now = new Date("2026-09-09T04:00:00Z");
+  for (const [message, pregnancy, guarantee, emergency] of [
+    ["我懷孕，皮秒可以保證有效嗎？我要真人", true, true, false],
+    ["我懷孕而且呼吸困難，我要真人", true, false, true],
+    ["皮秒一定有效嗎？我要真人", false, true, false],
+    ["我正在哺乳，可以保證有效嗎？", true, true, false],
+    ["我做完後腫得很嚴重，我要真人", false, false, false],
+  ] as const) {
+    const context = createEmptyConversationContext("safety-render-review");
+    const state = createConversationV2State({ episodeId: "safety-render", now: now.toISOString() });
+    state.bookingTask = { draft: { timeSlots: [], treatmentKeys: ["pico"] }, expectedField: "branch",
+      id: "safety-booking", intent: "create", status: "collecting" };
+    const result = await routeConversationV2Canary({ context: { ...context, conversationV2State: state }, message, now,
+      eventIdentity: message, sourceType: "user", sourceUserId: context.userId }, {
+      getCanarySettings: () => ({ mode: "canary", allowlistedUserIds: [context.userId] }),
+      factsProvider: createStaticClinicFactsProvider(), requestFrame: async () => { throw new Error("Safety must precede NLU"); },
+    });
+    assert.equal(result.kind, "routed");
+    assert.ok(result.decision.replyPlan);
+    const input = { customerMessage: message, plan: result.decision.replyPlan,
+      dialogueState: hydrateDialogueState(result.decision.nextContext, createEmptyConversationState(context.userId), { now }),
+      includeFooter: false, recentTurns: [] };
+    const first = await renderReplyPlan(input);
+    const repeated = await renderReplyPlan({ ...input, recentTurns: [{ role: "assistant", text: first.replyText }] });
+    for (const rendered of [first, repeated]) {
+      if (pregnancy) assert.match(rendered.replyText, /懷孕、哺乳或備孕期間/u, message);
+      if (guarantee) assert.match(rendered.replyText, /不能保證個人效果/u, message);
+      if (emergency) {
+        assert.match(rendered.replyText, /119/u, message);
+        assert.match(rendered.replyText, /急診/u, message);
+        assert.match(rendered.replyText, /不要等待線上回覆/u, message);
+      }
+      if (!pregnancy && !guarantee && !emergency) assert.match(rendered.replyText, /術後反應.*真人確認/u, message);
+      assert.match(rendered.replyText, /真人客服/u, message);
+      assert.doesNotMatch(JSON.stringify(rendered.messages), /預約資料|預約時段|預約免費諮詢|高雄館|台中館|桃園館|林口館/u, message);
+      assert.equal(rendered.generatorInvoked, false);
+    }
+    assert.deepEqual(result.decision.nextContext.conversationV2State?.bookingTask.draft, state.bookingTask.draft);
+  }
 }
 
 main().catch((error) => {

@@ -1,9 +1,9 @@
 import { normalizeClinicText } from "@/lib/clinic-config";
+import { PRICE_ASK_TERMS } from "@/lib/pricing-subject";
 import {
   highestQuotePriorityCampaigns,
-  pricingCampaignQuotePriority,
 } from "@/lib/pricing-campaign-priority";
-import { isStandingPrice } from "@/lib/pricing-lifecycle";
+import { hasAnniversaryCampaignWording, isAnniversaryPromotion, isCustomerVisiblePriceOffer, isStandingPrice, normalizeCampaignFamilyText } from "@/lib/pricing-lifecycle";
 
 import type {
   ClinicFactProvenance,
@@ -17,6 +17,13 @@ import type {
   PriceQuery,
   UnavailablePriceFact,
 } from "./types";
+
+export const NOT_CUSTOMER_VISIBLE_PRICE_REPLY =
+  "這個方案目前需要由真人客服協助確認，我這裡不提供該方案的線上報價。如果您願意，也可以先查看其他目前可線上查詢的周年慶方案。";
+export const NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS = [
+  { label: "查看線上周年慶方案", text: "我想了解現在有哪些活動" },
+  { label: "真人客服協助", text: "我要找真人客服" },
+] as const;
 import { resolveTreatmentFact } from "./treatment-resolver";
 
 type CampaignState = "current" | "expired" | "future" | "stale" | "unreviewed";
@@ -257,10 +264,11 @@ function applicabilityState(
   snapshot: ClinicFactsSnapshot,
   campaign: PriceCatalogEntry,
   query: PriceApplicabilityDimensions | undefined,
+  checkBranch = true,
 ): ApplicabilityState {
   const scope = campaignBranches(snapshot, campaign.branch_scope);
   const requestedBranch = query?.branch?.trim();
-  if (!scope.all) {
+  if (checkBranch && !scope.all) {
     if (!requestedBranch) return "branch_required";
     if (!scope.branchIds.includes(branchIdentity(snapshot, requestedBranch))) return "mismatch";
   }
@@ -382,7 +390,75 @@ function customerAssetUrls(campaign: PriceCatalogEntry) {
   return urls.slice(0, 4);
 }
 
-function promotionCatalogGroupKey(
+/** Resolve a catalog-authored campaign identity, not a generic item alias.
+ * Lifecycle/approval/amount remain owned by resolveApprovedPrice: even an
+ * expired exact selection must not silently become a different campaign.
+ */
+export function resolveExplicitCampaignContext(snapshot: ClinicFactsSnapshot, message: string): readonly string[] | undefined {
+  const normalized = (text: string) => normalizeClinicText(normalizeCampaignFamilyText(text));
+  const text = normalized(message);
+  if (isAnniversaryPromotion({ campaign_name: message })) {
+    // An empty explicit context remains a restriction, never permission to fall back.
+    return snapshot.pricingCampaigns.filter((row) => !isStandingPrice(row) && isAnniversaryPromotion(row)).map((row) => row.id);
+  }
+  const treatmentTerms = snapshot.treatments.flatMap((treatment) =>
+    [treatment.name, ...treatment.aliases, ...treatment.availableBrands]);
+  const matches = snapshot.pricingCampaigns.filter((row) => !isStandingPrice(row)).flatMap((row) => {
+    const itemTerms = unique([
+      ...PRICE_ASK_TERMS, ...treatmentTerms,
+      row.treatment_name, row.dose ?? "", row.variant_key ?? "", row.package_key ?? "",
+      ...splitTerms(row.booking_treatments),
+    ].map(normalized)).sort((a, b) => b.length - a.length);
+    const tokens = [row.campaign_name, ...splitTerms(row.campaign_aliases)].flatMap((term) => {
+      const residual = itemTerms.reduce((rest, item) => rest.split(item).join("|"), normalized(term))
+        .replace(/(?:方案|組合|療程|單位|號|發|條|cc|u)/gu, "|");
+      // Preserve explicit anniversary years/editions; their classification has one owner.
+      return (hasAnniversaryCampaignWording(residual) ? residual : residual.replace(/\d+/gu, "|"))
+        .split(/[|\s+＋/()（）,，.\-]/u).filter((token) => token.length >= 2 && /\p{L}/u.test(token) &&
+          !PRICE_ASK_TERMS.some((priceTerm) => normalized(priceTerm).includes(token)));
+    });
+    const evidence = tokens.filter((token) => text.includes(token) &&
+      // A bare anniversary token must not reclassify a different explicit year/edition.
+      (!hasAnniversaryCampaignWording(token) || !isAnniversaryPromotion(row)));
+    return evidence.length > 0 ? [row.id] : [];
+  });
+  return matches.length > 0 ? unique(matches) : undefined;
+}
+
+/** Identity evidence may deny a quote, but must never authorize one. */
+export function findNonPublicPromotionMention(snapshot: ClinicFactsSnapshot, message: string) {
+  // A treatment/spec alias is not consent to select its offline campaign.
+  // Keep explicit offline/campaign wording authoritative even in mixed asks.
+  const campaignText = normalizeCampaignFamilyText(message).replace(/非(?:活動|優惠)(?:價格|價)?/gu, "");
+  const explicitCampaign = isAnniversaryPromotion({ campaign_name: campaignText }) || /線下|延伸方案/u.test(campaignText);
+  if (!explicitCampaign) return undefined;
+  const text = normalizeClinicText(normalizeCampaignFamilyText(message));
+  const nameMatchLength = (campaign: PriceCatalogEntry) => Math.max(0,
+    ...[campaign.campaign_name, ...splitTerms(campaign.campaign_aliases)]
+      .map((term) => normalizeClinicText(normalizeCampaignFamilyText(term)))
+      .filter((term) => term.length >= 2 && !/^[\d,.]+$/u.test(term) && text.includes(term))
+      .map((term) => term.length));
+  const matches = snapshot.pricingCampaigns.filter((campaign) => {
+    if (isCustomerVisiblePriceOffer(campaign)) return false;
+    if (nameMatchLength(campaign) > 0) return true;
+    // Compound offers can be typed with a treatment name between quantities.
+    // Require every quantity AND every named treatment; never match an amount.
+    const quantities = normalizeClinicText(campaign.dose ?? "").match(/\d+(?:\.\d+)?(?:條|u|發)/gu) ?? [];
+    const owners = campaignTreatmentKeys(snapshot, campaign);
+    return quantities.length >= 2 && quantities.every((quantity) => text.includes(quantity)) &&
+      owners.length >= 2 && owners.every((key) => {
+        const treatment = snapshot.treatments.find((item) => item.key === key);
+        return treatment && [treatment.name, ...treatment.aliases].some((name) => text.includes(normalizeClinicText(name)));
+      });
+  });
+  // A full combination alias outranks its contained single-product alias.
+  matches.sort((left, right) => nameMatchLength(right) - nameMatchLength(left));
+  const campaign = matches.length === 1 || (matches.length > 1 &&
+    nameMatchLength(matches[0]!) > nameMatchLength(matches[1]!)) ? matches[0] : undefined;
+  return campaign ? { ...campaign, treatmentKeys: campaignTreatmentKeys(snapshot, campaign) } : undefined;
+}
+
+function exactPriceItemKey(
   snapshot: ClinicFactsSnapshot,
   campaign: PriceCatalogEntry,
 ) {
@@ -391,12 +467,18 @@ function promotionCatalogGroupKey(
   const applicability = recordApplicability(campaign);
   return JSON.stringify([
     treatmentIdentity,
-    normalizeClinicText(campaign.branch_scope),
     normalizeClinicText(applicability.dose ?? ""),
     normalizeClinicText(applicability.package ?? ""),
     applicability.sessionCount ?? "",
     normalizeClinicText(applicability.variant ?? ""),
   ]);
+}
+
+function promotionCatalogGroupKey(snapshot: ClinicFactsSnapshot, campaign: PriceCatalogEntry) {
+  // Catalog cards may still distinguish branch-specific offers. Quote item
+  // identity must not: branch eligibility is evaluated independently below.
+  const scope = campaignBranches(snapshot, campaign.branch_scope);
+  return JSON.stringify([exactPriceItemKey(snapshot, campaign), scope.all ? "all" : scope.branchIds.sort()]);
 }
 
 function customerPromotionDisplayName(campaign: PriceCatalogEntry) {
@@ -452,6 +534,7 @@ export function resolveApprovedPromotionCatalog(
     // resolver. Standing approved prices remain quoteable when asked, but do
     // not appear as if they were part of the current anniversary campaign.
     if (isStandingPrice(campaign)) return [];
+    if (!isCustomerVisiblePriceOffer(campaign)) return [];
     if (
       campaignState(
         campaign,
@@ -478,10 +561,9 @@ export function resolveApprovedPromotionCatalog(
 
   const selected = [...groups.values()]
     .flatMap((group) => {
-      const highest = Math.max(...group.map(({ campaign }) => pricingCampaignQuotePriority(campaign)));
-      return highest > 0
-        ? group.filter(({ campaign }) => pricingCampaignQuotePriority(campaign) === highest)
-        : group;
+      const selectedIds = new Set(highestQuotePriorityCampaigns(group.map(({ campaign }) => campaign)).map((row) => row.id));
+      // A config conflict is not a menu asking customers to choose our campaign.
+      return selectedIds.size === 1 ? group.filter(({ campaign }) => selectedIds.has(campaign.id)) : [];
     })
     .sort((left, right) => left.index - right.index);
 
@@ -526,9 +608,9 @@ export function resolveApprovedPromotionCatalogSelection(
 ): ApprovedPromotionCatalogSelection | null {
   const catalog = resolveApprovedPromotionCatalog(snapshot);
   if (catalog.status !== "approved_current") return null;
-  const normalizedMessage = normalizeClinicText(message);
+  const normalizedMessage = normalizeClinicText(normalizeCampaignFamilyText(message));
   const matches = catalog.items.filter((item) =>
-    normalizeClinicText(approvedPromotionCatalogSelectionText(item)) === normalizedMessage,
+    normalizeClinicText(normalizeCampaignFamilyText(approvedPromotionCatalogSelectionText(item))) === normalizedMessage,
   );
   if (matches.length !== 1) return null;
   const selected = matches[0]!;
@@ -537,6 +619,31 @@ export function resolveApprovedPromotionCatalogSelection(
     campaignId: selected.campaignId,
     treatmentKeys: [...selected.treatmentKeys],
   };
+}
+
+/** Read-only preflight at the pinned snapshot's effective time. Reuses the
+ * quote resolver (including priority and branch checks), not a parallel rule.
+ * Release tooling can evaluate its intended effective dates with this helper.
+ */
+export function detectPriceConfigurationConflicts(snapshot: ClinicFactsSnapshot) {
+  const queries = new Map<string, PriceQuery>();
+  for (const row of snapshot.pricingCampaigns) {
+    if (isStandingPrice(row) || !isCustomerVisiblePriceOffer(row)) continue;
+    const directKeys = campaignTreatmentKeys(snapshot, row);
+    const treatmentKeys = directKeys.length > 0 ? directKeys : snapshot.treatments
+      .filter((treatment) => treatment.approvedPriceIds.includes(row.id)).map((treatment) => treatment.key);
+    if (treatmentKeys.length === 0) continue;
+    for (const branch of snapshot.clinic.branches) {
+      const query: PriceQuery = { kind: "unspecified", treatmentKeys,
+        applicability: { ...recordApplicability(row), branch: branch.name } };
+      queries.set(JSON.stringify(query), query);
+    }
+  }
+  return [...queries.values()].flatMap((query) => {
+    const resolution = resolveApprovedPrice(snapshot, query);
+    return resolution.status === "unavailable_to_quote" && resolution.configurationIssue
+      ? [{ code: resolution.configurationIssue, query, provenance: resolution.provenance }] : [];
+  });
 }
 
 export function resolveApprovedPrice(
@@ -571,7 +678,11 @@ export function resolveApprovedPrice(
     if (!campaignsById.has(campaign.id)) campaignsById.set(campaign.id, campaign);
   }
   const dedupedCampaigns = [...campaignsById.values()];
+  const campaignContextIds = query.campaignContextText
+    ? resolveExplicitCampaignContext(snapshot, query.campaignContextText)
+    : undefined;
   const candidates = dedupedCampaigns
+    .filter((campaign) => campaignContextIds === undefined || campaignContextIds.includes(campaign.id))
     .map((campaign, index) => ({
       applicability: applicabilityState(snapshot, campaign, query.applicability),
       campaign,
@@ -602,26 +713,78 @@ export function resolveApprovedPrice(
     );
   }
 
-  let applicable = current.filter((candidate) => candidate.applicability === "match");
-  if (applicable.length === 0) {
-    // A generic price question may quote one fully self-identifying approved
-    // offer (for example brand + dose + amount in the reviewed customer copy).
-    // Explicitly mismatched brand/spec queries never enter this path.
-    applicable = current.filter((candidate) =>
-      candidate.applicability === "required" &&
-      customerTextSelfIdentifiesApplicability(candidate.campaign, query.applicability));
+  // A persisted card/action can carry the exact offer ID but omit a legacy
+  // applicability field. The explicit identity still wins over generic
+  // matching, so an old staff-only card cannot degrade into another reply.
+  const explicitlyRequestedNonPublicCampaign = query.campaignId
+    ? current.find((candidate) =>
+      candidate.campaign.id === query.campaignId && !isCustomerVisiblePriceOffer(candidate.campaign))
+    : undefined;
+  if (explicitlyRequestedNonPublicCampaign) {
+    return unavailable(
+      snapshot,
+      treatmentKeys,
+      "not_customer_visible",
+      explicitlyRequestedNonPublicCampaign.campaign.id,
+    );
   }
+
+  const publiclyQuotableCurrent = current.filter((candidate) =>
+    isCustomerVisiblePriceOffer(candidate.campaign));
+  const matchingCandidates = (candidates: typeof current) => {
+    let matches = candidates.filter((candidate) => candidate.applicability === "match");
+    if (matches.length === 0) {
+      // A generic price question may quote one fully self-identifying approved
+      // offer (for example brand + dose + amount in the reviewed customer copy).
+      // Explicitly mismatched brand/spec queries never enter this path.
+      matches = candidates.filter((candidate) =>
+        candidate.applicability === "required" &&
+        customerTextSelfIdentifiesApplicability(candidate.campaign, query.applicability));
+    }
+    return matches;
+  };
+  // Unapproved/unsafe customer copy is not an eligible public promotion and
+  // cannot suppress a valid standing offer. Keep the old failure reason when
+  // no usable copy exists at all, rather than exposing the unreviewed text.
+  const approvedCopyCandidates = publiclyQuotableCurrent.filter((candidate) =>
+    customerPriceText(candidate.campaign).status === "ok");
+  if (!query.campaignId && !query.applicability?.branch?.trim()) {
+    // Missing branch cannot silently select all-branch standing when an
+    // otherwise eligible exact-item promotion may change the answer there.
+    const branchDependentPromotion = approvedCopyCandidates.find((candidate) => {
+      if (isStandingPrice(candidate.campaign) || candidate.applicability !== "branch_required") return false;
+      const itemMatch = applicabilityState(snapshot, candidate.campaign, query.applicability, false);
+      return itemMatch === "match" || (itemMatch === "required" &&
+        customerTextSelfIdentifiesApplicability(candidate.campaign, query.applicability));
+    });
+    if (branchDependentPromotion) return unavailable(snapshot, treatmentKeys, "branch_required", branchDependentPromotion.campaign.id);
+  }
+  let applicable = matchingCandidates(approvedCopyCandidates);
+  if (applicable.length === 0) applicable = matchingCandidates(publiclyQuotableCurrent);
   if (applicable.length === 0) {
-    const first = current[0];
-    if (current.some((candidate) => candidate.applicability === "branch_required")) {
+    const unpublishedMatch = matchingCandidates(current).find((candidate) =>
+      !isCustomerVisiblePriceOffer(candidate.campaign));
+    if (unpublishedMatch) {
+      return unavailable(snapshot, treatmentKeys, "not_customer_visible", unpublishedMatch.campaign.id);
+    }
+    const first = publiclyQuotableCurrent[0];
+    if (publiclyQuotableCurrent.some((candidate) => candidate.applicability === "branch_required")) {
       return unavailable(snapshot, treatmentKeys, "branch_required", first?.campaign.id);
     }
-    if (current.some((candidate) => candidate.applicability === "required")) {
+    if (publiclyQuotableCurrent.some((candidate) => candidate.applicability === "required")) {
       return unavailable(snapshot, treatmentKeys, "applicability_required", first?.campaign.id);
     }
     return unavailable(snapshot, treatmentKeys, "applicability_mismatch", first?.campaign.id);
   }
 
+  if (!query.campaignId) {
+    // Group by exact treatment + dose/package/session/variant, not family or
+    // amount. A promotion may replace standing only inside its own subject.
+    const subjectGroups = new Set(applicable.map(({ campaign }) => exactPriceItemKey(snapshot, campaign)));
+    if (subjectGroups.size > 1) return unavailable(snapshot, treatmentKeys, "ambiguous");
+    const promotions = applicable.filter(({ campaign }) => !isStandingPrice(campaign));
+    if (promotions.length > 0) applicable = promotions;
+  }
   const priorityOwned = query.campaignId
     ? applicable.map((candidate) => candidate.campaign)
     : highestQuotePriorityCampaigns(applicable.map((candidate) => candidate.campaign));
@@ -629,6 +792,11 @@ export function resolveApprovedPrice(
   const prioritized = applicable.filter((candidate) => priorityIds.has(candidate.campaign.id));
   const topScore = Math.max(...prioritized.map((candidate) => candidate.score));
   const top = prioritized.filter((candidate) => candidate.score === topScore);
+  if (new Set(top.map(({ campaign }) => campaign.id)).size > 1) {
+    // Amount/copy equivalence is not offer identity. Priority has already had
+    // its chance to choose one; the customer must not resolve a config conflict.
+    return { ...unavailable(snapshot, treatmentKeys, "ambiguous"), configurationIssue: "PRICE_CONFIG_CONFLICT" };
+  }
   const customerTexts = top.map(({ campaign }) => customerPriceText(campaign));
   const blockedCustomerText = customerTexts.find((result) => result.status === "blocked");
   if (blockedCustomerText?.status === "blocked") {

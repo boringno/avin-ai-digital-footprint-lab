@@ -1,10 +1,14 @@
-import type {
-  PriceApplicabilityDimensions,
-  PriceFactResolution,
-  TreatmentKnowledgeResolution,
+import {
+  NOT_CUSTOMER_VISIBLE_PRICE_REPLY,
+  type PriceApplicabilityDimensions,
+  type PriceFactResolution,
+  type TreatmentKnowledgeResolution,
 } from "@/lib/clinic-facts";
 
 export type ConversationV2FactDomain = "clinic" | "price" | "treatment";
+
+export const AMBIGUOUS_HISTORICAL_PRICE_REPLY =
+  "只靠先前的金額，我目前無法確認您指的是哪個方案，請提供方案名稱。我也可以先列出目前可線上查詢的周年慶方案，或由真人客服協助確認。";
 
 export type ConversationV2ToolRequest =
   | {
@@ -77,6 +81,9 @@ export function priceGapReply(resolution: PriceFactResolution) {
   }
   if (resolution.reason === "treatment_unconfirmed") {
     return "這項療程的院內提供資料目前還在確認中，我先不猜價格；您可以先告訴我想改善的部位或困擾，我會整理需求並請真人客服確認。";
+  }
+  if (resolution.reason === "not_customer_visible") {
+    return NOT_CUSTOMER_VISIBLE_PRICE_REPLY;
   }
   if (resolution.reason === "ambiguous") {
     return "目前查到不只一筆可能的核准方案，為避免報錯，我先請真人客服確認正確價格；您也可以告訴我想做的部位或方案。";

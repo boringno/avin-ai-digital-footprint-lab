@@ -1,12 +1,127 @@
 import { clinicConfig } from "@/lib/clinic-config";
 import { getHumanSupportStatus } from "@/lib/human-support";
 
+export const INDIVIDUAL_EFFECT_GUARANTEE_REPLY =
+  "不能保證個人效果。實際效果與是否適合會依個人條件而不同，需由醫師評估。";
+const PREGNANCY_SIGNAL_PATTERN = /(?:懷孕|孕婦|孕期|有孕|哺乳|餵母乳|餵奶|親餵|母乳|備孕|準備懷孕|想懷孕|試管)/u;
+const PREGNANCY_GUIDANCE = "懷孕、哺乳或備孕期間，醫美療程應先保守處理，實際是否適合需由醫師評估。";
+const PREGNANCY_MODIFIERS = /(?:現在|目前|正在|已經|還在|準備|一直|仍然|剛剛|剛|已|在|有|是|也|還|正)/gu;
+const PREGNANCY_RELATION = "(?:朋友|老婆|太太|妻子|女友|姐姐|妹妹|姊姊|媽媽|同事)";
+
+type PregnancySignal = {
+  signal: string;
+  subject: "SELF" | "THIRD_PARTY" | "GENERAL" | "UNKNOWN";
+  polarity: "AFFIRMED" | "NEGATED" | "UNCERTAIN";
+};
+
+/** Local subject/negation cues, not a general Chinese parser or persisted diagnosis. */
+export function resolvePregnancySafetySignals(message: string): PregnancySignal[] {
+  const clauses = message.normalize("NFKC").replace(/\s+/gu, "")
+    .split(/[，,。！？!?；;\n]|但是|可是|不過|而且|但/u);
+  const signals: PregnancySignal[] = [];
+  let previousSubject: PregnancySignal["subject"] = "UNKNOWN";
+  for (const clause of clauses) {
+    let previousEnd = 0;
+    const matches = [...clause.matchAll(new RegExp(PREGNANCY_SIGNAL_PATTERN.source, "gu"))];
+    if (matches.length === 0) { previousSubject = "UNKNOWN"; continue; }
+    for (const match of matches) {
+      const prefix = clause.slice(previousEnd, match.index);
+      const suffix = clause.slice(match.index + match[0].length);
+      const selfCue = /(?:我|本人)([^我]*)$/u.exec(prefix);
+      const local = selfCue?.[1] ?? prefix;
+      const remainder = local.replace(PREGNANCY_MODIFIERS, "");
+      const negated = /^(?:沒有|沒|不是|並非|未|不)$/u.test(remainder);
+      const qualified = remainder === "" || negated;
+      let subject: PregnancySignal["subject"] = "UNKNOWN";
+      // A relative clause cannot establish SELF even with an unfamiliar noun.
+      // The relation vocabulary is auxiliary, not permission to default SELF.
+      if (/^(?:中|了)?的人/u.test(suffix)) {
+        subject = "GENERAL";
+      } else if (/^(?:中|了)?的.+/u.test(suffix) ||
+          new RegExp(`${PREGNANCY_RELATION}(?:${PREGNANCY_MODIFIERS.source})*$`, "u").test(prefix)) {
+        subject = "THIRD_PARTY";
+      } else if (qualified && !/^(?:中|了)?的/u.test(suffix)) {
+        subject = selfCue ? "SELF" : previousSubject;
+        if (!selfCue && previousSubject === "UNKNOWN" && prefix === "") subject = "GENERAL";
+      }
+      // Unknown modifiers / hypothetical language cannot establish personal status.
+      const polarity = negated ? "NEGATED" : qualified || subject === "THIRD_PARTY"
+        ? "AFFIRMED" : "UNCERTAIN";
+      signals.push({ signal: match[0], subject, polarity });
+      previousSubject = subject;
+      previousEnd = match.index + match[0].length;
+    }
+  }
+  return signals;
+}
+
+export function isEffectGuaranteeQuestion(message: string) {
+  const text = message.normalize("NFKC");
+  return /(?:保證|一定|必定|必然|百分之?百|100\s*%).{0,12}(?:有效|有感|見效|效果|改善)|(?:效果|療效).{0,8}(?:保證|百分之?百|100\s*%)/iu.test(text);
+}
+
 export type DeterministicPreflightDecision = {
   decisionType: "clinic_info_reply" | "handoff_pending" | "medical_guidance_reply";
   matchedKey: string;
   matchedType: "guided_reply" | "handoff_rule";
   replyText: string;
 };
+
+// V2-only consumer: the shared runner must not bypass V1's approved pregnancy rules.
+export function getPregnancySafetyPreflight(message: string, now: Date): DeterministicPreflightDecision | null {
+  const text = message.normalize("NFKC").replace(/\s+/gu, "");
+  if (!PREGNANCY_SIGNAL_PATTERN.test(text)) return null;
+  const personal = resolvePregnancySafetySignals(message)
+    .some((signal) => signal.subject === "SELF" && signal.polarity === "AFFIRMED");
+  // A negative statement is not a positive personal risk disclosure. Keep the
+  // answer informational rather than allowing a model to infer personal status.
+  const guidance = PREGNANCY_GUIDANCE;
+  const replyText = personal
+    ? buildHumanHandoffReply(guidance, now)
+    : `${guidance}若這是您本人的情況，請由真人客服與醫師協助確認。`;
+  return {
+    decisionType: personal ? "handoff_pending" : "medical_guidance_reply",
+    matchedKey: personal ? "pregnancy_nursing_risk" : "pregnancy_general_information",
+    matchedType: personal ? "handoff_rule" : "guided_reply",
+    replyText: `${replyText}${isEffectGuaranteeQuestion(message) ? `\n${INDIVIDUAL_EFFECT_GUARANTEE_REPLY}` : ""}`,
+  };
+}
+
+/** V2 composition preserves the shared V1 runner and existing handoff execution. */
+export function composeV2SafetyPreflight(
+  message: string,
+  now: Date,
+  immediate: DeterministicPreflightDecision | null,
+) {
+  const pregnancy = getPregnancySafetyPreflight(message, now);
+  const guarantee = isEffectGuaranteeQuestion(message);
+  const urgent = immediate?.matchedKey === "post_procedure_emergency" || immediate?.matchedKey === "post_procedure_issue";
+  const primary = urgent ? immediate : pregnancy?.decisionType === "handoff_pending" &&
+    (!immediate || ["human_request", "individual_effect_guarantee"].includes(immediate.matchedKey))
+    ? pregnancy : immediate ?? pregnancy;
+  if (!primary) return null;
+  const requiredMessages: string[] = [];
+  if (pregnancy && primary !== pregnancy) requiredMessages.push(PREGNANCY_GUIDANCE);
+  if (guarantee && !primary.replyText.includes(INDIVIDUAL_EFFECT_GUARANTEE_REPLY)) {
+    requiredMessages.push(INDIVIDUAL_EFFECT_GUARANTEE_REPLY);
+  }
+  // Emergency guidance stays first; it must not become a wait-for-staff reply.
+  const replyText = (urgent ? [primary.replyText, ...requiredMessages] : [...requiredMessages, primary.replyText]).join("\n");
+  const humanRequested = includesAnyTerm(message, clinicConfig.escalationPolicy.humanRequestTerms);
+  return {
+    decision: {
+      ...primary,
+      replyText: primary.matchedKey === "post_procedure_emergency" && humanRequested
+        ? `${replyText}\n${buildHumanHandoffReply("安全後由真人客服接續協助。", now)}` : replyText,
+    },
+    hasMedicalMessaging: Boolean(pregnancy || guarantee || urgent),
+    requiredSafetyContent: [
+      ...(urgent ? [primary.replyText] : []),
+      ...(pregnancy ? [PREGNANCY_GUIDANCE] : []),
+      ...(guarantee ? [INDIVIDUAL_EFFECT_GUARANTEE_REPLY] : []),
+    ],
+  };
+}
 
 const POST_PROCEDURE_CONTEXT_TERMS = ["打完", "做完", "術後", "剛做", "剛打", "昨天打", "前天打", "回去後"];
 const POST_PROCEDURE_CONTEXT_PATTERNS = [
@@ -343,7 +458,11 @@ function isProspectivePostProcedureRiskQuestion(message: string) {
           return matchIndex <= index &&
             (matchIndex >= localStart || matchEnd >= index + term.length);
         });
-      const prospectiveRiskMeasure = /(?:多久|久不久|幾天|幾週|幾個月|多長時間|多長|機率|機會|可能性|風險|常見|嚴重|程度)/u.test(afterSymptom);
+      // Degree alone describes a symptom; it is not evidence of a risk query.
+      // Keep degree questions prospective, while completed/current reports
+      // still flow through the existing occurrence and negation rules below.
+      const degreeQuestion = /(?:多嚴重|嚴不嚴重)|(?:嚴重|厲害)(?:(?:嗎|呢)[?？]*|[?？]+)$/u.test(afterSymptom);
+      const prospectiveRiskMeasure = degreeQuestion || /(?:多久|久不久|幾天|幾週|幾個月|多長時間|多長|機率|機會|可能性|風險|常見|程度)/u.test(afterSymptom);
       const prospectivePreventionGoal = isProspectivePreventionGoal(afterSymptom);
       const prospectiveOccurrenceQuestion = /^(?:到底|究竟)?(?:會不會|是否會|會否)(?:發生|出現)(?:嗎|呢)?[！!？?]*$/u.test(afterSymptom);
       // A bare symptom followed by a management question is still an actual
@@ -395,7 +514,7 @@ function isProspectivePostProcedureRiskQuestion(message: string) {
 }
 
 function hasContraindicationOrMedicalHistorySignal(message: string) {
-  if (/(?:懷孕|孕婦|孕期|有孕|哺乳|餵奶|親餵|母乳|備孕|準備懷孕|想懷孕|試管)/u.test(message)) {
+  if (PREGNANCY_SIGNAL_PATTERN.test(message)) {
     return false;
   }
   const normalizedMessage = message.replace(/\s+/g, "").toLowerCase();
@@ -586,6 +705,15 @@ export function runImmediateSafetyPreflight(input: {
       matchedKey: "customer_account_lookup",
       matchedType: "handoff_rule",
       replyText: buildHumanHandoffReply("這類涉及個人資料或既有紀錄查詢，我先幫您記下需求。", now),
+    };
+  }
+  // Pregnancy is owned by the existing downstream pregnancy policy.
+  if (isEffectGuaranteeQuestion(message) && !PREGNANCY_SIGNAL_PATTERN.test(message)) {
+    return {
+      decisionType: "medical_guidance_reply",
+      matchedKey: "individual_effect_guarantee",
+      matchedType: "guided_reply",
+      replyText: INDIVIDUAL_EFFECT_GUARANTEE_REPLY,
     };
   }
   return null;

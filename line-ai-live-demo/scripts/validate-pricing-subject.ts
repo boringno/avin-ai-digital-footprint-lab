@@ -275,7 +275,40 @@ async function main() {
   assertNoCustomerVisibleCampaignDate(ps13, "PS13 legacy booking context");
   console.log("PASS: PS12-PS13 campaign dates stay internal across consultation and legacy booking context");
 
-  console.log("pricing subject validation passed (16 scenarios)");
+  const anniversaryNow = new Date("2026-09-02T04:00:00.000Z");
+  const publicPowderGlow = await route("粉光瓶周年慶多少錢", createEmptyConversationContext("pricing-subject-anniversary-public"), anniversaryNow);
+  assert(
+    publicPowderGlow.replyText.includes("11,999") && publicPowderGlow.matchedType === "pricing_campaign",
+    "PS14: a public 11,999 anniversary offer must remain quoteable by offer identity",
+  );
+  for (const [message, rejectedPrice] of [
+    ["ONDA延伸方案周年慶多少錢", "11,999"],
+    ["肉毒100U周年慶多少錢", "9,999"],
+  ] as const) {
+    const rejected = await route(message, createEmptyConversationContext(`pricing-subject-anniversary-${rejectedPrice}`), anniversaryNow);
+    assert(
+      rejected.decisionType === "pricing_auto_reply" &&
+        rejected.matchedType === "guided_reply" &&
+        rejected.replyText.includes("真人客服協助確認") &&
+        !rejected.replyText.includes(rejectedPrice),
+      `PS14: ${message} must offer optional confirmation without substituting or repeating its offline price`,
+    );
+    assert(!rejected.replyPlan?.requiresHuman, "PS14: asking a price must not consent to handoff");
+    assert(JSON.stringify(rejected.replyPlan?.quickReplyItems.map((item) => item.action.label)) ===
+      JSON.stringify(["查看線上周年慶方案", "真人客服協助"]), "PS14: V1 must expose the same two explicit exits");
+  }
+  const legacyPriceContext = appendRecentConversationTurns(
+    createEmptyConversationContext("pricing-subject-anniversary-history"),
+    [{ role: "assistant", text: "ONDA延伸方案周年慶活動價 11,999 元／堂", turnId: "legacy-offline-price" }],
+  );
+  const legacyPriceFollowup = await route("你剛剛不是說那個價格？ONDA延伸方案", legacyPriceContext, anniversaryNow);
+  assert(
+    legacyPriceFollowup.replyText.includes("真人客服協助確認") && !legacyPriceFollowup.replyText.includes("11,999"),
+    "PS14: legacy assistant history must not revive an offline anniversary price",
+  );
+  console.log("PASS: PS14 anniversary public eligibility preserves public offers and rejects offline/history re-quotes");
+
+  console.log("pricing subject validation passed (17 scenarios)");
 }
 
 main().catch((error) => {

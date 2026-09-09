@@ -35,6 +35,10 @@ import { buildApprovedKnowledge } from "../src/lib/reply-plan";
 import { renderReplyPlan } from "../src/lib/reply-renderer";
 import { loadSeedData, type PricingCampaign } from "../src/lib/seed-loader";
 import {
+  ANNIVERSARY_ONLINE_PUBLIC_PROMOTION_IDS,
+  isCustomerVisiblePriceOffer,
+} from "../src/lib/pricing-lifecycle";
+import {
   createTreatmentKnowledgeResolver,
   treatmentKnowledgeResolver,
 } from "../src/lib/treatment-knowledge";
@@ -794,19 +798,62 @@ async function validateAnniversaryApprovedCatalog() {
     createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
     { now: new Date("2026-09-02T10:00:00+08:00") },
   );
+  const publicAnniversaryCount = (facts: typeof current) => {
+    const resolved = resolveApprovedPromotionCatalog(facts);
+    return resolved.status === "approved_current"
+      ? resolved.items.filter((item) => item.campaignId.startsWith("promo-2026-anniv-")).length
+      : 0;
+  };
+  const beforeAnniversary = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2026-08-31T23:59:59+08:00") },
+  );
+  const anniversaryStart = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2026-09-01T00:00:00+08:00") },
+  );
+  const anniversaryLastMoment = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
+    { now: new Date("2026-11-30T23:59:59+08:00") },
+  );
+  assert(publicAnniversaryCount(beforeAnniversary) === 0, "CF-P19: anniversary offers must not be public before 2026-09-01 Taiwan time");
+  assert(publicAnniversaryCount(anniversaryStart) === 11, "CF-P19: all online anniversary offers must become public at the Taiwan start boundary");
+  assert(publicAnniversaryCount(anniversaryLastMoment) === 11, "CF-P19: all online anniversary offers must remain public through the final Taiwan day");
+
+  const withdrawnPublicCampaigns = seed.pricingCampaigns.map((campaign) =>
+    campaign.id === "promo-2026-anniv-qplus-200" ? { ...campaign, is_active: "false" } : campaign,
+  );
+  const partiallyWithdrawn = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: withdrawnPublicCampaigns }),
+    { now: new Date("2026-09-02T10:00:00+08:00") },
+  );
+  assert(publicAnniversaryCount(partiallyWithdrawn) === 10, "CF-P19: withdrawing one public offer must dynamically reduce the catalog");
+
+  const unknownAnniversaryCampaigns = [
+    ...seed.pricingCampaigns,
+    { ...seed.pricingCampaigns.find((campaign) => campaign.id === "promo-2026-anniv-qplus-200")!, id: "promo-2026-anniv-unknown" },
+  ];
+  const unknownAnniversary = await loadClinicFactsSnapshot(
+    createStaticClinicFactsProvider({ pricingCampaigns: unknownAnniversaryCampaigns }),
+    { now: new Date("2026-09-02T10:00:00+08:00") },
+  );
+  assert(publicAnniversaryCount(unknownAnniversary) === 11, "CF-P19: an unknown anniversary offer must fail closed instead of entering the catalog");
   const catalog = resolveApprovedPromotionCatalog(current);
   assert(catalog.status === "approved_current", "CF-P19: approved anniversary catalog did not resolve");
   if (catalog.status === "approved_current") {
-    const expectedCampaignIds = anniversaryRows.map((item) => item.id).sort();
+    const expectedCampaignIds = anniversaryRows
+      .filter(isCustomerVisiblePriceOffer)
+      .map((item) => item.id)
+      .sort();
     const actualCampaignIds = catalog.items.map((item) => item.campaignId).sort();
     assert(
       JSON.stringify(actualCampaignIds) === JSON.stringify(expectedCampaignIds),
-      `CF-P19: promotion catalog must expose all 19 anniversary offers exactly once; got ${actualCampaignIds.length}`,
+      `CF-P19: promotion catalog must expose only the current online-public anniversary offers; got ${actualCampaignIds.length}`,
     );
     assert(
-      catalog.items.filter((item) => item.customerAssetUrls.length > 0).length === 11 &&
-        catalog.items.filter((item) => item.customerAssetUrls.length === 0).length === 8,
-      "CF-P19: both artwork-backed and text-only anniversary offers must remain reachable",
+      catalog.items.length === ANNIVERSARY_ONLINE_PUBLIC_PROMOTION_IDS.size &&
+        catalog.items.every((item) => item.customerAssetUrls.length > 0),
+      "CF-P19: only current online-public anniversary offers with their existing artwork may reach customers",
     );
     const customerCatalogText = catalog.items
       .map((item) => `${item.displayName}\n${item.customerPriceText}\n${item.branchScope ?? ""}`)
@@ -877,7 +924,7 @@ async function validateAnniversaryApprovedCatalog() {
         `CF-P19: selected card ${item.campaignId} did not quote its own approved price`,
       );
     }
-    assert(actionTexts.size === 19, "CF-P19: every approved anniversary card needs a unique action");
+    assert(actionTexts.size === 11, "CF-P19: every online-public anniversary card needs a unique action");
 
     const firstCatalogItem = catalog.items[0]!;
     assert(
@@ -942,8 +989,8 @@ async function validateAnniversaryApprovedCatalog() {
   });
   assert(
     hydratedCatalog.promotionCatalogResolution?.status === "approved_current" &&
-      hydratedCatalog.promotionCatalogResolution.items.length === 19,
-    "CF-P19: V2 hydration did not retain the complete approved anniversary catalog",
+      hydratedCatalog.promotionCatalogResolution.items.length === 11,
+    "CF-P19: V2 hydration did not retain the online-public anniversary catalog",
   );
   const catalogMessages = hydratedCatalog.rendererPlan?.richMessages ?? [];
   const catalogFlexMessages = catalogMessages.filter((message) => message.type === "flex");
@@ -951,13 +998,12 @@ async function validateAnniversaryApprovedCatalog() {
   assert(
     catalogMessages.length === 3 &&
       catalogFlexMessages.length === 2 &&
-      catalogBubbles.length === 19,
-    "CF-P19: LINE output must split all 19 offers into two carousels plus one summary message",
+      catalogBubbles.length === 11,
+    "CF-P19: LINE output must page the 11 online-public offers across two carousels plus one summary message",
   );
   assert(
-    catalogBubbles.filter((bubble) => Boolean(bubble.hero)).length === 11 &&
-      catalogBubbles.filter((bubble) => !bubble.hero).length === 8,
-    "CF-P19: text-only campaigns disappeared from the LINE carousel",
+    catalogBubbles.every((bubble) => Boolean(bubble.hero)),
+    "CF-P19: the online-public carousel must use only its approved mapped artwork",
   );
   const finalCatalogPayload = JSON.stringify(catalogMessages);
   assert(
@@ -986,8 +1032,8 @@ async function validateAnniversaryApprovedCatalog() {
       !renderedCatalog.generatorInvoked &&
       renderedCatalog.messages.length === 3 &&
       renderedCatalogFlexMessages.length === 2 &&
-      renderedCatalogBubbles.length === 19,
-    "CF-P19: renderer must preserve both promotion carousels and the summary within LINE's five-message limit",
+      renderedCatalogBubbles.length === 11,
+    "CF-P19: renderer must preserve the paginated online-public carousel and summary within LINE's five-message limit",
   );
   const renderedCatalogPayload = JSON.stringify(renderedCatalog.messages);
   assert(
@@ -1011,7 +1057,7 @@ async function validateAnniversaryApprovedCatalog() {
     renderedCatalogWithFooter.messages.length === 4 &&
       renderedCatalogWithFooter.messages[3]?.type === "text" &&
       renderedCatalogWithFooter.messages[3].text.includes("AI 客服順順"),
-    "CF-P19: both catalog pages, summary and required AI disclosure must remain within LINE's five-message limit",
+    "CF-P19: paginated carousel, summary and required AI disclosure must remain within LINE's five-message limit",
   );
   const expectedPrices: Array<[string, string]> = [
     ["onda_pro", "8,999"],
@@ -1022,9 +1068,7 @@ async function validateAnniversaryApprovedCatalog() {
     ["tenthermage", "8,999"],
     ["tenthermage_eye_tip", "18,888"],
     ["bei_en_xi_brand", "5,999"],
-    ["teosyal_1_3_brand", "9,999"],
     ["powder_glow_bottle", "11,999"],
-    ["ailewei_brand", "25,999"],
   ];
 
   for (const [treatmentKey, amount] of expectedPrices) {
@@ -1055,11 +1099,21 @@ async function validateAnniversaryApprovedCatalog() {
     treatmentKeys: ["onda_pro"],
   });
   assert(
-    ondaExtension.status === "approved_current" &&
-      ondaExtension.campaignId === "promo-2026-anniv-onda-face-extension" &&
-      ondaExtension.customerPriceText === "周年慶活動價 11,999 元／堂" &&
-      !/(?:8,999|12,999|16,888)/u.test(ondaExtension.customerPriceText),
-    "CF-P19: the explicit ONDA extension variant must resolve only to the approved 11,999 offer",
+    ondaExtension.status === "unavailable_to_quote" &&
+      ondaExtension.reason === "not_customer_visible" &&
+      ondaExtension.provenance.contentKey === "promo-2026-anniv-onda-face-extension",
+    "CF-P19: the explicit ONDA extension variant must hand off without borrowing the online ONDA offer",
+  );
+  const legacyOndaExtension = resolveApprovedPrice(current, {
+    campaignId: "promo-2026-anniv-onda-face-extension",
+    kind: "campaign",
+    treatmentKeys: ["onda_pro"],
+  });
+  assert(
+    legacyOndaExtension.status === "unavailable_to_quote" &&
+      legacyOndaExtension.reason === "not_customer_visible" &&
+      legacyOndaExtension.provenance.contentKey === "promo-2026-anniv-onda-face-extension",
+    "CF-P19: a legacy offline card ID without its old applicability fields must still hand off",
   );
   const botox = resolveApprovedPrice(current, { kind: "regular", treatmentKeys: ["botox"] });
   assert(
@@ -1075,16 +1129,97 @@ async function validateAnniversaryApprovedCatalog() {
     treatmentKeys: ["botox"],
   });
   assert(
-    botox100u.status === "approved_current" &&
-      botox100u.campaignId === "promo-2026-anniv-botox-100u" &&
-      botox100u.customerPriceText === "周年慶活動價 9,999 元／100U",
-    "CF-P19: the explicit Botox 100U dose must resolve to the approved 9,999 offer",
+    botox100u.status === "unavailable_to_quote" &&
+      botox100u.reason === "not_customer_visible" &&
+      botox100u.provenance.contentKey === "promo-2026-anniv-botox-100u",
+    "CF-P19: the explicit Botox 100U offer must hand off without borrowing the online one-zone offer",
   );
+
+  for (const [campaignId, treatmentKeys, applicability] of [
+    ["promo-2026-anniv-tenthermage-900-teosyal1", ["tenthermage", "teosyal_1_3_brand"], { package: "900發＋緹奧希1號" }],
+    ["promo-2026-anniv-ultherapy-500-botox100", ["ultherapy", "botox"], { package: "500條＋100U" }],
+    ["promo-2026-anniv-ultherapy-1000-botox200-onda", ["ultherapy", "botox", "onda_pro"], { package: "1000條＋200U＋ONDA" }],
+    ["promo-2026-anniv-teosyal1", ["teosyal_1_3_brand"], { variant: "1號" }],
+    ["promo-2026-anniv-teosyal2-4", ["teosyal_4_brand"], { variant: "2–4號" }],
+  ] as const) {
+    const resolved = resolveApprovedPrice(current, {
+      applicability,
+      kind: "campaign",
+      treatmentKeys,
+    });
+    assert(
+      resolved.status === "unavailable_to_quote" &&
+        resolved.reason === "not_customer_visible" &&
+        resolved.provenance.contentKey === campaignId,
+      `CF-P19: ${campaignId} must remain an internal anniversary offer`,
+    );
+  }
+
+  const ailewei = resolveApprovedPrice(current, { kind: "campaign", treatmentKeys: ["ailewei_brand"] });
+  assert(
+    ailewei.status === "unavailable_to_quote" && ailewei.reason === "not_customer_visible" &&
+      ailewei.provenance.contentKey === "promo-2026-anniv-ailewei",
+    "CF-P19: unclassified 艾莉薇 must not become a public anniversary offer",
+  );
+
+  const legacyOfflineState = createConversationV2State({
+    episodeId: "anniversary-legacy-offline-card",
+    now: NOW.toISOString(),
+  });
+  legacyOfflineState.pricingSubjectTreatmentKeys = ["onda_pro"];
+  const legacyStateBefore = JSON.stringify(legacyOfflineState);
+  const legacyOfflineTurn = turn({
+    priceSelection: {
+      applicability: { variant: "延伸方案" },
+      campaignId: "promo-2026-anniv-onda-face-extension",
+      source: "approved_catalog_action",
+      treatmentKeys: ["onda_pro"],
+    },
+    questionAspect: "price_campaign",
+    speechAct: "ask_price",
+    text: "我想了解 ONDA 臉部延伸方案，周年慶活動價 11,999 元／堂",
+    treatments: [],
+    turnId: "anniversary-legacy-offline-card",
+  });
+  const legacyOfflineRoute = routeConversationTurnV2(legacyOfflineState, legacyOfflineTurn);
+  assert(!legacyOfflineRoute.duplicate && legacyOfflineRoute.result, "CF-P19: legacy offline card did not route through V2");
+  assert(JSON.stringify(legacyOfflineState) === legacyStateBefore, "CF-P19: rejecting a legacy offline card must not rewrite prior state");
+  if (legacyOfflineRoute.result) {
+    const legacyOfflineHydrated = await hydrateConversationV2ReplyPlan({
+      nextState: legacyOfflineRoute.nextState,
+      result: legacyOfflineRoute.result,
+      snapshot: current,
+      turn: legacyOfflineTurn,
+    });
+    assert(
+      legacyOfflineHydrated.priceResolution?.status === "unavailable_to_quote" &&
+        legacyOfflineHydrated.priceResolution.reason === "not_customer_visible" &&
+        !/11,999/u.test(legacyOfflineHydrated.rendererPlan?.fallbackText ?? ""),
+      "CF-P19: a legacy offline card must hand off without restating its old price",
+    );
+    const legacyRendered = await renderReplyPlan({
+      customerMessage: "你剛剛不是說那個價格？",
+      dialogueState: rendererDialogueState(),
+      generator: async () => {
+        throw new Error("CF-P19: rejected offline price must not invoke the reply model from history");
+      },
+      includeFooter: false,
+      plan: legacyOfflineHydrated.rendererPlan!,
+      recentTurns: [{ role: "assistant", text: "周年慶活動價 11,999 元／堂", turnId: "old-offline-price" }],
+    });
+    assert(
+      !legacyRendered.generatorInvoked &&
+        legacyRendered.replyText.includes("真人客服協助確認") &&
+        !/11,999/u.test(legacyRendered.replyText),
+      "CF-P19: old conversation history must not revive a now non-public anniversary price",
+    );
+  }
 
   const afterAnniversary = await loadClinicFactsSnapshot(
     createStaticClinicFactsProvider({ pricingCampaigns: seed.pricingCampaigns }),
     { now: new Date("2026-12-01T10:00:00+08:00") },
   );
+  assert(publicAnniversaryCount(afterAnniversary) === 0, "CF-P19: anniversary offers must stop being public at the end boundary");
   const unavailableOndaAfterAnniversary = resolveApprovedPrice(afterAnniversary, {
     kind: "unspecified",
     treatmentKeys: ["onda_pro"],

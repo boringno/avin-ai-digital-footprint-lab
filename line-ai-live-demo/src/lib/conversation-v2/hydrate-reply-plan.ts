@@ -2,6 +2,7 @@ import {
   approvedPromotionCatalogSelectionText,
   resolveApprovedPromotionCatalog,
   resolveApprovedPrice,
+  resolveExplicitCampaignContext,
   resolveClinicInfo,
   resolveTreatmentFact,
   resolveTreatmentKnowledge,
@@ -905,8 +906,32 @@ export async function hydrateConversationV2ReplyPlan(
       };
     }
 
-    const priceResolution = resolveApprovedPrice(input.snapshot, replyPlan.pricingQuery);
+    const campaignContextText = input.turn.priceCampaignContextText ?? input.turn.text;
+    const hasExplicitCampaignContext = resolveExplicitCampaignContext(input.snapshot, campaignContextText) !== undefined;
+    const priceResolution = resolveApprovedPrice(input.snapshot, { ...replyPlan.pricingQuery, campaignContextText });
+    const allowAlternativePrice = !hasExplicitCampaignContext && !replyPlan.pricingQuery.campaignId &&
+      !(priceResolution.status === "unavailable_to_quote" && priceResolution.configurationIssue);
+    // A rejected exact offer is an optional navigation choice, not consent
+    // to hand off or permission to substitute another approved price.
+    if (priceResolution.status !== "approved_current" && priceResolution.reason === "not_customer_visible") {
+      return {
+        dataStatus: "unresolved",
+        priceResolution,
+        rendererPlan: deterministicPlan({
+          action: replyPlan.action,
+          dialogueAct: "quote_approved_price",
+          exactPriceFacts: [],
+          matchedKey: "conversation_v2:price:unavailable_to_quote:not_customer_visible",
+          replyText: priceGapReply(priceResolution),
+          responseContract: replyPlan.responseContract,
+          treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
+        }),
+        snapshotId: input.snapshot.snapshotId,
+        stateCommit: "commit",
+      };
+    }
     const genericBotoxAlternative =
+      allowAlternativePrice &&
       priceResolution.status !== "approved_current" &&
       replyPlan.pricingQuery.treatmentKeys.length === 1 &&
       replyPlan.pricingQuery.treatmentKeys[0] === "botox" &&
@@ -917,16 +942,16 @@ export async function hydrateConversationV2ReplyPlan(
           })
         : undefined;
     const contextualCampaignId = contextualPriceCampaignId(input);
-    const contextualPriceResolution = contextualCampaignId
+    const contextualPriceResolution = allowAlternativePrice && contextualCampaignId
       ? resolveApprovedPrice(input.snapshot, {
           ...replyPlan.pricingQuery,
           campaignId: contextualCampaignId,
         })
       : undefined;
-    const approvedCombinationResolution = approvedCombinationPriceResolution(
+    const approvedCombinationResolution = allowAlternativePrice ? approvedCombinationPriceResolution(
       input,
       replyPlan.pricingQuery.treatmentKeys,
-    );
+    ) : undefined;
     const alternativePriceResolution =
       genericBotoxAlternative?.status === "approved_current"
         ? genericBotoxAlternative

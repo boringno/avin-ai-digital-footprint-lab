@@ -73,6 +73,8 @@ export type PriceQuery = {
   applicability?: PriceApplicabilityDimensions;
   /** Internally selected clinic-approved offer. Never populated from free-form model output. */
   campaignId?: string;
+  /** Customer-authored current/verified follow-up context; never a model-selected family. Not persisted. */
+  campaignContextText?: string;
   kind: "browse" | "campaign" | "regular" | "unspecified";
   /** Trusted UI origin; allows a selected campaign card to receive its own approved introduction. */
   selectionSource?: "approved_catalog_action";
@@ -115,6 +117,8 @@ export type ApprovedCurrentPriceFact = {
  * impossible to pass to a reply renderer by accident.
  */
 export type UnavailablePriceFact = {
+  /** Internal configuration diagnosis; uses the existing safe ambiguous-price UX. */
+  configurationIssue?: "PRICE_CONFIG_CONFLICT";
   provenance: ClinicFactProvenance;
   reason:
     | "ambiguous"
@@ -123,6 +127,7 @@ export type UnavailablePriceFact = {
     | "branch_required"
     | "expired"
     | "not_provided"
+    | "not_customer_visible"
     | "not_yet_effective"
     | "source_unavailable"
     | "stale"

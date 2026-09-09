@@ -11,6 +11,7 @@ type TestCase = {
   message: string;
   replyExcludes?: string[];
   replyIncludes?: string[];
+  forbidPriceAmount?: boolean;
 };
 
 // Pricing campaigns are date-bound; keep router regression tests deterministic.
@@ -297,7 +298,8 @@ const TEST_CASES: TestCase[] = [
     expectedMatchedKey: "treatment_intro:emface",
     message: "EMFACE 是什麼",
     replyIncludes: ["臉部", "輪廓", "醫師現場評估"],
-    replyExcludes: ["4堂", "價格"],
+    replyExcludes: ["4堂"],
+    forbidPriceAmount: true,
   },
   {
     expectedDecisionType: "pricing_auto_reply",
@@ -433,10 +435,11 @@ const TEST_CASES: TestCase[] = [
     replyIncludes: ["其他電音波目前沒有提供", "院內療程"],
   },
   {
-    expectedDecisionType: "treatment_intro_reply",
-    expectedMatchedKey: "treatment_intro:tenthermage",
+    expectedDecisionType: "medical_guidance_reply",
+    expectedMatchedKey: "individual_effect_guarantee",
     message: "十蓓電波可以保證有效嗎？",
-    replyIncludes: ["實際是否適合", "現場評估"],
+    replyIncludes: ["不能保證個人效果", "個人條件", "醫師評估"],
+    replyExcludes: ["預約", "價格活動"],
   },
   {
     expectedDecisionType: "handoff_pending",
@@ -943,6 +946,7 @@ async function main() {
           ? (result.replyMessages?.length ?? 0) === testCase.expectedReplyMessageCount
           : true) &&
         (testCase.replyIncludes ? testCase.replyIncludes.every((fragment) => result.replyText.includes(fragment)) : true) &&
+        (!testCase.forbidPriceAmount || !/(?:\d[\d,]*(?:\.\d+)?\s*(?:元|塊|圓)|[$＄]\s*\d|\d{1,3}(?:,\d{3})+|\d{4,})/u.test(result.replyText)) &&
         (testCase.replyExcludes ? testCase.replyExcludes.every((fragment) => !result.replyText.includes(fragment)) : true),
       result,
     });
@@ -1004,10 +1008,16 @@ async function main() {
   const currentOfferCases = [
     { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA原價多少", now: new Date("2026-09-02T04:00:00.000Z") },
     { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA怎麼收費", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["16,888", "8,999"], includes: ["11,999"], matchedType: "pricing_campaign", message: "ONDA延伸方案多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["16,888", "8,999", "11,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "ONDA延伸方案多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
     { excludes: ["16,888", "11,999"], includes: ["8,999"], matchedType: "pricing_campaign", message: "ONDA有活動嗎", now: new Date("2026-09-02T04:00:00.000Z") },
     { excludes: ["9,999"], includes: ["999", "一區"], matchedType: "pricing_campaign", message: "奇蹟肉毒少錢", now: new Date("2026-09-02T04:00:00.000Z") },
-    { excludes: ["一區"], includes: ["9,999", "100U"], matchedType: "pricing_campaign", message: "肉毒100U多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["999", "9,999", "100U", "一區"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "肉毒100U多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["59,999", "8,999", "9,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "十蓓900發加緹奧希1號多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["74,999", "29,999", "9,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "美音500加肉毒100多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["149,999", "29,999", "8,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "美音1000肉毒200ONDA多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["9,999", "12,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "緹奧希1號周年慶多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["9,999", "12,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "緹奧希2至4號周年慶多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
+    { excludes: ["25,999"], includes: ["真人客服協助確認"], matchedType: "guided_reply", message: "艾莉薇周年慶多少錢", now: new Date("2026-09-02T04:00:00.000Z") },
     { excludes: ["8,999", "11,999", "12,999", "16,888"], includes: [], matchedType: "guided_reply", message: "ONDA多少錢", now: new Date("2026-12-01T04:00:00.000Z") },
   ];
   for (const testCase of currentOfferCases) {

@@ -6,6 +6,7 @@ import {
   type CustomerQuickReplyStage,
 } from "@/lib/clinic-config";
 import { lineQuickReplyItems } from "@/lib/line-quick-replies";
+import { NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS } from "@/lib/clinic-facts/price-resolver";
 import type { ReplyPlan } from "@/lib/reply-plan";
 
 import { buildConversationV2QuickReplySelection } from "./quick-reply-selection";
@@ -189,6 +190,10 @@ function conversationV2QuickReplyActions(
   const clinic = options.clinic ?? clinicConfig;
   if (!isConversationV2AiAssistanceEnabled(state.control.mode)) {
     return [] as ProjectedQuickReplyAction[];
+  }
+  if (plan.matchedKey === "conversation_v2:price:unavailable_to_quote:not_customer_visible" ||
+      plan.matchedKey === "conversation_v2:price:historical_identity_unconfirmed") {
+    return [...NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS];
   }
   if (state.bookingTask.status === "collecting") {
     if (state.bookingTask.expectedField === "branch") return [...BRANCH_ACTIONS] satisfies ProjectedQuickReplyAction[];

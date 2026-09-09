@@ -662,9 +662,16 @@ function guardFallbackCandidate(
     return null;
   }
   const formatted = formatReplyText(guardCandidate === toned ? constrained : toned);
+  const requiredSafetyContent = input.plan.requiredSafetyContent ?? [];
+  // These lines come from the deterministic safety owner, not history or NLU.
+  // Generic fallbacks may not silently erase their obligations. All existing
+  // medical guards still run; only wording repetition is exempted.
+  if (requiredSafetyContent.some((line) =>
+    !formatted.replace(/\s+/gu, "").includes(line.replace(/\s+/gu, "")))) return null;
   if (
     !formatted ||
-    (options.checkRecentReplies !== false && repeatsPreviousAssistantReply(formatted, input.recentTurns, input.footer))
+    (requiredSafetyContent.length === 0 && options.checkRecentReplies !== false &&
+      repeatsPreviousAssistantReply(formatted, input.recentTurns, input.footer))
   ) {
     return null;
   }

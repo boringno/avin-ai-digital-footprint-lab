@@ -46,7 +46,9 @@ import {
   highestQuotePriorityCampaigns,
   isSpecificPricingCampaign,
 } from "@/lib/pricing-campaign-priority";
-import { isStandingPrice } from "@/lib/pricing-lifecycle";
+import { NOT_CUSTOMER_VISIBLE_PRICE_REPLY, NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS } from "@/lib/clinic-facts";
+import { lineQuickReplyItems } from "@/lib/line-quick-replies";
+import { isCustomerVisiblePriceOffer, isStandingPrice } from "@/lib/pricing-lifecycle";
 import {
   buildTreatmentCarouselMessage,
   getTreatmentCarouselReplyText,
@@ -665,6 +667,10 @@ function getActivePricingCampaigns(pricingCampaigns: PricingCampaign[], includeP
     .filter((campaign) => campaignIsActive(campaign, today));
 }
 
+function customerVisiblePricingCampaigns(campaigns: PricingCampaign[]) {
+  return campaigns.filter(isCustomerVisiblePriceOffer);
+}
+
 function findTreatmentConfigByName(name: string) {
   const normalizedTarget = normalizeText(name);
   return (
@@ -763,6 +769,18 @@ function specificCampaignSearchTerms(campaign: PricingCampaign) {
     !genericTerms.has(term) &&
     !/^[\d,.，]+$/u.test(term)));
   return [...terms];
+}
+
+/**
+ * A dimension such as `100U` is not enough to identify a staff-only offer:
+ * another treatment can legitimately use the same dimension. This narrower
+ * set is used only before the normal subject-mismatch guard.
+ */
+function explicitCampaignIdentityTerms(campaign: PricingCampaign) {
+  const genericTerms = treatmentSearchTermsForCampaign(campaign);
+  return [campaign.campaign_name, ...splitCampaignAliases(campaign)]
+    .map(normalizeText)
+    .filter((term) => term.length >= 2 && !genericTerms.has(term) && !/^[\d,.，]+$/u.test(term));
 }
 
 function getCampaignImageUrls(campaign: PricingCampaign) {
@@ -3147,7 +3165,8 @@ function getPricingReply(
   }
 
   const activeCampaigns = getActivePricingCampaigns(pricingCampaigns, includePending, today);
-  const activePromotions = activeCampaigns.filter((campaign) => !isStandingPrice(campaign));
+  const customerVisibleCampaigns = customerVisiblePricingCampaigns(activeCampaigns);
+  const activePromotions = customerVisibleCampaigns.filter((campaign) => !isStandingPrice(campaign));
   const subject = resolvePricingSubject(message, context, {
     bookingIntentActive,
     contextualMaxAgeMs: TREATMENT_CONSULTATION_SESSION_MS,
@@ -3158,7 +3177,7 @@ function getPricingReply(
       ? subject.treatmentKey
       : explicitTreatmentForPrice?.key;
   const preferredPricingBranch = resolvePreferredBranchFromContext(message, context);
-  const applicableActiveCampaigns = activeCampaigns.filter((campaign) =>
+  const applicableActiveCampaigns = customerVisibleCampaigns.filter((campaign) =>
     pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name));
 
   if (subject.kind === "browse" && activePromotions.length > 0) {
@@ -3179,6 +3198,19 @@ function getPricingReply(
   const matchingSpecificCampaigns = activeCampaigns.filter((campaign) =>
     isSpecificPricingCampaign(campaign) &&
     specificCampaignSearchTerms(campaign).some((term) => normalizedPricingMessage.includes(term)));
+  const explicitlyRequestedNonPublicCampaign = matchingSpecificCampaigns.find((campaign) =>
+    !isCustomerVisiblePriceOffer(campaign) &&
+    pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name) &&
+    explicitCampaignIdentityTerms(campaign).some((term) => normalizedPricingMessage.includes(term)));
+  if (explicitlyRequestedNonPublicCampaign) {
+    return {
+      decisionType: "pricing_auto_reply",
+      matchedKey: "pricing_campaign_requires_human_confirmation",
+      matchedType: "guided_reply",
+      nextContext: context,
+      replyText: NOT_CUSTOMER_VISIBLE_PRICE_REPLY,
+    } satisfies RouterDecision;
+  }
   if (subjectTreatmentKey && matchingSpecificCampaigns.length > 0) {
     const matchingOwnedCampaigns = matchingSpecificCampaigns.filter((campaign) =>
       campaignTreatmentKeys(campaign).includes(subjectTreatmentKey));
@@ -3206,10 +3238,19 @@ function getPricingReply(
 
   const explicitlyMatchedCampaign = findExplicitPricingCampaign(
     message,
-    applicableActiveCampaigns,
+    activeCampaigns.filter((campaign) => pricingCampaignAppliesToBranch(campaign, preferredPricingBranch?.name)),
     subjectTreatmentKey,
   );
   if (explicitlyMatchedCampaign) {
+    if (!isCustomerVisiblePriceOffer(explicitlyMatchedCampaign)) {
+      return {
+        decisionType: "pricing_auto_reply",
+        matchedKey: "pricing_campaign_requires_human_confirmation",
+        matchedType: "guided_reply",
+        nextContext: context,
+        replyText: NOT_CUSTOMER_VISIBLE_PRICE_REPLY,
+      } satisfies RouterDecision;
+    }
     const explicitTreatmentKey =
       subject.kind === "explicit" || subject.kind === "active" || subject.kind === "contextual"
         ? subject.treatmentKey
@@ -4011,6 +4052,9 @@ function buildReplyPlan(
       nextQuestion: findNextQuestion(decision.replyText),
       recommendationReasons,
       renderMode,
+      ...(decision.matchedKey === "pricing_campaign_requires_human_confirmation"
+        ? { quickReplyItems: lineQuickReplyItems(NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS) }
+        : {}),
     },
   );
 }
