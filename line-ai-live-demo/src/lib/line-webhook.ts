@@ -12,7 +12,7 @@ import { appendRecentConversationTurns, createEmptyConversationContext, loadConv
 import { commitDialogueRouteSelection, hydrateDialogueState } from "@/lib/dialogue-state";
 import { getRuntimeConfig } from "@/lib/live-demo-config";
 import { getHandoffPriority } from "@/lib/handoff-priority";
-import { attachApprovedQuickReplies } from "@/lib/line-quick-replies";
+import { attachApprovedQuickReplies, lineQuickReplyItems, projectVisibleReplyContent } from "@/lib/line-quick-replies";
 import {
   getRepeatedHandoffAcknowledgement,
   isPendingMedicalContinuation,
@@ -35,7 +35,8 @@ import {
 } from "@/lib/conversation-state";
 import { DEFAULT_TENANT_ID } from "@/lib/conversation-store";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
-import { legacyDecisionToReplyPlan, type ReplyPlan } from "@/lib/reply-plan";
+import { legacyDecisionToReplyPlan, getRequiredResponseContent, checkRequiredResponseContent,
+  ResponseObligationIntegrityError, type RequiredResponseContent, type ReplyPlan } from "@/lib/reply-plan";
 import {
   renderReplyPlan,
   toReplyRendererTelemetry,
@@ -115,6 +116,8 @@ function buildDialogueEpisodeKey(episodeId: string | undefined) {
 }
 
 type ClassifiedDecision = {
+  requiredContent?: RequiredResponseContent;
+  responseObligationTrace?: ResponseObligationTrace;
   aiModel?: string;
   aiSourceUrl?: string;
   aiTokensIn?: number;
@@ -146,6 +149,17 @@ type ClassifiedDecision = {
   usedAiReplyGenerator: boolean;
 };
 
+export type ResponseObligationTrace = {
+  originalRouteVersion: "v1" | "v2";
+  originalDecisionType: string;
+  originalMatchedKey: string;
+  originalPolicyAction?: string;
+  obligations: Array<Pick<RequiredResponseContent["obligations"][number], "kind" | "scope">>;
+  handoffSuppression: "none" | "acknowledgement_only" | "preserved_required_content";
+  finalIntegrity?: "pass" | "rebuilt" | "not_applicable";
+  payloadSource?: "rendered" | "required_content_rebuild";
+};
+
 const HIGH_RISK_HANDOFF_REASONS = new Set(["post_procedure_emergency", "post_procedure_issue", "serious_complaint"]);
 export const RENDERER_FALLBACK_EXHAUSTED_REASON = "renderer_fallback_exhausted";
 
@@ -155,8 +169,8 @@ export function isHighRiskHandoffReason(reason: string) {
 
 export { getRepeatedHandoffAcknowledgement, isPendingMedicalContinuation };
 
-export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string) {
-  return shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
+export function shouldSuppressHandoffReply(conversationState: ConversationState, reason: string, requiredContent?: RequiredResponseContent) {
+  return !requiredContent && shouldSuppressRepeatedHandoff(conversationState, reason) && !isHighRiskHandoffReason(reason);
 }
 
 const PENDING_MEDICAL_CONTINUATION_REASONS = new Set(["post_procedure_emergency", "post_procedure_issue"]);
@@ -376,6 +390,7 @@ export class InvalidWebhookPayloadError extends Error {
 }
 
 export type ProcessedWebhookResult = {
+  responseObligationTrace?: ResponseObligationTrace;
   aiModel?: string;
   aiSourceUrl?: string;
   aiTokensIn?: number;
@@ -548,6 +563,24 @@ export function buildReplyPayload(
     replyToken,
     messages,
   };
+}
+
+/** Final content boundary, before delivery. One reconstruction, no routing or side effects. */
+export function finalizeRequiredReplyPayload(input: {
+  payload: ReturnType<typeof buildReplyPayload>;
+  requiredContent: RequiredResponseContent;
+  shouldIntroduce: boolean;
+  suppressAiFooter?: boolean;
+}) {
+  const inspect = (payload: ReturnType<typeof buildReplyPayload>) => checkRequiredResponseContent(
+    input.requiredContent, projectVisibleReplyContent(payload.messages), [AI_INTRO_TEXT, AI_REPLY_FOOTER],
+  );
+  if (inspect(input.payload).ok) return { payload: input.payload, rebuilt: false };
+  const payload = buildReplyPayload(input.payload.replyToken, input.requiredContent.approvedText,
+    input.shouldIntroduce, undefined, input.suppressAiFooter, lineQuickReplyItems(input.requiredContent.actions));
+  const integrity = inspect(payload);
+  if (!integrity.ok) throw new ResponseObligationIntegrityError(integrity.missing);
+  return { payload, rebuilt: true };
 }
 
 function parseWebhookPayload(rawBody: string): LineWebhookPayload {
@@ -743,6 +776,15 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   }
 
   let replyText = routedDecision.replyText;
+  let requiredContent = routedDecision.replyPlan ? getRequiredResponseContent(routedDecision.replyPlan) : undefined;
+  const responseObligationTrace: ResponseObligationTrace = {
+    originalRouteVersion: usedConversationV2 ? "v2" : "v1",
+    originalDecisionType: routedDecision.decisionType,
+    originalMatchedKey: routedDecision.matchedKey,
+    originalPolicyAction: conversationV2Route?.policyAction,
+    obligations: requiredContent?.obligations.map(({ kind, scope }) => ({ kind, scope })) ?? [],
+    handoffSuppression: "none",
+  };
 
   // A pending handoff is a queued staff task, not a global AI pause. Still,
   // an unresolved continuation may belong to that task (for example, "it is
@@ -750,6 +792,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   // handoff instead of sending them through the general LLM fallback.
   if (
     conversationState.status === "handoff_pending" &&
+    !requiredContent &&
     shouldKeepPendingHandoffContext({
       handoffReason: conversationState.handoffReason,
       message: customerMessage,
@@ -782,6 +825,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
       conversationState,
       decisionType: "conversation_state_blocked",
       matchedKey: `handoff_continuation:${handoffReason}`,
+      responseObligationTrace: { ...responseObligationTrace, handoffSuppression: "acknowledgement_only" },
       matchedType: "handoff_rule",
       nextContext,
       replyText: handoffAcknowledgement,
@@ -829,7 +873,10 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   if (routedHandoffReason) {
     const nextState = recordHandoffPending(conversationState, routedHandoffReason, currentIso);
 
-    if (shouldSuppressHandoffReply(conversationState, routedHandoffReason)) {
+    if (requiredContent && shouldSuppressRepeatedHandoff(conversationState, routedHandoffReason)) {
+      responseObligationTrace.handoffSuppression = "preserved_required_content";
+    }
+    if (shouldSuppressHandoffReply(conversationState, routedHandoffReason, requiredContent)) {
       conversationState = nextState;
       if (sourceUserId) {
         await saveConversationContext(routedDecision.nextContext, existingContext);
@@ -846,6 +893,7 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
         conversationState,
         decisionType: "conversation_state_blocked",
         matchedKey: `handoff_suppressed:${routedDecision.matchedKey}`,
+        responseObligationTrace: { ...responseObligationTrace, handoffSuppression: "acknowledgement_only" },
         matchedType: "handoff_rule",
         nextContext: routedDecision.nextContext,
         replyText: getRepeatedHandoffAcknowledgement(),
@@ -929,6 +977,8 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     recentTurns: synchronizedContext.recentTurns ?? [],
   });
   replyText = rendered.replyText;
+  requiredContent = rendered.requiredContent ?? requiredContent;
+  responseObligationTrace.obligations = requiredContent?.obligations.map(({ kind, scope }) => ({ kind, scope })) ?? [];
   usedAiReplyGenerator = rendered.generatorInvoked;
   aiModel = rendered.model ?? aiModel;
   aiTokensIn = (aiTokensIn ?? 0) + (rendered.tokensIn ?? 0) || undefined;
@@ -938,7 +988,9 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
   const replyMessages = rendered.handoffRequired
     ? undefined
     : formatReplyMessages(rendered.messages);
-  const replyQuickReplyItems = rendered.replyTextSource === "approved_terminal_fallback"
+  const replyQuickReplyItems = requiredContent
+    ? lineQuickReplyItems(requiredContent.actions)
+    : rendered.replyTextSource === "approved_terminal_fallback"
     ? []
     : [...replyPlan.quickReplyItems];
   const renderedContext = reconcileRenderedQuickReplyContract(
@@ -1024,6 +1076,8 @@ async function classifyEvent(event: LineMessageEvent, options: WebhookProcessOpt
     matchedType: rendered.generated && routedDecision.decisionType === "fallback_reply" ? "guided_reply" : routedDecision.matchedType,
     nextContext,
     rendererTelemetry,
+    requiredContent,
+    responseObligationTrace,
     routeVersion: usedConversationV2 ? "v2" : "v1",
     replyMessages,
     replyQuickReplyItems,
@@ -1042,9 +1096,18 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
   const results: ProcessedWebhookResult[] = [];
 
   for (const event of payload.events ?? []) {
-    const decision = await classifyEvent(event, options);
+    let decision: ClassifiedDecision;
+    try {
+      decision = await classifyEvent(event, options);
+    } catch (error) {
+      if (error instanceof ResponseObligationIntegrityError) {
+        await reportOperationalError({ alert: false, source: "response_obligation_integrity_failed",
+          error, extra: { phase: "renderer", missing: [...error.missing] } });
+      }
+      throw error;
+    }
     const replyToken = event.replyToken ?? "";
-    const replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
+    let replyPayload = replyToken && (decision.replyText || decision.replyMessages?.length)
       ? buildReplyPayload(
           replyToken,
           decision.replyText,
@@ -1054,6 +1117,24 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
           decision.replyQuickReplyItems,
         )
       : null;
+    if (replyPayload && decision.requiredContent) {
+      try {
+        const finalized = finalizeRequiredReplyPayload({ payload: replyPayload,
+          requiredContent: decision.requiredContent, shouldIntroduce: decision.shouldIntroduce,
+          suppressAiFooter: decision.suppressAiFooter });
+        replyPayload = finalized.payload;
+        if (decision.responseObligationTrace) {
+          decision.responseObligationTrace.finalIntegrity = finalized.rebuilt ? "rebuilt" : "pass";
+          decision.responseObligationTrace.payloadSource = finalized.rebuilt ? "required_content_rebuild" : "rendered";
+        }
+      } catch (error) {
+        await reportOperationalError({ alert: false, source: "response_obligation_integrity_failed",
+          error, extra: { phase: "final_payload", original_matched_key: decision.responseObligationTrace?.originalMatchedKey } });
+        throw error;
+      }
+    } else if (decision.responseObligationTrace) {
+      decision.responseObligationTrace.finalIntegrity = "not_applicable";
+    }
     const eventIdentity = getEventTurnIdentity(event);
     const currentTurnIds = new Set([
       buildConversationTurnId("user", eventIdentity),
@@ -1102,6 +1183,7 @@ export async function processWebhookRequestBody(rawBody: string, options: Webhoo
       messageText: event.message?.text ?? "",
       nluRecentTurns,
       replyPayload,
+      responseObligationTrace: decision.responseObligationTrace,
       replyToken,
       rendererTelemetry: decision.rendererTelemetry,
       routeVersion: decision.routeVersion ?? "preflight",

@@ -12,12 +12,16 @@ import {
   buildApprovedKnowledge,
   buildReplyPlanGuidance,
   shouldGenerateReply,
+  getRequiredResponseContent,
+  checkRequiredResponseContent,
+  ResponseObligationIntegrityError,
   type DialogueAct,
   type ReplyPlan,
+  type RequiredResponseContent,
 } from "@/lib/reply-plan";
 import { formatReplyMessages, formatReplyText } from "@/lib/reply-text-format";
 import { addCustomerReplyTone } from "@/lib/reply-tone";
-import { attachApprovedQuickReplies } from "@/lib/line-quick-replies";
+import { attachApprovedQuickReplies, lineQuickReplyItems, projectVisibleReplyContent } from "@/lib/line-quick-replies";
 import type { LineImageMessage, LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 
 export type ReplyGenerator = (
@@ -27,6 +31,7 @@ export type ReplyGenerator = (
 
 export type ReplyRendererFallbackReason =
   | "approved_price_contract_rejected"
+  | "required_content_rebuilt"
   | "deterministic_rejected"
   | "generation_disabled"
   | "generator_error"
@@ -90,6 +95,7 @@ export type ReplyRendererInput = {
 };
 
 export type ReplyRendererResult = {
+  requiredContent?: RequiredResponseContent;
   dialogueAct: DialogueAct;
   fallbackReason?: ReplyRendererFallbackReason;
   fallbackVariant?: ReplyRendererFallbackVariant;
@@ -534,7 +540,18 @@ function renderDeterministic(
       );
     }
     const { renderedSupplementAspects, replyText } = renderedPrice;
+    // Preserve the restriction already validated/rendered by the price receipt.
+    // This neither resolves availability nor changes quote eligibility.
+    const restrictedQuotes = input.plan.approvedPriceReply.quotes.filter((quote) => quote.treatmentAvailability?.scope === "selected");
+    const requiredContent: RequiredResponseContent | undefined = restrictedQuotes.length ? {
+      approvedText: replyText, approvedAssetUrls: renderedPrice.assetUrls,
+      actions: input.plan.quickReplyItems.map((item) => ({ label: item.action.label, text: item.action.text })),
+      obligations: restrictedQuotes.map((quote) => ({ kind: "branch_restriction", text: replyText,
+        scope: { resolution: "resolved", treatmentKeys: quote.treatmentKeys, campaignId: quote.campaignId,
+          applicability: quote.applicability, snapshotId: quote.snapshotId } })),
+    } : undefined;
     return {
+      requiredContent,
       dialogueAct: input.plan.dialogueAct,
       generated: false,
       generatorInvoked: false,
@@ -662,7 +679,7 @@ function guardFallbackCandidate(
     return null;
   }
   const formatted = formatReplyText(guardCandidate === toned ? constrained : toned);
-  const requiredSafetyContent = input.plan.requiredSafetyContent ?? [];
+  const requiredSafetyContent = getRequiredResponseContent(input.plan)?.obligations.map((item) => item.text) ?? [];
   // These lines come from the deterministic safety owner, not history or NLU.
   // Generic fallbacks may not silently erase their obligations. All existing
   // medical guards still run; only wording repetition is exempted.
@@ -891,9 +908,42 @@ async function renderReplyPlanUnobserved(
 }
 
 export async function renderReplyPlan(input: ReplyRendererInput): Promise<ReplyRendererResult> {
-  const result = await renderReplyPlanUnobserved(input);
+  let required = getRequiredResponseContent(input.plan);
+  let attemptedGeneration = false;
+  const startedAt = Date.now();
+  const observedInput: ReplyRendererInput = required ? { ...input, generator: async (...args) => {
+    attemptedGeneration = true;
+    return (input.generator ?? generateAiReply)(...args);
+  } } : input;
+  const rebuild = (previous?: UnobservedReplyRendererResult): UnobservedReplyRendererResult => {
+    if (!required) throw new ResponseObligationIntegrityError(["missing_contract"]);
+    const text = guardFallbackCandidate(input, required.approvedText, true, { checkRecentReplies: false });
+    if (!text) throw new ResponseObligationIntegrityError(["approved_rebuild_guard_rejected"]);
+    const messages = attachApprovedQuickReplies(
+      appendFooter([{ type: "text", text }], input.footer, input.includeFooter ?? true, input.plan.suppressAiFooter),
+      text, lineQuickReplyItems(required.actions),
+    );
+    const integrity = checkRequiredResponseContent(required, projectVisibleReplyContent(messages), [input.footer ?? ""]);
+    if (!integrity.ok) throw new ResponseObligationIntegrityError(integrity.missing);
+    return { ...previous, dialogueAct: input.plan.dialogueAct, fallbackReason: "required_content_rebuilt",
+      fallbackVariant: "safe", generated: false, generatorInvoked: previous?.generatorInvoked ?? attemptedGeneration,
+      guardReplacedText: true, handoffRequired: false, latencyMs: previous?.latencyMs ?? Date.now() - startedAt,
+      messages, replyText: text, replyTextSource: "approved_fallback", renderMode: "fallback", usedGroundedKnowledge: true };
+  };
+  let result: UnobservedReplyRendererResult;
+  try {
+    result = await renderReplyPlanUnobserved(observedInput);
+  } catch (error) {
+    if (!required) throw error;
+    result = rebuild();
+  }
+  required ??= result.requiredContent;
+  if (required && !checkRequiredResponseContent(required, projectVisibleReplyContent(result.messages), [input.footer ?? ""]).ok) {
+    result = rebuild(result);
+  }
   return {
     ...result,
+    requiredContent: required,
     responseContract: observeResponseContractShadow({
       attachment: input.plan.responseContract,
       dialogueAct: result.dialogueAct,

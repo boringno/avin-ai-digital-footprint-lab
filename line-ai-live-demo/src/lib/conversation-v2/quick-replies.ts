@@ -191,6 +191,7 @@ function conversationV2QuickReplyActions(
   if (!isConversationV2AiAssistanceEnabled(state.control.mode)) {
     return [] as ProjectedQuickReplyAction[];
   }
+  if (plan.requiredContent) return plan.requiredContent.actions.map((action) => ({ ...action }));
   if (plan.matchedKey === "conversation_v2:price:unavailable_to_quote:not_customer_visible" ||
       plan.matchedKey === "conversation_v2:price:historical_identity_unconfirmed") {
     return [...NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS];

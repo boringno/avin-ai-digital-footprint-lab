@@ -1,5 +1,6 @@
 import { clinicConfig } from "@/lib/clinic-config";
 import { getHumanSupportStatus } from "@/lib/human-support";
+import type { ResponseObligation, RequiredResponseContent } from "@/lib/reply-plan";
 
 export const INDIVIDUAL_EFFECT_GUARANTEE_REPLY =
   "不能保證個人效果。實際效果與是否適合會依個人條件而不同，需由醫師評估。";
@@ -108,18 +109,23 @@ export function composeV2SafetyPreflight(
   // Emergency guidance stays first; it must not become a wait-for-staff reply.
   const replyText = (urgent ? [primary.replyText, ...requiredMessages] : [...requiredMessages, primary.replyText]).join("\n");
   const humanRequested = includesAnyTerm(message, clinicConfig.escalationPolicy.humanRequestTerms);
+  const finalReply = primary.matchedKey === "post_procedure_emergency" && humanRequested
+    ? `${replyText}\n${buildHumanHandoffReply("安全後由真人客服接續協助。", now)}` : replyText;
+  const obligations: ResponseObligation[] = [];
+  const scope = { resolution: "resolved", safetyReason: primary.matchedKey } as const;
+  if (urgent) obligations.push({ kind: primary.matchedKey === "post_procedure_emergency" ? "emergency" : "post_procedure", scope, text: primary.replyText });
+  if (pregnancy) obligations.push({ kind: "pregnancy_nursing", scope, text: PREGNANCY_GUIDANCE });
+  if (guarantee) obligations.push({ kind: "cannot_guarantee", scope, text: INDIVIDUAL_EFFECT_GUARANTEE_REPLY });
+  obligations.sort((a, b) => finalReply.indexOf(a.text) - finalReply.indexOf(b.text));
+  const requiredContent: RequiredResponseContent | undefined = obligations.length
+    ? { obligations, approvedText: finalReply, actions: [] } : undefined;
   return {
     decision: {
       ...primary,
-      replyText: primary.matchedKey === "post_procedure_emergency" && humanRequested
-        ? `${replyText}\n${buildHumanHandoffReply("安全後由真人客服接續協助。", now)}` : replyText,
+      replyText: finalReply,
     },
     hasMedicalMessaging: Boolean(pregnancy || guarantee || urgent),
-    requiredSafetyContent: [
-      ...(urgent ? [primary.replyText] : []),
-      ...(pregnancy ? [PREGNANCY_GUIDANCE] : []),
-      ...(guarantee ? [INDIVIDUAL_EFFECT_GUARANTEE_REPLY] : []),
-    ],
+    requiredContent,
   };
 }
 

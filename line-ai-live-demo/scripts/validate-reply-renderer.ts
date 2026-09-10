@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 
 import { approvedTreatmentSupplementHash } from "../src/lib/clinic-facts/treatment-resolver";
 import type { DialogueState } from "../src/lib/dialogue-state";
-import { buildApprovedKnowledge, legacyDecisionToReplyPlan } from "../src/lib/reply-plan";
+import { buildApprovedKnowledge, legacyDecisionToReplyPlan, checkRequiredResponseContent,
+  getRequiredResponseContent, ResponseObligationIntegrityError, type RequiredResponseContent } from "../src/lib/reply-plan";
+import { NOT_CUSTOMER_VISIBLE_PRICE_REPLY, NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS } from "../src/lib/clinic-facts/price-resolver";
+import { buildReplyPayload, finalizeRequiredReplyPayload } from "../src/lib/line-webhook";
+import { lineQuickReplyItems, projectVisibleReplyContent } from "../src/lib/line-quick-replies";
 import {
   RENDERER_TERMINAL_SAFE_FALLBACK,
   buildRendererTerminalFallbackMessages,
@@ -1412,7 +1416,72 @@ async function validateApprovedQuickReplyUx() {
   );
 }
 
+async function validateRequiredContentAcrossRendererAndPayload() {
+  const requiredContent: RequiredResponseContent = {
+    approvedText: NOT_CUSTOMER_VISIBLE_PRICE_REPLY, actions: NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS,
+    obligations: [{ kind: "offline_refusal", text: NOT_CUSTOMER_VISIBLE_PRICE_REPLY,
+      scope: { resolution: "unresolved", treatmentKeys: ["botox"], applicability: { dose: "100U" } } }],
+  };
+  for (const mode of ["deterministic", "generated", "unavailable", "guard", "terminal", "rich"] as const) {
+    const plan = legacyDecisionToReplyPlan({ decisionType: "pricing_auto_reply", matchedKey: "required-offline",
+      matchedType: "guided_reply", replyText: NOT_CUSTOMER_VISIBLE_PRICE_REPLY }, { requiredContent });
+    plan.quickReplyItems = lineQuickReplyItems(requiredContent.actions);
+    if (["generated", "unavailable", "guard", "terminal"].includes(mode)) {
+      plan.renderMode = "generated";
+      plan.requiresHuman = false;
+    }
+    if (mode === "terminal") {
+      plan.fallbackText = "舊方案價格9,999元";
+      plan.secondaryFallbackText = "舊方案價格11,999元";
+    }
+    if (mode === "rich") plan.richMessages = [{ type: "image", originalContentUrl: "https://example.invalid/old-price.jpg", previewImageUrl: "https://example.invalid/old-price.jpg" }];
+    let calls = 0;
+    const result = await renderReplyPlan({ customerMessage: "這個方案多少錢", plan, dialogueState: dialogueState(),
+      footer: FOOTER, recentTurns: [{ role: "assistant", text: requiredContent.approvedText }],
+      generator: async () => { calls += 1; return mode === "unavailable" || mode === "terminal" ? null : {
+        model: "fixture", tokensIn: 0, tokensOut: 0,
+        text: mode === "guard" ? "保證有效，價格9,999元" : "您想先了解哪一項療程呢？",
+      }; },
+    });
+    const payload = buildReplyPayload("fixture-token", result.replyText, true, result.messages, false, plan.quickReplyItems);
+    const final = finalizeRequiredReplyPayload({ payload, requiredContent, shouldIntroduce: true });
+    assert.equal(checkRequiredResponseContent(requiredContent, projectVisibleReplyContent(result.messages), [FOOTER]).ok, true, mode);
+    assert.match(projectVisibleReplyContent(final.payload.messages).text, /不提供該方案的線上報價/u, mode);
+    assert.doesNotMatch(JSON.stringify(final.payload), /9,999|11,999|old-price/u, mode);
+    assert.match(projectVisibleReplyContent(final.payload.messages).text, /AI 客服/u, mode);
+    assert.equal(projectVisibleReplyContent(final.payload.messages).actions.length, 2, mode);
+    assert.equal(calls, ["deterministic", "rich"].includes(mode) ? 0 : 1, mode);
+    assert.equal(result.generatorInvoked, calls > 0, `${mode}: actual invocation telemetry`);
+    if (mode === "terminal" || mode === "rich") assert.equal(result.fallbackReason, "required_content_rebuilt", mode);
+  }
+  // Visible disclaimer + malicious extra money is not a valid payload.
+  const tampered = buildReplyPayload("fixture-token", `${requiredContent.approvedText}\n9,999元`, false);
+  assert.equal(checkRequiredResponseContent(requiredContent, projectVisibleReplyContent(tampered.messages), [FOOTER]).ok, false);
+  const repaired = finalizeRequiredReplyPayload({ payload: tampered, requiredContent, shouldIntroduce: false });
+  assert.equal(repaired.rebuilt, true);
+  assert.doesNotMatch(JSON.stringify(repaired.payload), /9,999/u);
+  assert.match(projectVisibleReplyContent(repaired.payload.messages).text, /以上為 AI 客服順順初步回覆/u);
+  const richPayload = { ...tampered, messages: [{ type: "flex" as const, altText: "舊方案9,999元",
+    contents: { type: "carousel" as const, contents: [{ type: "bubble" as const,
+      body: { type: "box" as const, layout: "vertical" as const,
+        contents: [{ type: "text" as const, text: requiredContent.approvedText }] } }] } }] };
+  const richRepair = finalizeRequiredReplyPayload({ payload: richPayload, requiredContent, shouldIntroduce: false });
+  assert.equal(richRepair.rebuilt, true, "Flex content cannot substitute for mandatory visible text");
+  assert.ok(richRepair.payload.messages.every((message) => message.type === "text"));
+  const invalid: RequiredResponseContent = { ...requiredContent,
+    obligations: [{ ...requiredContent.obligations[0]!, text: "missing owner obligation" }] };
+  assert.throws(() => finalizeRequiredReplyPayload({ payload: tampered, requiredContent: invalid, shouldIntroduce: false }), ResponseObligationIntegrityError);
+  const tooLong: RequiredResponseContent = { ...requiredContent, approvedText: requiredContent.approvedText.repeat(100) };
+  assert.throws(() => finalizeRequiredReplyPayload({ payload: tampered, requiredContent: tooLong, shouldIntroduce: false }), ResponseObligationIntegrityError);
+  const compatibility = legacyDecisionToReplyPlan({ decisionType: "medical_guidance_reply", matchedKey: "legacy-safe",
+    matchedType: "guided_reply", replyText: "需要醫師確認。" }, { requiredSafetyContent: ["需要醫師確認。"] });
+  assert.equal(compatibility.requiredSafetyContent, undefined, "one normalized authority, not two copies");
+  assert.equal(getRequiredResponseContent(compatibility)?.obligations[0]?.kind, "safety_compatibility");
+  console.log("Required content renderer/payload regression passed: deterministic/generated/fallback/terminal/rich/rebuild/fail-closed");
+}
+
 async function main() {
+  await validateRequiredContentAcrossRendererAndPayload();
   await validateDeterministicBypass();
   await validateResponseContractShadowObservation();
   await validateGeneratedReplyAndContext();

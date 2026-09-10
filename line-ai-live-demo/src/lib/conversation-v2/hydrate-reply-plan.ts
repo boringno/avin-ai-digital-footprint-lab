@@ -28,7 +28,9 @@ import {
   type ApprovedPriceSupplementContract,
   type DialogueAct,
   type ReplyPlan as RendererReplyPlan,
+  type RequiredResponseContent,
 } from "@/lib/reply-plan";
+import { NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS } from "@/lib/clinic-facts/price-resolver";
 import type { LineImageMessage, LineTextMessage } from "@/lib/treatment-carousel";
 import {
   buildPromotionCarouselMessages,
@@ -623,6 +625,7 @@ function deterministicPlan(input: {
   responseContract: ResponseContractAttachment;
   requiresHuman?: boolean;
   richMessages?: RendererReplyPlan["richMessages"];
+  requiredContent?: RequiredResponseContent;
   exactPriceFacts?: string[];
   treatmentKeys?: string[];
 }): RendererReplyPlan {
@@ -652,6 +655,7 @@ function deterministicPlan(input: {
       renderMode: "deterministic",
       responseContract: input.responseContract,
       requiresHuman: input.requiresHuman,
+      requiredContent: input.requiredContent,
       treatmentKeys: input.treatmentKeys,
     },
   );
@@ -923,6 +927,16 @@ export async function hydrateConversationV2ReplyPlan(
           exactPriceFacts: [],
           matchedKey: "conversation_v2:price:unavailable_to_quote:not_customer_visible",
           replyText: priceGapReply(priceResolution),
+          requiredContent: {
+            approvedText: priceGapReply(priceResolution),
+            actions: NOT_CUSTOMER_VISIBLE_PRICE_ACTIONS,
+            obligations: [{ kind: "offline_refusal", text: priceGapReply(priceResolution), scope: {
+              resolution: "unresolved", treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
+              campaignId: replyPlan.pricingQuery.campaignId,
+              applicability: replyPlan.pricingQuery.applicability,
+              snapshotId: input.snapshot.snapshotId,
+            } }],
+          },
           responseContract: replyPlan.responseContract,
           treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys],
         }),
@@ -1044,6 +1058,12 @@ export async function hydrateConversationV2ReplyPlan(
         action: replyPlan.action,
         approvedPriceReply,
         dialogueAct: "quote_approved_price",
+        requiredContent: priceResolution.status === "unavailable_to_quote" && priceResolution.configurationIssue === "PRICE_CONFIG_CONFLICT"
+          ? { approvedText: replyText, actions: [], obligations: [{ kind: "price_configuration_conflict",
+              text: priceGapReply(priceResolution), scope: { resolution: "unresolved",
+                treatmentKeys: [...replyPlan.pricingQuery.treatmentKeys], campaignId: replyPlan.pricingQuery.campaignId,
+                applicability: replyPlan.pricingQuery.applicability, snapshotId: input.snapshot.snapshotId } }] }
+          : undefined,
         exactPriceFacts: priceResolution.status === "approved_current"
           ? unique([
               ...priceResolution.customerFacts,

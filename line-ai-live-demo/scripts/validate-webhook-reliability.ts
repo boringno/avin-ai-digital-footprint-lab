@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
+import { validateResponseObligationWebhook } from "./validate-response-obligation-webhook";
 
 import { isReplyStillAuthorized, processWebhookRequestBody, sendReplyPayloads, type ProcessedWebhookResult } from "../src/lib/line-webhook";
 import { loadConversationContext } from "../src/lib/conversation-context";
@@ -327,6 +328,7 @@ async function caseDefaultAuthorizationFailsClosedAfterBothReadsFail() {
 }
 
 async function main() {
+  await validateResponseObligationWebhook();
   const duplicateCase = await caseDuplicateMessageId();
   const retryCase = await caseRetrySuccess();
   const deadLetterCase = await caseDeadLetter();

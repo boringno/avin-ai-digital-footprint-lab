@@ -1,4 +1,14 @@
 export type ConversationDecisionTrace = {
+  responseObligation?: {
+    originalRouteVersion: string | null;
+    originalDecisionType: string | null;
+    originalMatchedKey: string | null;
+    originalPolicyAction: string | null;
+    kinds: string[];
+    handoffSuppression: string | null;
+    finalIntegrity: string | null;
+    payloadSource: string | null;
+  } | null;
   approvedReplyAssetId: string | null;
   decisionType: string | null;
   fallbackReason: string | null;
@@ -33,6 +43,7 @@ export function getConversationDecisionTrace(payload: unknown): ConversationDeci
 
   const record = payload as Record<string, unknown>;
   const trace = {
+    responseObligation: readResponseObligation(record.response_obligation),
     approvedReplyAssetId: readString(record.conversation_v2_approved_reply_asset_id),
     decisionType: readString(record.decision_type),
     fallbackReason: readString(record.renderer_fallback_reason),
@@ -61,6 +72,25 @@ export function getConversationDecisionTrace(payload: unknown): ConversationDeci
   } satisfies ConversationDecisionTrace;
 
   return Object.values(trace).some((value) => value !== null) ? trace : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readResponseObligation(value: unknown) {
+  if (!isRecord(value)) return null;
+  return {
+    originalRouteVersion: readString(value.originalRouteVersion),
+    originalDecisionType: readString(value.originalDecisionType),
+    originalMatchedKey: readString(value.originalMatchedKey),
+    originalPolicyAction: readString(value.originalPolicyAction),
+    kinds: Array.isArray(value.obligations) ? value.obligations.flatMap((item: unknown) =>
+      isRecord(item) && typeof item.kind === "string" ? [item.kind] : []) : [],
+    handoffSuppression: readString(value.handoffSuppression),
+    finalIntegrity: readString(value.finalIntegrity),
+    payloadSource: readString(value.payloadSource),
+  };
 }
 
 function readBoolean(value: unknown) {

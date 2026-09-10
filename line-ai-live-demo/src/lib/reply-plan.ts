@@ -36,6 +36,90 @@ export type DialogueAct = (typeof DIALOGUE_ACTS)[number];
 export type ReplyRenderMode = "deterministic" | "generated";
 export type ReplyKnowledgeSource = "legacy_catalog" | "turn_snapshot";
 
+/** Per-turn, owner-approved content. No state, transport JSON or executable actions. */
+export type ResponseObligation = {
+  kind: "pregnancy_nursing" | "cannot_guarantee" | "post_procedure" | "emergency" |
+    "safety_compatibility" | "offline_refusal" | "price_configuration_conflict" | "branch_restriction";
+  scope: {
+    resolution: "resolved" | "unresolved";
+    safetyReason?: string;
+    treatmentKeys?: readonly string[];
+    campaignId?: string;
+    applicability?: PriceApplicabilityDimensions;
+    snapshotId?: string;
+  };
+  text: string;
+};
+
+export type RequiredResponseContent = {
+  /** Ordered by the existing owner; emergency guidance must remain first. */
+  obligations: readonly ResponseObligation[];
+  /** Canonical safe reconstruction, including any owner-approved acknowledgement. */
+  approvedText: string;
+  /** Offered navigation only. Executed solely by the existing next-turn flow. */
+  actions: readonly { label: string; text: string }[];
+  /** Already validated by the existing price receipt. Never inferred from images. */
+  approvedAssetUrls?: readonly string[];
+};
+
+export function getRequiredResponseContent(plan: Pick<ReplyPlan, "requiredContent" | "requiredSafetyContent" | "fallbackText" | "matchedKey">): RequiredResponseContent | undefined {
+  if (plan.requiredContent) return plan.requiredContent;
+  if (!plan.requiredSafetyContent?.length) return undefined;
+  return {
+    approvedText: plan.fallbackText,
+    actions: [],
+    obligations: plan.requiredSafetyContent.map((text) => ({ kind: "safety_compatibility",
+      scope: { resolution: "resolved", safetyReason: plan.matchedKey }, text })),
+  };
+}
+
+function normalizedRequiredText(text: string) {
+  return text.normalize("NFKC").replace(/[\s\p{Extended_Pictographic}\uFE0F\u200D]/gu, "");
+}
+
+/** One checker for rendered messages and the final transport projection. Never re-routes. */
+export function checkRequiredResponseContent(
+  content: RequiredResponseContent,
+  visible: { text: string; actions: readonly { label: string; text: string }[]; hasRichContent: boolean; assetUrls?: readonly string[]; invalidPresentation?: boolean },
+  presentationText: readonly string[] = [],
+) {
+  const missing: string[] = [];
+  if (visible.invalidPresentation) missing.push("invalid_presentation");
+  const text = normalizedRequiredText(visible.text);
+  let previousIndex = -1;
+  for (const obligation of content.obligations) {
+    const required = normalizedRequiredText(obligation.text);
+    const index = required ? text.indexOf(required) : -1;
+    if (index < 0) missing.push(obligation.kind);
+    if (index >= 0 && index < previousIndex) missing.push("obligation_order");
+    previousIndex = Math.max(previousIndex, index);
+  }
+  for (const action of content.actions) {
+    if (!visible.actions.some((item) => item.label === action.label && item.text === action.text)) missing.push("required_entry");
+  }
+  // Only receipt-approved artwork is allowed; arbitrary generated claims are not.
+  // A stale Flex/image or appended old price cannot survive by merely including a disclaimer.
+  if (visible.hasRichContent) missing.push("unapproved_rich_content");
+  if (visible.assetUrls?.some((url) => !content.approvedAssetUrls?.includes(url))) missing.push("unapproved_asset");
+  if (visible.actions.some((item) => !content.actions.some((allowed) =>
+    item.label === allowed.label && item.text === allowed.text))) missing.push("unapproved_entry");
+  let remainder = text;
+  for (const allowed of [content.approvedText, ...presentationText]) {
+    const normalized = normalizedRequiredText(allowed);
+    if (normalized) remainder = remainder.split(normalized).join("");
+  }
+  if (remainder) missing.push("unapproved_content");
+  if (!content.obligations.length || !content.approvedText.trim()) missing.push("invalid_contract");
+  return { ok: missing.length === 0, missing: [...new Set(missing)] };
+}
+
+export class ResponseObligationIntegrityError extends Error {
+  constructor(readonly missing: readonly string[]) {
+    super(`Response obligation integrity failed: ${missing.join(",")}`);
+    this.name = "ResponseObligationIntegrityError";
+  }
+}
+
 export type ReplyPlanBookingTransition = {
   action?: "add" | "replace" | "use_current";
   intent: "create" | "modify" | "cancel";
@@ -133,6 +217,7 @@ export type ReplyPlan = {
   requiresHuman: boolean;
   /** Approved safety owner copy that rendering must not discard. Not state. */
   requiredSafetyContent?: readonly string[];
+  requiredContent?: RequiredResponseContent;
   richMessages: LineReplyMessage[];
   secondaryFallbackText?: string;
   strategyInstructions?: string[];
@@ -172,6 +257,7 @@ export type LegacyReplyPlanOptions = {
   responseContract?: ResponseContractAttachment;
   requiresHuman?: boolean;
   requiredSafetyContent?: readonly string[];
+  requiredContent?: RequiredResponseContent;
   secondaryFallbackText?: string;
   strategyInstructions?: readonly string[];
   treatmentKeys?: readonly string[];
@@ -375,8 +461,8 @@ export function legacyDecisionToReplyPlan(
       options.responseContract ?? createOffResponseContract(),
     ),
     requiresHuman,
-    ...(options.requiredSafetyContent?.length
-      ? { requiredSafetyContent: normalizeStrings(options.requiredSafetyContent) } : {}),
+    requiredContent: getRequiredResponseContent({ requiredContent: options.requiredContent,
+      requiredSafetyContent: options.requiredSafetyContent, fallbackText, matchedKey: input.matchedKey }),
     richMessages,
     secondaryFallbackText: options.secondaryFallbackText?.trim() || undefined,
     strategyInstructions: normalizeStrings(options.strategyInstructions),

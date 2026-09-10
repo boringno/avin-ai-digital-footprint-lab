@@ -1213,7 +1213,7 @@ function preflightRoute(input: {
     handoffReason: preflight.decisionType === "handoff_pending" ? effectiveHandoffReason : undefined,
     renderMode: "deterministic",
     requiresHuman: preflight.decisionType === "handoff_pending",
-    requiredSafetyContent: composed.requiredSafetyContent,
+    requiredContent: composed.requiredContent,
   });
   // A medical preflight owns this reply; an existing booking draft must not
   // project collection buttons into it. The booking task itself is preserved.

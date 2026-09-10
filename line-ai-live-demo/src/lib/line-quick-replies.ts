@@ -1,5 +1,20 @@
 import type { LineQuickReplyItem, LineReplyMessage, LineTextMessage } from "@/lib/treatment-carousel";
 
+/** Only genuinely visible text and actionable message entries count as evidence. */
+export function projectVisibleReplyContent(messages: readonly LineReplyMessage[]) {
+  const texts = messages.filter((message): message is LineTextMessage => message.type === "text");
+  return {
+    text: texts.map((message) => message.text).join("\n"),
+    actions: texts.flatMap((message) => message.quickReply?.items.map((item) => ({
+      label: item.action.label, text: item.action.text,
+    })) ?? []),
+    hasRichContent: messages.some((message) => message.type !== "text" && message.type !== "image"),
+    assetUrls: messages.flatMap((message) => message.type === "image" ? [message.originalContentUrl, message.previewImageUrl] : []),
+    invalidPresentation: messages.length > 5 || texts.some((message) => message.text.length > 5000 ||
+      (message.quickReply?.items.length ?? 0) > 13),
+  };
+}
+
 const CONSULTATION_ACTIONS = [
   { label: "預約免費諮詢", text: "我要預約免費諮詢" },
   { label: "真人客服協助", text: "我要找真人客服" },
