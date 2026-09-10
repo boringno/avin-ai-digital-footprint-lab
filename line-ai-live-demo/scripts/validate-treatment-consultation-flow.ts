@@ -1,4 +1,6 @@
+import strictAssert from "node:assert/strict";
 import { createEmptyConversationContext } from "../src/lib/conversation-context";
+import { renderReplyPlan } from "../src/lib/reply-renderer";
 import { routeCustomerMessage } from "../src/lib/router";
 
 const NOW = new Date("2026-08-10T04:00:00.000Z");
@@ -232,10 +234,58 @@ async function main() {
   const payment = await route("可以刷卡嗎", intro.nextContext);
   assert(payment.matchedKey === "payment_methods", "T13: unrelated clinic FAQ must not get trapped in ONDA consultation");
 
+  const introBeforeSafety = structuredClone(intro.nextContext);
   const guarantee = await route("ONDA 保證有效嗎", intro.nextContext);
-  assert(guarantee.matchedKey === "treatment_consult:onda_pro:continue", "T14: an outcome question must continue the active treatment guidance without restarting its intro");
+  const equivalentGuarantee = await route("ONDA 一定有效嗎？", intro.nextContext);
+  for (const [message, decision] of [
+    ["ONDA 保證有效嗎", guarantee],
+    ["ONDA 一定有效嗎？", equivalentGuarantee],
+  ] as const) {
+    strictAssert.equal(decision.matchedKey, "individual_effect_guarantee", "T14: guarantee safety must precede consultation");
+    strictAssert.equal(decision.decisionType, "medical_guidance_reply");
+    const plan = decision.replyPlan;
+    assert(plan, "T14: safety must have a ReplyPlan");
+    strictAssert.equal(plan.dialogueAct, "answer_safety");
+    strictAssert.equal(plan.renderMode, "deterministic");
+    strictAssert.equal(plan.requiresHuman, false);
+    strictAssert.deepEqual(plan.exactPriceFacts, []);
+    strictAssert.deepEqual(plan.quickReplyItems, [], "T14: safety must not project sales or booking buttons");
+    strictAssert.deepEqual(plan.treatmentKeys, ["onda_pro"]);
+    strictAssert.equal(decision.nextContext.lastReferencedTreatment, "ONDA PRO");
+    strictAssert.deepEqual(decision.nextContext.treatmentConsultation, introBeforeSafety.treatmentConsultation);
+    strictAssert.deepEqual(decision.nextContext.bookingDraft, introBeforeSafety.bookingDraft);
+    strictAssert.equal(decision.nextContext.dialogueState?.bookingIntent, "none");
+    strictAssert.equal(decision.nextContext.dialogueState?.bookingAction, null);
+    strictAssert.deepEqual(decision.nextContext.dialogueState?.treatmentKeys, ["onda_pro"]);
+    strictAssert.deepEqual(intro.nextContext, introBeforeSafety, "T14: input context must not be mutated");
+    assert(decision.nextContext.dialogueState, "T14: dialogue state must be retained");
+    const rendered = await renderReplyPlan({
+      customerMessage: message,
+      dialogueState: { ...decision.nextContext.dialogueState, handoffStatus: "ai_active" },
+      plan,
+      recentTurns: [],
+      includeFooter: false,
+    });
+    for (const text of [decision.replyText, rendered.replyText]) {
+      strictAssert.match(text, /不能保證個人效果/u, "T14: must answer the guarantee question");
+      strictAssert.match(text, /個人條件/u);
+      strictAssert.match(text, /醫師評估/u);
+      strictAssert.doesNotMatch(text, /\d[\d,]*(?:\s*元)?|預約|優惠|活動價|已.*轉交|已.*轉接/u,
+        "T14: no price, sales CTA, booking or claimed handoff");
+    }
+  }
+  const ordinaryControl = await route("ONDA 有什麼特色？", intro.nextContext);
+  const afterSafety = await route("ONDA 有什麼特色？", guarantee.nextContext);
+  for (const decision of [ordinaryControl, afterSafety]) {
+    strictAssert.equal(decision.matchedKey, "treatment_consult:onda_pro:features",
+      "T14: ordinary consultation must work both before and after safety");
+    strictAssert.equal(decision.decisionType, "treatment_intro_reply");
+    strictAssert.match(decision.replyText, /Coolwaves®/u);
+    strictAssert.doesNotMatch(decision.replyText, /不能保證個人效果/u);
+    strictAssert.equal(decision.nextContext.lastReferencedTreatment, "ONDA PRO");
+  }
 
-  console.log("treatment consultation flow validation passed (34 checks)");
+  console.log("treatment consultation flow validation passed (including T14 safety precedence, context preservation and continuation)");
 }
 
 main().catch((error) => {

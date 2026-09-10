@@ -2824,6 +2824,27 @@ async function main() {
   );
 
   const anniversaryNow = new Date("2026-09-02T10:00:00+08:00");
+  // Independent PO-approved test oracle, not derived from the production allowlist.
+  const publicOfferPrices = {
+    "promo-2026-anniv-vio": "1,099",
+    "promo-2026-anniv-underarm": "499",
+    "promo-2026-anniv-botox-10u": "999",
+    "promo-2026-anniv-pico-honeycomb": "3,999",
+    "promo-2026-anniv-tenthermage-eye-300": "18,888",
+    "promo-2026-anniv-tenthermage-200": "8,999",
+    "promo-2026-anniv-qplus-200": "7,999",
+    "promo-2026-anniv-ultherapy-200-botox40": "29,999",
+    "promo-2026-anniv-onda-face-online": "8,999",
+    "promo-2026-anniv-beienxi-1cc": "5,999",
+    "promo-2026-anniv-powder-glow": "11,999",
+  };
+  const publicOfferIds = Object.keys(publicOfferPrices).sort();
+  const deniedOfferIds = [
+    "promo-2026-anniv-botox-100u", "promo-2026-anniv-tenthermage-900-teosyal1",
+    "promo-2026-anniv-ultherapy-500-botox100", "promo-2026-anniv-ultherapy-1000-botox200-onda",
+    "promo-2026-anniv-onda-face-extension", "promo-2026-anniv-teosyal1",
+    "promo-2026-anniv-teosyal2-4", "promo-2026-anniv-ailewei",
+  ];
   const anniversarySeed = await loadSeedData();
   const anniversaryFacts = createStaticClinicFactsProvider({
     pricingCampaigns: anniversarySeed.pricingCampaigns,
@@ -2835,10 +2856,16 @@ async function main() {
   const anniversaryCatalog = resolveApprovedPromotionCatalog(anniversarySnapshot);
   assert.equal(anniversaryCatalog.status, "approved_current");
   if (anniversaryCatalog.status === "approved_current") {
-    check(
-      anniversaryCatalog.items.length === 19,
-      "C25: the live V2 round-trip fixture must contain all 19 approved anniversary campaigns",
-    );
+    const actualIds = anniversaryCatalog.items.map((item) => item.campaignId);
+    assert.equal(new Set(actualIds).size, actualIds.length, "C25: no duplicate offers");
+    assert.deepEqual([...actualIds].sort(), publicOfferIds, "C25: exact public set; no missing or extra identities");
+    for (const id of deniedOfferIds) assert.ok(!actualIds.includes(id), `C25: deny ${id}`);
+    for (const [id, amount] of Object.entries(publicOfferPrices)) {
+      const publicPriceItem: (typeof anniversaryCatalog.items)[number] | undefined =
+        anniversaryCatalog.items.find((entry) => entry.campaignId === id);
+      assert.ok(publicPriceItem);
+      assert.equal(publicPriceItem.customerPriceText.match(/\d[\d,]*/u)?.[0], amount, `C25: approved amount for ${id}`);
+    }
     const catalogUserId = "U-anniversary-catalog-live";
     const catalogContext = createEmptyConversationContext(catalogUserId);
     const staleCatalogState = createConversationV2State({
@@ -2889,11 +2916,20 @@ async function main() {
       const catalogQuickReplyText = (liveCatalog.decision.replyPlan?.quickReplyItems ?? [])
         .map((item) => `${item.action.label}:${item.action.text}`)
         .join("\n");
+      const renderedIds = catalogBubbles.map((bubble) => {
+        const matches = anniversaryCatalog.items.filter((item) =>
+          JSON.stringify(bubble).includes(JSON.stringify(approvedPromotionCatalogSelectionText(item))));
+        assert.equal(matches.length, 1, "C25: each bubble selects exactly one current public offer");
+        return matches[0]!.campaignId;
+      });
+      assert.deepEqual([...renderedIds].sort(), publicOfferIds, "C25: Flex set is complete with no duplicates or offline offers");
+      assert.ok(catalogFlexMessages.every((message) => message.contents.contents.length > 0 && message.contents.contents.length <= 12),
+        "C25: each carousel stays within the LINE bubble limit");
+      assert.ok((liveCatalog.decision.replyMessages?.length ?? 0) <= 5, "C25: LINE message limit");
       check(
         liveCatalog.policyAction === "answer_price" &&
           liveCatalog.decision.matchedKey === "conversation_v2:promotion_catalog:approved_current" &&
-          catalogFlexMessages.length === 2 &&
-          catalogBubbles.length === 19 &&
+          catalogFlexMessages.length > 0 &&
           /Q\+\s*音波/u.test(JSON.stringify(catalogBubbles)) &&
           !/ONDA|肉毒/iu.test(catalogQuickReplyText),
         `C25: the live generic activity button must show all campaigns despite stale ONDA state or NLU outage (${JSON.stringify({
@@ -3079,7 +3115,7 @@ async function main() {
   const runtimeReleaseSnapshot = {
     entries: [
       {
-        content_key: "runtime-release-onda-face",
+        content_key: "promo-2026-anniv-onda-face-online",
         content_type: "campaign" as const,
         end_at: "2026-11-30T15:59:59.999Z",
         payload_json: {
@@ -3094,7 +3130,7 @@ async function main() {
         start_at: "2026-09-01T00:00:00.000Z",
       },
       {
-        content_key: "runtime-release-botox-zone",
+        content_key: "promo-2026-anniv-botox-10u",
         content_type: "campaign" as const,
         end_at: "2026-11-30T15:59:59.999Z",
         payload_json: {
@@ -3121,13 +3157,18 @@ async function main() {
     eventId: string;
     message: string;
     now: Date;
+    snapshot?: Parameters<typeof materializeRuntimeContentReleaseSnapshot>[0];
   }) => {
-    const overlay = materializeRuntimeContentReleaseSnapshot(runtimeReleaseSnapshot, input.now);
+    const overlay = materializeRuntimeContentReleaseSnapshot(input.snapshot ?? runtimeReleaseSnapshot, input.now);
     const factsProvider = createStaticClinicFactsProvider({
       pricingCampaigns: overlay.pricingCampaigns,
       snapshotId: `runtime-release:${overlay.releaseId}:${input.now.toISOString()}`,
       source: "runtime-release-fixture",
     });
+    const factsSnapshot = await loadClinicFactsSnapshot(factsProvider, { now: input.now });
+    assert.equal(factsSnapshot.source, "runtime-release-fixture");
+    assert.deepEqual(factsSnapshot.pricingCampaigns.map((row) => row.id).sort(),
+      overlay.pricingCampaigns.map((row) => row.id).sort(), "C26: Runtime-only source; never seed fallback");
     let routed: Awaited<ReturnType<typeof routeConversationV2Canary>> | undefined;
     const result = await processWebhookRequestBody(JSON.stringify({
       events: [{
@@ -3174,6 +3215,7 @@ async function main() {
       payload: processed.replyPayload,
       resultCount: result.results.length,
       routed,
+      factsSnapshot,
     };
   };
   const beforeRelease = await webhookPayloadForRuntimeRelease({
@@ -3244,8 +3286,9 @@ async function main() {
   const runtimeCatalogAtStart = resolveApprovedPromotionCatalog(runtimeSnapshotAtStart);
   assert.equal(runtimeCatalogAtStart.status, "approved_current");
   if (runtimeCatalogAtStart.status === "approved_current") {
-    const ondaSelection = runtimeCatalogAtStart.items.find((item) => item.campaignId === "runtime-release-onda-face");
+    const ondaSelection = runtimeCatalogAtStart.items.find((item) => item.campaignId === "promo-2026-anniv-onda-face-online");
     assert.ok(ondaSelection, "C26: runtime release catalog must expose the ONDA card selection");
+    assert.equal(ondaSelection.provenance.source, "runtime-release-fixture");
     const selectedRelease = await webhookPayloadForRuntimeRelease({
       eventId: "onda-selection",
       message: approvedPromotionCatalogSelectionText(ondaSelection),
@@ -3253,6 +3296,9 @@ async function main() {
     });
     const selectedImage = selectedRelease.payload.messages.find((message) => message.type === "image");
     const selectedPayloadJson = JSON.stringify(selectedRelease.payload.messages);
+    assert.equal(selectedRelease.routed?.kind === "routed"
+      ? selectedRelease.routed.decision.replyPlan?.approvedPriceReply?.quotes.find((quote) => quote.role === "primary")?.campaignId
+      : undefined, "promo-2026-anniv-onda-face-online", "C26: exact approved Runtime identity");
     check(
       selectedImage?.type === "image" &&
         selectedImage.originalContentUrl === runtimeAssetUrl &&
@@ -3332,7 +3378,43 @@ async function main() {
     );
   }
 
-  console.log(`Conversation V2 canary validation passed (${passed} checks).`);
+  // C26/C27 negative: a stored release does not grant public eligibility,
+  // and booking must not authorize an otherwise denied anniversary price.
+  for (const id of [...deniedOfferIds, "runtime-release-onda-face", "runtime-release-botox-zone"]) {
+    // Deliberately replay an otherwise valid public payload under a denied ID:
+    // neither matching content/amount nor booking may confer authorization.
+    const deniedSnapshot = {
+      ...runtimeReleaseSnapshot,
+      entries: [{ ...runtimeReleaseSnapshot.entries[0]!, content_key: id }],
+    };
+    for (const message of ["周年慶活動", "我要預約 ONDA，也想知道價格", "我要預約，也想看全部活動"]) {
+      const denied = await webhookPayloadForRuntimeRelease({
+        eventId: `denied-${id}-${message}`,
+        message,
+        now: new Date("2026-09-01T00:00:00.000Z"),
+        snapshot: deniedSnapshot,
+      });
+      assert.equal(denied.overlay.pricingCampaigns.length, 1, "C26: denied offer really exists in Runtime");
+      const deniedCatalog = resolveApprovedPromotionCatalog(denied.factsSnapshot);
+      assert.deepEqual(deniedCatalog.items, [], `C26: ${id} must not enter public catalog`);
+      const payloadText = JSON.stringify(denied.payload.messages);
+      assert.doesNotMatch(payloadText, /8,999|8999/u, `C26/C27: ${id} cannot expose its fixture amount`);
+      assert.ok(!payloadText.includes(runtimeAssetUrl), "C26: no denied offer image");
+      assert.ok(!denied.payload.messages.some((item) => item.type === "flex"), "C26: no denied offer card");
+      assert.equal(denied.routed?.kind, "routed");
+      if (denied.routed?.kind === "routed") {
+        assert.deepEqual(denied.routed.decision.replyPlan?.exactPriceFacts ?? [], [], "C27: no authorized money facts");
+        assert.equal(denied.routed.decision.replyPlan?.approvedPriceReply?.quotes.length ?? 0, 0);
+        if (message.startsWith("我要預約")) {
+          assert.equal(denied.routed.policyAction, "start_booking");
+          assert.equal(denied.routed.decision.nextContext.conversationV2State?.bookingTask.status, "collecting");
+          assert.equal(denied.routed.decision.nextContext.conversationV2State?.bookingTask.expectedField,
+            message.includes("ONDA") ? "branch" : "treatment");
+        }
+      }
+    }
+  }
+  console.log(`Conversation V2 canary validation passed (${passed} checks, plus public-set and Runtime default-deny assertions).`);
 }
 
 main().catch((error) => {
