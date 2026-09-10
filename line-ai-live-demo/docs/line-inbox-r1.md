@@ -127,6 +127,30 @@ immutable input; service-role boundary. Customer fixtures contain no real PII.
 
 ## Remaining gates and rollback
 
+### GitHub isolated PostgreSQL gate (2026-09-10)
+
+Temporary validation branch: `codex/r1-real-postgres-validation`; not a product checkpoint.
+Its exact `vercel.json` git.deploymentEnabled exclusion is false only for this branch.
+No global Preview/environment/credential setting is changed. Retain the exclusion until
+the temporary branch is no longer pushed; do not remove it then push test code.
+
+Existing `line-ai-live-demo-ci.yml` accepts manual `r1_db_gate=true` on this exact branch
+and calls `r1-postgres-validation.yml`. Push cannot run the DB job. No secrets are inherited.
+The caller already exists on default branch, avoiding a main merge just to register dispatch.
+PostgreSQL is pinned to 15.18, exercising the documented PG15+ R1 baseline and core SQL
+features, not asserting the remote Supabase patch version or full extension parity.
+Only ephemeral runner-local service credentials are used; roles are provisioned solely in
+the new container. Real Supabase deployment/permission parity remains a separate gate.
+
+First run: https://github.com/boringno/avin-ai-digital-footprint-lab/actions/runs/34438885913
+at `68429fd26c38a5d18e2c0768c1fb9a62189c5ddd`: actual PostgreSQL job PASS, including the
+five complete dependency migrations + R1, observed contention, F1/F2 and stale fencing.
+No Vercel deployment existed for that branch/SHA before dispatch.
+Additional test-only assertions cover injected claim+customer-receipt rollback, natural
+DB-clock lease expiry and the service-role claim/renew/persist path; these require a new
+run before claiming the expanded gate passed. Historical blocked results below describe
+the previous local-only stage, not the successful first CI run.
+
 ### Local execution record (2026-09-10)
 
 - PASS: `validate:line-inbox`, `validate:webhook-reliability` (also invokes required-response
@@ -187,7 +211,8 @@ revisions remain mandatory at integration. R1 does not claim to fence old, unwir
 
 Before any live wiring: real DB concurrency + full migration compatibility, independent
 review, channel mapping provisioning review, and R2/R3 integration coverage are required.
-Migration has not been executed online. No commit/push/deploy authorized in this task.
+Migration has not been executed on DEMO/Production. Temporary validation commits/pushes
+are authorized for this CI gate only; no merge or deployment is authorized.
 Local rollback is removal/reversion of only these R1 changes, preserving AGENTS.md.
 After any future DB adoption, do not drop retained identities to roll back code; disable the
 new path and preserve evidence, then obtain a separate migration rollback decision.

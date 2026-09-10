@@ -194,6 +194,27 @@ async function main() {
     assert.equal((await claim(rollback)).disposition, "CLAIM_GRANTED");
     console.log("PASS transaction rollback leaves no half claim");
 
+    const atomic = await admit(input("atomic-failure"));
+    const atomicOwner = randomUUID();
+    await assert.rejects(sql(`begin; ${claimQuery(atomic, atomicOwner)}
+      select public.line_inbox_persist_customer('r1-test-tenant',${literal(field(atomic, "inboxId"))},1,${literal(atomicOwner)});
+      select 1/0; commit;`), /22012/);
+    assert.equal(await sql("select claim_generation::text||':'||(customer_message_id is null)::text from line_webhook_inbox where provider_event_id='atomic-failure';"), "0:true");
+    assert.equal(await sql("select count(*) from line_conversation_processing_slots where source_id='atomic-failure' and inbox_id is not null;"), "0");
+    assert.equal(await sql("select count(*) from conversation_messages where source_event_id='atomic-failure';"), "0");
+    const atomicRetry = await claim(atomic);
+    await sql(persistQuery(atomic, atomicRetry));
+    console.log("PASS injected transaction failure rolls back claim, slot, customer row and receipt; retry succeeds");
+
+    const timed = await admit(input("db-clock-expiry"));
+    const timedClaim = row(await sql(`select public.line_inbox_claim('r1-test-tenant',${literal(field(timed, "inboxId"))},${literal(field(timed, "inputHash"))},${literal(randomUUID())},5);`));
+    assert.equal((await claim(timed)).disposition, "DUPLICATE_ALREADY_OWNED");
+    await waitUntil(async () => (await sql(`select lease_expires_at <= clock_timestamp() from line_webhook_inbox where id=${literal(field(timed, "inboxId"))};`)) === "t");
+    const timedReclaim = await claim(timed);
+    assert.equal(timedReclaim.generation, Number(timedClaim.generation) + 1);
+    await assert.rejects(sql(persistQuery(timed, timedClaim)), /R1_STALE_FENCE/);
+    console.log("PASS natural DB-clock lease expiry/reclaim without timestamp mutation");
+
     const conflict = await admit(input("conflict"));
     assert.equal((await admit(input("conflict", "conflict", "different text"))).disposition, "IDENTITY_CONFLICT");
     assert.equal((await claim(conflict)).disposition, "INCIDENT");
@@ -226,7 +247,17 @@ async function main() {
     assert.equal(await sql("select has_table_privilege('service_role','public.line_webhook_inbox','UPDATE');"), "f");
     assert.equal(await sql("select has_function_privilege('service_role','public.line_inbox_claim(text,uuid,text,uuid,integer)','EXECUTE');"), "t");
     const serviceInput = input("service-call");
-    assert.equal(row(await sql(`set role service_role; ${admitQuery(serviceInput)}`)).disposition, "NEW_EVENT");
+    const serviceAdmission = row(await sql(`set role service_role; ${admitQuery(serviceInput)}`));
+    assert.equal(serviceAdmission.disposition, "NEW_EVENT");
+    const serviceClaim = row(await sql(`set role service_role; ${claimQuery(serviceAdmission, randomUUID())}`));
+    assert.equal(serviceClaim.disposition, "CLAIM_GRANTED");
+    await sql(`set role service_role; select public.line_inbox_renew('r1-test-tenant',${literal(field(serviceAdmission, "inboxId"))},${Number(serviceClaim.generation)},${literal(field(serviceClaim, "owner"))},120);`);
+    await sql(`set role service_role; ${persistQuery(serviceAdmission, serviceClaim)}`);
+    for (const role of ["anon", "authenticated"]) {
+      await assert.rejects(sql(`set role ${role}; ${admitQuery(input("denied"))}`), /42501/);
+      await assert.rejects(sql(`set role ${role}; ${claimQuery(serviceAdmission, randomUUID())}`), /42501/);
+      await assert.rejects(sql(`set role ${role}; update line_webhook_inbox set receipt_count=999;`), /42501/);
+    }
     await assert.rejects(sql(admitQuery({ ...input("bad-input"), replyToken: "must-not-persist" })), /R1_INVALID_INPUT/);
     await assert.rejects(sql(admitQuery({ ...input("bad-nested"), source: { type: "user", id: "test", profile: "must-not-persist" } })), /R1_INVALID_INPUT/);
     await assert.rejects(sql(admitQuery({ ...input("bad-destination"), destination: "unverified" })), /R1_INVALID_INPUT/);
