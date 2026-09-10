@@ -403,6 +403,10 @@ export function resolveExplicitCampaignContext(snapshot: ClinicFactsSnapshot, me
   }
   const treatmentTerms = snapshot.treatments.flatMap((treatment) =>
     [treatment.name, ...treatment.aliases, ...treatment.availableBrands]);
+  // Discovery vocabulary has its own typed owner. A campaign alias may reuse
+  // it, but a bare concern token is not evidence of selecting that campaign.
+  const concernTerms = new Set(snapshot.ontology.concerns.flatMap((concern) =>
+    concern.keywords.map(normalized)));
   const matches = snapshot.pricingCampaigns.filter((row) => !isStandingPrice(row)).flatMap((row) => {
     const itemTerms = unique([
       ...PRICE_ASK_TERMS, ...treatmentTerms,
@@ -417,7 +421,7 @@ export function resolveExplicitCampaignContext(snapshot: ClinicFactsSnapshot, me
         .split(/[|\s+＋/()（）,，.\-]/u).filter((token) => token.length >= 2 && /\p{L}/u.test(token) &&
           !PRICE_ASK_TERMS.some((priceTerm) => normalized(priceTerm).includes(token)));
     });
-    const evidence = tokens.filter((token) => text.includes(token) &&
+    const evidence = tokens.filter((token) => !concernTerms.has(token) && text.includes(token) &&
       // A bare anniversary token must not reclassify a different explicit year/edition.
       (!hasAnniversaryCampaignWording(token) || !isAnniversaryPromotion(row)));
     return evidence.length > 0 ? [row.id] : [];

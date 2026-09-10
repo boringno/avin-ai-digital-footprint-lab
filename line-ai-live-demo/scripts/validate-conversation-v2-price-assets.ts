@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
-import { createStaticClinicFactsProvider, resolveApprovedPrice } from "../src/lib/clinic-facts";
+import { createStaticClinicFactsProvider, resolveApprovedPrice, resolveExplicitCampaignContext } from "../src/lib/clinic-facts";
+import { createEmptyConversationContext } from "../src/lib/conversation-context";
+import { routeConversationV2Canary } from "../src/lib/conversation-v2/live-runtime";
 import { hydrateConversationV2ReplyPlan } from "../src/lib/conversation-v2/hydrate-reply-plan";
 import { evaluateDialoguePolicy } from "../src/lib/conversation-v2/policy";
 import { createConversationV2State } from "../src/lib/conversation-v2/state";
@@ -110,6 +112,67 @@ async function hydratePrice(input: {
 
 async function main() {
   const checks: string[] = [];
+
+  const { pricingCampaigns } = await loadSeedData();
+  const factsProvider = createStaticClinicFactsProvider({ pricingCampaigns });
+  const snapshot = await factsProvider.loadSnapshot({ now: new Date(NOW) });
+  const publicQuestions = [
+    "我雙下巴肉很多，ONDA 適合嗎？活動價多少？",
+    "ONDA 活動價多少？我主要是雙下巴",
+    "雙下巴可以做 ONDA 嗎？現在多少錢？",
+    "我想改善雙下巴，ONDA 周年慶多少？",
+    "周年慶 ONDA 多少？",
+    "ONDA 多少錢？",
+    "ONDA 有活動嗎？",
+    "ONDA 活動價多少？我想改善嘴邊肉",
+  ];
+  for (const [index, text] of publicQuestions.entries()) {
+    if (!text.includes("周年慶")) {
+      assert.equal(resolveExplicitCampaignContext(snapshot, text), undefined,
+        `${text}: concern must not become an explicit campaign identity`);
+    }
+    const hydrated = await hydratePrice({ text, treatmentKey: "onda_pro", turnId: `concern-price-${index}` });
+    assert.equal(hydrated.priceResolution?.status, "approved_current");
+    if (hydrated.priceResolution?.status !== "approved_current") throw new Error("approved price required");
+    assert.equal(hydrated.priceResolution?.campaignId, "promo-2026-anniv-onda-face-online");
+    assert.match(hydrated.rendered.replyText, /8,999/u);
+  }
+  const namedCampaign = { ...snapshot.pricingCampaigns[0],
+    id: "validator-explicit-campaign", campaign_name: "盛夏光采 ONDA 方案",
+    campaign_aliases: "盛夏光采", offer_type: "promotion",
+  };
+  assert.deepEqual(resolveExplicitCampaignContext({ ...snapshot, pricingCampaigns: [namedCampaign] },
+    "我有雙下巴，盛夏光采 ONDA 方案多少？"), [namedCampaign.id],
+    "a distinct campaign name must retain its identity alongside a concern");
+  // Exercise the actual live runtime with deterministic parsing and no provider
+  // request: concern-only text must not acquire an exact ONDA pricing subject.
+  for (const [index, text] of [...publicQuestions,
+    "我雙下巴想改善，現在有什麼活動？", "雙下巴活動多少？",
+    "肉毒100U 周年慶多少？", "緹奧希1號活動價多少？", "ONDA 延伸方案多少？",
+  ].entries()) {
+    const live = await routeConversationV2Canary({
+      context: createEmptyConversationContext(`concern-campaign-${index}`),
+      eventIdentity: `concern-campaign-${index}`, message: text, now: new Date(NOW),
+      sourceType: "user", sourceUserId: "concern-campaign-validator",
+    }, {
+      factsProvider,
+      getCanarySettings: () => ({ allowlistedUserIds: [], mode: "demo_all", lineChannelStage: "demo" }),
+      requestFrame: async () => null,
+    });
+    assert.equal(live.kind, "routed");
+    if (live.kind !== "routed") throw new Error("live route required");
+    if (index < publicQuestions.length) {
+      assert.match(live.decision.replyText, /8,999/u, `${text}: live exact public price`);
+    } else {
+      assert.doesNotMatch(live.decision.replyText, /8,999|9,999|11,999|12,999/u,
+        `${text}: no guessed or substituted price`);
+      if (index >= publicQuestions.length + 2) {
+        assert.equal(live.decision.matchedKey, "conversation_v2:price:unavailable_to_quote:not_customer_visible",
+          `${text}: exact offline offer must remain a refusal, not another quote`);
+      }
+    }
+  }
+  checks.push("concern-is-not-campaign-identity-live-and-hydration-offline-protection");
 
   const onda = await hydratePrice({
     text: "ONDA 現在活動價多少？",
