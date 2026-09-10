@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/r1-real-postgres-validation": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/daily-rollup",

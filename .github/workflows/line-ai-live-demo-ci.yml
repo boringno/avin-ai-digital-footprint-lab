@@ -12,12 +12,21 @@ on:
       - "supabase/migrations/**"
       - ".github/workflows/line-ai-live-demo-ci.yml"
   workflow_dispatch:
+    inputs:
+      r1_db_gate:
+        description: Run isolated R1 PostgreSQL gate only after Vercel exclusion verification
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  r1-db:
+    if: github.event_name == 'workflow_dispatch' && inputs.r1_db_gate && github.ref == 'refs/heads/codex/r1-real-postgres-validation'
+    uses: ./.github/workflows/r1-postgres-validation.yml
   verify:
+    if: github.event_name != 'workflow_dispatch' || !inputs.r1_db_gate
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -103,6 +112,7 @@ jobs:
           npm run validate:conversation-v2-customer-experience
           npm run validate:conversation-v2-journey
           npm run validate:conversation-v2-quick-replies
+          npm run validate:concern-candidate-projection
           npm run validate:conversation-v2-nlu-adapter
           npm run validate:conversation-v2-repository
           npm run validate:conversation-v2-runtime-shadow
@@ -117,6 +127,7 @@ jobs:
           npm run validate:conversation-state-envelope
           npm run validate:conversation-state-registry
           npm run validate:line-delivery-commit
+          npm run validate:line-inbox
           npm run validate:response-contract
           npm run validate:pricing-subject
           npm run validate:treatment-packs

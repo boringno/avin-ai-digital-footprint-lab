@@ -1,0 +1,60 @@
+name: R1 isolated PostgreSQL validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/r1-real-postgres-validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15.18
+        env:
+          POSTGRES_PASSWORD: r1-disposable-ci-only
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: line-ai-live-demo
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: line-ai-live-demo/package-lock.json
+      - name: Ensure PostgreSQL client
+        run: |
+          if ! command -v psql; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql --version
+      - name: Initialize disposable cluster roles
+        env:
+          PGPASSWORD: r1-disposable-ci-only
+        run: |
+          psql -X -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE ROLE service_role NOLOGIN BYPASSRLS;
+          SELECT version();
+          SQL
+      - run: npm ci
+      - name: Real migration, contention, fencing and recovery gate
+        env:
+          R1_LOCAL_DB_TEST: '1'
+          R1_TEST_PASSWORD: r1-disposable-ci-only
+        run: npm run test:line-inbox-postgres

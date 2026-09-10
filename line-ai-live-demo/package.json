@@ -90,6 +90,8 @@
     "validate:conversation-state-envelope": "tsx scripts/validate-conversation-state-envelope.ts",
     "validate:conversation-state-registry": "tsx scripts/validate-conversation-state-registry.ts",
     "validate:line-delivery-commit": "tsx scripts/validate-line-delivery-commit.ts",
+    "validate:line-inbox": "tsx scripts/validate-line-inbox.ts",
+    "test:line-inbox-postgres": "tsx scripts/test-line-inbox-postgres.ts",
     "validate:response-contract": "tsx scripts/validate-response-contract.ts",
     "validate:pricing-subject": "tsx scripts/validate-pricing-subject.ts",
     "validate:treatment-packs": "tsx scripts/validate-treatment-packs.ts",
